@@ -94,6 +94,7 @@ p givgauss2 module to estimate generalized two-parameter inverse Gaussian regres
 p glcurve module to derive generalised Lorenz curve ordinates 
 p glcurve5 module to derive generalised Lorenz curve ordinates with unit record data (Stata 5 or 6)
 p glcurve7 module to derive generalised Lorenz curve ordinates with unit record data (version 7)
+p glemb module to provide general location EMB imputation engine
 p glgamma2 module to estimate generalized two-parameter log-gamma regression
 p gllamm program to fit generalised linear latent and mixed models
 p glmcorr module for correlation measure of predictive power for GLMs

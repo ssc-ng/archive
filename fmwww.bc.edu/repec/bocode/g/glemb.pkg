@@ -1,0 +1,31 @@
+d 'GLEMB': module to provide general location EMB imputation engine
+d
+d      The recommended user interface is mi impute glemb.  It uses
+d Stata's official mi impute machinery to manage imputation
+d storage,    styles, add(), replace, and rseed().    The
+d standalone glemb command remains available as a development and
+d diagnostic interface.  It saves completed datasets to disk	and
+d is retained mainly for testing and comparison with earlier
+d development runs. 
+d
+d KW: multiple imputation
+d KW: missing data
+d KW: general location model
+d KW: EMB
+d KW: proper imputation
+d KW: bootstrap
+d
+d Requires: Stata version 17
+d
+d Distribution-Date: 20260924
+d
+d Author: Paul D. Allison,  Statistical Horizons
+d Support: email  allison@@statisticalhorizons.com
+d
+f glemb.ado
+f glemb.sthlp
+f ../l/lglemb.mata
+f ../m/mi_impute_cmd_glemb.ado
+f ../m/mi_impute_cmd_glemb_cleanup.ado
+f ../m/mi_impute_cmd_glemb_parse.ado
+f ../m/mi_impute_glemb.sthlp

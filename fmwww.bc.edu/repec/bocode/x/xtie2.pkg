@@ -1,0 +1,24 @@
+d 'XTIE2': module to provide Interactive Panel Data Estimation with automatic pairwise interactions
+d
+d  xtie2 estimates a fixed-effects panel model including all
+d pairwise interactions among the explanatory variables. The first
+d variable is treated as the dependent variable. The first two
+d explanatory variables define the primary interaction used for
+d marginal-effect analysis. The command reports the interaction
+d coefficient, its standard error, t statistic and p value. It also
+d calculates marginal effects and marginal-effect zero-crossing
+d critical values. 
+d
+d KW: panel data
+d KW: interactions
+d KW: marginal effects
+d
+d Requires: Stata version 18
+d
+d Distribution-Date: 20260924
+d
+d Author:  Zehra Yalnız,   Kocaeli University, Türkiye
+d Support: email zehrayalnizz41@@gmail.com
+d
+f xtie2.ado
+f xtie2.sthlp

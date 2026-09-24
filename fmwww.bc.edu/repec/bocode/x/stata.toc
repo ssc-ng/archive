@@ -115,6 +115,7 @@ p xthrtest module to perform Born & Breitung Bias-corrected HR-test for first or
 p xthst module to test slope homogeneity in large panels
 p xthybrid module to estimate hybrid and correlated random effect (Mundlak) models within the framework of generalized linear mixed models (GLMM)
 p xtidt module to compute Identification Variables in Panel Data 
+p xtie2 module to provide Interactive Panel Data Estimation with automatic pairwise interactions
 p xtile2 module to create a new variable that categorizes exp by its quantiles
 p xtiletest module to test equality of percentiles across groups of observations
 p xtimportu module to import monthly, quarterly, half-yearly or yearly time series and panel data as panelvar timevar valuevar from a supported file format to memory or a file

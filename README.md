@@ -1,4 +1,4 @@
-[![Mirror workflow](https://github.com/labordynamicsinstitute/ssc-mirror/actions/workflows/mirror.yml/badge.svg)](https://github.com/labordynamicsinstitute/ssc-mirror/actions/workflows/mirror.yml)
+[![Mirror workflow](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml/badge.svg)](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml)
 
 # A mirror of the Statistical Software Components archive at BC
 
@@ -6,14 +6,14 @@ This repository contains a sequence of updates from the SSC Archive at BC.
 
 ## How the mirror is created
 
-See [mirror.repec.sh](mirror.repec.sh). The process can take up to 60 minutes. The downloaded mirror is in the [releases branch](https://github.com/labordynamicsinstitute/ssc-mirror/tree/releases).
+See [mirror.repec.sh](mirror.repec.sh). The process can take up to 60 minutes. The downloaded mirror is in the [releases branch](https://github.com/ssc-ng/archive/tree/releases).
 
 ## Date-stamped tags
 
-Tags are created every time the archive is mirrored. See [https://github.com/labordynamicsinstitute/ssc-mirror/tags](https://github.com/labordynamicsinstitute/ssc-mirror/tags).
+Tags are created every time the archive is mirrored. See [https://github.com/ssc-ng/archive/tags](https://github.com/ssc-ng/archive/tags).
 
-- The oldest tags are [2017-08-10](https://github.com/labordynamicsinstitute/ssc-mirror/releases/tag/2017-08-10), [2021-04-15](https://github.com/labordynamicsinstitute/ssc-mirror/releases/tag/2021-04-15), and [2021-08-10](https://github.com/labordynamicsinstitute/ssc-mirror/releases/tag/2021-08-10).
-- The oldest tag with continuous daily snapshots is [2021-12-23](https://github.com/labordynamicsinstitute/ssc-mirror/releases/tag/2021-12-23)
+- The oldest tags are [2017-08-10](https://github.com/ssc-ng/archive/releases/tag/2017-08-10), [2021-04-15](https://github.com/ssc-ng/archive/releases/tag/2021-04-15), and [2021-08-10](https://github.com/ssc-ng/archive/releases/tag/2021-08-10).
+- The oldest tag with continuous daily snapshots is [2021-12-23](https://github.com/ssc-ng/archive/releases/tag/2021-12-23)
 - For bugs in the set of tags, see [ERRATA](ERRATA.md).
 
 ## Using the mirror
@@ -22,7 +22,7 @@ While the `ssc` command in Stata will continue to go to the original location, y
 
 ```{stata}
 global sscdate "2021-12-21"
-global sscmirror "raw.githubusercontent.com/labordynamicsinstitute/ssc-mirror/$sscdate/" 
+global sscmirror "raw.githubusercontent.com/ssc-ng/archive/$sscdate/" 
 net install a2reg, from(https://${sscmirror}fmwww.bc.edu/repec/bocode/a) all
 ```
 
@@ -37,7 +37,7 @@ net install ssc2, all replace from("https://raw.githubusercontent.com/labordynam
 
 This repository can get big (over 20,000 objects, approx. 320 MB for a shallow clone). You are encouraged, if cloning to your local workspace, to do a "shallow" clone:
 
-    git clone --depth 1 https://github.com/labordynamicsinstitute/ssc-mirror.git
+    git clone --depth 1 https://github.com/ssc-ng/archive.git
 
 ## Contributing
 

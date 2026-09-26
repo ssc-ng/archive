@@ -1,0 +1,33 @@
+d 'QUADRICEPS': module implementing positive-weight cubature rules for the Gaussian weight (ghpos) and the cube (lepos)
+d
+d     A cubature rule of degree p in d dimensions is a set of n
+d nodes x_i in R^d and weights w_i > 0 such that sum_i w_i f(x_i)  
+d  equals the integral of f against the weight function for every
+d polynomial f of total degree at most p. The product of q-node   
+d one-dimensional Gauss rules does this for p = 2q - 1 with q^d
+d nodes. The rules stored in this package, the smallest   
+d positive-weight rules known to the author, do it with far fewer:
+d for example 244 nodes instead of 3125 for the Gaussian weight   
+d at d = 5, q = 5. 
+d
+d KW: cubature rules
+d KW: Gaussian weights
+d KW: cube weights
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20260925
+d
+d Author: Joris Pinkse,  Penn State University
+d Support: email  pinkse@@gmail.com
+d
+f quadriceps.ado
+f quadriceps.mata
+f quadriceps.sthlp
+F quadriceps_index.tsv
+F quadriceps_rules.bin
+f quadriceps_test.do
+f ../g/ghpos.ado
+f ../g/ghpos.sthlp
+f ../l/lepos.ado
+f ../l/lepos.sthlp

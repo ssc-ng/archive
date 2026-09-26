@@ -1,0 +1,23 @@
+d 'CTOCLIENT': module providing client for the SurveyCTO API
+d
+d    ctoclient downloads data from a SurveyCTO server into Stata
+d through the SurveyCTO REST API. It is the Stata companion of the
+d R    package ctoclient by the same author, and uses consistent
+d command names. 
+d
+d KW: data management
+d KW: CTO
+d KW: survey data
+d
+d Requires: Stata version 15 and curl
+d
+d Distribution-Date: 20260925
+d
+d Author:  Gutama Girja Urago,    Laterite
+d Support: email gurago@@laterite.com
+d
+f cto_form_data.ado
+f cto_form_data_attachment.ado
+f ctoclient.sthlp
+f cto_form_data.sthlp
+f cto_form_data_attachment.sthlp

@@ -63,6 +63,7 @@ p lianxh module to Search and share Stata resources and blogs within Stata Comma
 p libd3 module providing D3js Mata library
 p libhtml module providing an object oriented implementation of HTML in Mata
 p libjson module to provide Mata class library for obtaining and parsing JSON strings into object trees
+p lillardhaz module to estimate simultaneous-equations hazard/probit models with a Gaussian-copula correlation (Lillard 1993)
 p lincheck module to graphically assess the linearity of a continuous covariate in a regression model
 p lincom2 module to compute multiple linear combinations
 p lincomest module to generate linear combinations of estimators saved as estimation results

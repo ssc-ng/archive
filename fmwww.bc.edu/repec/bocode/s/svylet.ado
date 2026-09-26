@@ -1,4 +1,4 @@
-*! svylet.ado v1.6 - 27aug2026
+*! svylet.ado v1.2 - 24aug2026
 *! Wald omnibus F-test + Bonferroni pairwise comparisons + Compact Letter
 *! Display (CLD) for means, totals, proportions, and ratios under survey
 *! design.
@@ -11,59 +11,6 @@
 *! not necessarily reflect the position of INEI.
 *! Distributed under the GNU General Public License v3
 *! (https://www.gnu.org/licenses/gpl-3.0.txt).
-*!
-*! v1.5 -- FIX real (encontrado corriendo revision_pre_ssc.do en Stata
-*! real, StataNow 19.5, antes de mandar el paquete a SSC): over() STRING
-*! (ej. una variable armada con decode()) hacia que "over() debe tener
-*! al menos 2 categorias en la muestra" saltara SIEMPRE, sin importar
-*! cuantas categorias reales tuviera la variable. Causa raiz: la linea
-*! "markout `touse' `over' `denominator'" (sin la opcion strok) hace que
-*! Stata excluya el 100% de las observaciones en cuanto CUALQUIER
-*! variable de su lista es de tipo string -- no solo las de string vacio,
-*! TODAS -- confirmado aislando el markout solo (fuera de svylet.ado) con
-*! datos donde la variable string no tenia NINGUN valor vacio. touse
-*! quedaba en 0 para las 74 observaciones de auto.dta, "levelsof origin
-*! if touse" devolvia vacio, y el chequeo de k<2 saltaba por una causa
-*! que no tenia nada que ver con el numero real de categorias. Afecta a
-*! CUALQUIER llamada con over() string -- el camino numerico (el uso mas
-*! comun) nunca estuvo afectado, porque strok no cambia el manejo de
-*! variables numericas. Corregido agregando ", strok" al markout. Este
-*! bug estaba presente desde v1.0; el ejemplo de over() string agregado
-*! al help en esta misma sesion (svylet.sthlp) nunca se habia corrido en
-*! Stata real hasta ahora -- ver revision_pre_ssc.do en el repo, seccion 5.
-*!
-*! v1.6 -- FIX (encontrado revisando tabulados de produccion reales,
-*! tipo_actividad/Pecuaria): filas con las 4 categorias de over() con
-*! estimacion presente (ninguna realmente faltante) igual mostraban el F
-*! omnibus en blanco, porque 1-3 de esas 4 categorias tenian proporcion
-*! exactamente 0% (varianza degenerada). Causa raiz: el contraste R del
-*! F omnibus (svylet_core(), Mata) se armaba con las k categorias
-*! COMPLETAS -- una sola con V[i,i] missing o <=0 propaga "." por
-*! R*V*R' y lusolve() devuelve missing para TODO el estadistico, aunque
-*! el resto de las k-1 categorias tuvieran variables perfectamente
-*! calculables. Mismo criterio que ya se aplicaba a los pares (Pmat: una
-*! categoria degenerada solo invalida SUS pares, no todos) -- ahora el F
-*! omnibus se calcula sobre el SUBCONJUNTO de categorias con varianza
-*! definida (minimo 2, no se puede testear una igualdad con menos). Con
-*! 0 categorias degeneradas el resultado es identico al de v1.5 (mismo
-*! contraste, misma formula). Replicado en tsvy.ado (tsvy_core(), que
-*! mantiene su propia copia de este motor -- ver nota ahi sobre por que
-*! no puede llamar a svylet_core() entre archivos .ado separados de SSC).
-*!
-*! v1.5 (parte 2, mismo dia, corriendo el FIX de arriba en Stata real):
-*! con touse corregido, over() string sigue sin funcionar -- ahora falla
-*! en el "svy: mean/total/proportion/ratio ..., over(`over')" interno con
-*! el error NATIVO de Stata "string variables not allowed in varlist;
-*! invalid over() option" (r(109)). Esto es una limitacion DURA de
-*! svy: mismo (over() debe ser numerico, sin excepcion) -- no algo que
-*! svylet pueda evitar sin re-mapear el string a codigos numericos por
-*! dentro (no intentado; agrega complejidad no validada en Stata real
-*! justo antes de una entrega). La documentacion previa ("varname may be
-*! numeric or string") era incorrecta desde antes de esta sesion -- ver
-*! svylet.sthlp/svylet_es.sthlp. Agregado un chequeo temprano (justo
-*! despues de syntax) que detecta over() string y corta con un mensaje
-*! claro sugiriendo encode(), en vez de dejar que el usuario llegue al
-*! error crudo de Stata mas abajo.
 *!
 *! v1.1 -- auditoria: dos cambios de comportamiento respecto a v1.0:
 *!   1. boot(): la reasignacion de pseudo-grupo bajo H0 (prepivoting,
@@ -109,32 +56,6 @@
 *!   cambios: su rama "else" (ya usada por mean/total) sirve igual para
 *!   ratio, sin logica nueva de seleccion de ecuacion.
 *!
-*! v1.3 -- FIX: r(n_ponderado)/r(n_sin_ponderar) devolvian los valores
-*!   INVERTIDOS desde v1.0 (e(_N) mapeado a "ponderado" y e(_N_subp) a
-*!   "sin ponderar" -- al reves). Encontrado en produccion via tsvy:
-*!   en la columna N_SIN_PON del frame acumulador aparecia un numero del
-*!   orden de millones (identico a ESTIMA en stat(total) con varname
-*!   constante =1, que por construccion ES el tamano de poblacion
-*!   ponderado) en vez de un conteo de casos de muestra. Ver nota junto a
-*!   "tempname Nmat Nsubpmat Rtable" en el cuerpo del programa. Afecta a
-*!   TODO llamador de svylet que use r(n_ponderado)/r(n_sin_ponderar) --
-*!   en particular tsvy (columnas N_PONDERA/N_SIN_PON del frame
-*!   acumulador). No afecta r(b)/r(V) ni el test F/CLD -- esas cantidades
-*!   nunca pasaron por Nmat/Nsubpmat.
-*!
-*! v1.4 -- agrega ref(): comparaciones "cada categoria de over() contra
-*!   una categoria base fija", Bonferroni sobre k-1 comparaciones -- una
-*!   FAMILIA DE HIPOTESIS DISTINTA de la que responde el F omnibus + CLD
-*!   existente (que compara TODOS los pares, Bonferroni sobre
-*!   k(k-1)/2). Ver svylet.sthlp, seccion Remarks, para la justificacion
-*!   y las referencias (Dunn 1961; Dunnett 1955, 1964; Hsu 1996) sobre
-*!   por que estas dos preguntas dan, legitimamente, resultados
-*!   distintos para el MISMO dato -- encontrado al comparar las letras
-*!   CLD de tsvy contra un script de referencia que solo comparaba cada
-*!   anio contra el anio mas reciente (Bonferroni sobre 3 comparaciones,
-*!   no sobre 6): ninguna de las dos salidas estaba mal, respondian
-*!   preguntas distintas.
-*!
 *! See svylet.sthlp for full documentation, options, examples, and
 *! references.
 
@@ -142,21 +63,7 @@ program define svylet, rclass
     version 14
     syntax varname(numeric) [if] [in], OVER(varname) ///
         STAT(string) [ALPHA(real 0.05) LEVEL(integer 1) ///
-        DENOMINATOR(varname numeric) BOOT(integer 0) BSEED(integer -1) ///
-        REF(string)]
-
-    * over() DEBE ser numerico -- svy: mean/total/proportion/ratio no
-    * aceptan un over() string en absoluto ("string variables not
-    * allowed in varlist; invalid over() option", r(109)), confirmado en
-    * Stata real (StataNow 19.5). Rechazar ACA con un mensaje claro, antes
-    * de marksample/markout, en vez de dejar que el usuario llegue al
-    * error crudo de Stata mas abajo -- sugiere encode() como salida.
-    capture confirm string variable `over'
-    if !_rc {
-        di as err "over(`over') es una variable string -- svy: `stat' no acepta over() string."
-        di as err "Solucion: encode `over', gen(nombre_numerico) y use over(nombre_numerico)."
-        exit 109
-    }
+        DENOMINATOR(varname numeric) BOOT(integer 0) BSEED(integer -1)]
 
     local stat = lower("`stat'")
     if !inlist("`stat'", "mean", "proportion", "total", "ratio") {
@@ -175,45 +82,13 @@ program define svylet, rclass
     }
 
     marksample touse
-    * strok: SIN esta opcion, markout excluye TODAS las observaciones
-    * (no solo las de string vacio) en cuanto `over' es string -- no un
-    * comportamiento documentado de forma obvia, confirmado en Stata real
-    * (ver changelog v1.4.1 arriba): "markout touse over" sobre una
-    * variable string (ej. over() con decode()) dejaba touse=0 para el
-    * 100% de las observaciones, y el error resultante ("over() debe
-    * tener al menos 2 categorias") no tenia nada que ver con la causa
-    * real. strok le dice a markout que una variable string no-missing
-    * (incluida "") se trate como valida -- las observaciones con string
-    * REALMENTE vacio en `over' siguen quedando excluidas mas abajo,
-    * porque levelsof nunca las cuenta como una categoria (una categoria
-    * "" no es una categoria valida de over() para el test).
-    markout `touse' `over' `denominator', strok
+    markout `touse' `over' `denominator'
 
     quietly levelsof `over' if `touse', local(niveles_over)
     local k : word count `niveles_over'
     if `k' < 2 {
         di as err "over() debe tener al menos 2 categorias en la muestra"
         exit 198
-    }
-
-    * -- v1.4 -- ref(): comparaciones "cada categoria vs una categoria
-    * base", Bonferroni sobre k-1 comparaciones -- PREGUNTA DISTINTA de
-    * la que responde el F omnibus + CLD de mas abajo (que compara TODOS
-    * los pares, Bonferroni sobre k(k-1)/2). Ver help para la cita de
-    * literatura sobre por que estas dos familias de hipotesis dan,
-    * legitimamente, resultados distintos (Dunn 1961; Dunnett 1955).
-    local ref_idx = 0
-    if "`ref'" != "" {
-        local i = 0
-        foreach v of local niveles_over {
-            local i = `i' + 1
-            if `v' == `ref' local ref_idx = `i'
-        }
-        if `ref_idx' == 0 {
-            di as err "svylet: ref(`ref') no es un valor observado de over(`over') en la muestra."
-            di as err "  valores observados: `niveles_over'"
-            exit 198
-        }
     }
 
     * -- Correr el comando svy correspondiente ------------------------------
@@ -242,23 +117,6 @@ program define svylet, rclass
     * cualquier otro comando pueda tocar e()/r() -- mismo criterio que
     * ya establecimos: guardar apenas esta disponible, no confiar en que
     * sobreviva hasta mas adelante en el programa.
-    *
-    * v1.2 -- FIX: `Nmat' (e(_N)) y `Nsubpmat' (e(_N_subp)) estaban
-    * INVERTIDOS al exponerse como r(n_ponderado)/r(n_sin_ponderar) desde
-    * v1.0. Confirmado con datos reales (ENA, stat(total) con varname
-    * constante =1): para NIVEL=NACIONAL/ANIO=2026, e(_N) devolvia
-    * 20783 (el N de casos SIN ponderar, coincide con el conteo de filas
-    * de la muestra ese anio) y e(_N_subp) devolvia 2057264.91... --
-    * EXACTAMENTE igual a r(b) (la estimacion PONDERADA, ya que
-    * varname=1 hace que total(varname) sea el tamano de poblacion
-    * ponderado). O sea e(_N) es el tamano SIN ponderar y e(_N_subp) es
-    * el PONDERADO -- al reves de lo que el nombre "_N_subp" sugiere y de
-    * lo que este mismo archivo asumia. Los nombres de macro (`Nmat'/
-    * `Nsubpmat') se mantienen como estaban (mapeados 1 a 1 a e(_N)/
-    * e(_N_subp) respectivamente, para no confundir de donde viene cada
-    * uno) -- el swap se hace mas abajo, en el return matrix, que es
-    * donde se decide el significado (ponderado/sin ponderar) que ve
-    * quien llama.
     tempname Nmat Nsubpmat Rtable
     capture matrix `Nmat' = e(_N)
     capture matrix `Nsubpmat' = e(_N_subp)
@@ -269,16 +127,6 @@ program define svylet, rclass
     tempname b_sel V_sel
     _svylet_seleccionar `B' `V' `k' `level' "`stat'" "`varlist'" `b_sel' `V_sel'
     local idx_usar "`r(idx_usar)'"
-
-    * -- v1.4 -- ref(): k-1 contrastes de Wald "categoria vs ref_idx",
-    * Bonferroni sobre k-1 (no sobre k(k-1)/2 como el CLD). Usa el MISMO
-    * b_sel/V_sel/df_r ya calculados -- ningun svy: adicional.
-    tempname p_vsref p_vsref_raw
-    matrix `p_vsref'     = J(`k', 1, .)
-    matrix `p_vsref_raw' = J(`k', 1, .)
-    if `ref_idx' > 0 {
-        mata: svylet_vsref("`b_sel'", "`V_sel'", `df_r', `ref_idx', `k', "`p_vsref'", "`p_vsref_raw'")
-    }
 
     * N ponderado / sin ponderar por categoria, en el mismo orden que
     * b_sel/V_sel (usa los mismos indices de columna que ya selecciono
@@ -547,12 +395,8 @@ program define svylet, rclass
     * de alineacion en el pipeline de especies).
     return matrix b               = `b_obs'
     return matrix V               = `V_sel'
-    * Swap deliberado -- ver nota junto a "tempname Nmat Nsubpmat Rtable"
-    * mas arriba: e(_N) (-> `Nout') resulto ser el tamano SIN ponderar y
-    * e(_N_subp) (-> `Nsubpout') el PONDERADO, al reves de la asuncion
-    * original.
-    return matrix n_ponderado     = `Nsubpout'
-    return matrix n_sin_ponderar  = `Nout'
+    return matrix n_ponderado     = `Nout'
+    return matrix n_sin_ponderar  = `Nsubpout'
     * Limite inferior/superior tal como los devolvio Stata en r(table)
     * (ver nota mas arriba de por que no se reconstruyen a mano).
     return matrix ci_lower        = `LIout'
@@ -569,13 +413,6 @@ program define svylet, rclass
         return local letra_`i' "`letra_`i''"
         return local nombre_categoria_`i' "`nom_grupo_`i''"
     }
-
-    * -- v1.4 -- ref(): p-valores "vs categoria base", crudo y ajustado
-    * por Bonferroni (k-1 comparaciones) -- vacios (missing) si ref() no
-    * se especifico, y en la posicion de la propia categoria base.
-    return scalar ref_idx        = `ref_idx'
-    return matrix p_vsref        = `p_vsref'
-    return matrix p_vsref_raw    = `p_vsref_raw'
 end
 
 * -------------------------------------------------------------------------
@@ -774,58 +611,18 @@ void svylet_core(string scalar bname, string scalar Vname, real scalar df,
     //   CON ajuste (el default real de Stata):
     //     (d-k+1)/(k*d) * W ~ F(k, d-k+1)
     // con k = dimension del test (aqui, num_grupos-1) y d = e(df_r).
-    //
-    // v1.6 -- FIX: hasta v1.5, R se armaba con las k categorias
-    // COMPLETAS (incluyendo las de varianza degenerada), asi que UNA
-    // sola categoria con proporcion exactamente 0 o 1 (sin variabilidad)
-    // hacia que TODO el F omnibus quedara en missing -- el "." de esa
-    // categoria se propaga por R*V*R' y lusolve() devuelve missing,
-    // aunque el resto de las categorias tuvieran variables perfectamente
-    // calculables. Confirmado en produccion (tsvy, tabulado real):
-    // filas con 4 de 4 anios con "Estimacion" (ninguno realmente
-    // faltante) igual daban F en blanco porque 1-3 de esos anios eran
-    // exactamente 0%. Igual que ya se hacia para los pares (Pmat, mas
-    // abajo: una categoria degenerada solo invalida SUS pares, no todos)
-    // ahora el F omnibus se calcula sobre el SUBCONJUNTO de categorias
-    // con varianza definida, excluyendo las degeneradas del contraste en
-    // vez de dejar que su "." contamine todo. Minimo 2 categorias
-    // validas para poder testear una igualdad (con 0 o 1, no hay nada
-    // que comparar) -- con 0 degeneradas, idx_validas es 1..k y el
-    // resultado es identico al de v1.5.
-    real scalar k_dim, df_ajustado, k_valida
-    real colvector idx_validas, b_valida
-    real matrix V_valida
-    idx_validas = select((1::k), var_degenerada :== 0)
-    k_valida = rows(idx_validas)
-    if (k_valida >= 2) {
-        b_valida = b[idx_validas]
-        V_valida = V[idx_validas, idx_validas]
-        k_dim = k_valida - 1
-        R = J(k_dim, k_valida, 0)
-        for (i=2; i<=k_valida; i++) {
-            R[i-1,1] = -1
-            R[i-1,i] = 1
-        }
-        RVR = R*V_valida*R'
-        stat_wald = (R*b_valida)' * lusolve(RVR, R*b_valida)
-        df_ajustado = df - k_dim + 1
-        Fstat = (df_ajustado / (k_dim * df)) * stat_wald
-        p_omni = 1 - F(k_dim, df_ajustado, Fstat)
-        if (k_valida < k) {
-            printf("{txt}  F omnibus calculado con %g de %g categorias" +
-                   " (las de varianza degenerada quedan afuera del" +
-                   " contraste, no del reporte -- sus puntos siguen" +
-                   " listados, su letra queda en [?]).\n", k_valida, k)
-        }
+    real scalar k_dim, df_ajustado
+    k_dim = k - 1
+    R = J(k_dim, k, 0)
+    for (i=2; i<=k; i++) {
+        R[i-1,1] = -1
+        R[i-1,i] = 1
     }
-    else {
-        k_dim = .
-        df_ajustado = .
-        Fstat = .
-        p_omni = .
-        printf("{txt}  F omnibus no calculable: menos de 2 categorias" +
-               " con varianza definida (%g de %g).\n", k_valida, k)
-    }
+    RVR = R*V*R'
+    stat_wald = (R*b)' * lusolve(RVR, R*b)
+    df_ajustado = df - k_dim + 1
+    Fstat = (df_ajustado / (k_dim * df)) * stat_wald
+    p_omni = 1 - F(k_dim, df_ajustado, Fstat)
 
     // ---- Pares con correccion Bonferroni ----
     npares = k*(k-1)/2
@@ -941,42 +738,5 @@ void svylet_core(string scalar bname, string scalar Vname, real scalar df,
     for (i=1; i<=k; i++) {
         st_global("r(letra_"+strofreal(i)+")", letra_grupo[i])
     }
-}
-
-// v1.4 -- ref(): contrastes de Wald de UNA categoria contra una
-// categoria BASE fija (ref_idx), k-1 comparaciones -- distinto del F
-// omnibus + CLD de arriba (que compara TODOS los pares, k(k-1)/2
-// comparaciones). Corrige por Bonferroni sobre k-1 (min(1, p_crudo *
-// (k-1))), el mismo criterio que Dunn (1961, JASA) para "comparar
-// varios grupos contra un control" -- MAS simple y MAS conservador que
-// el metodo de un solo paso de Dunnett (1955, JASA; 1964, Biometrics),
-// que usa la distribucion t multivariada para aprovechar que las k-1
-// comparaciones comparten la misma categoria base y ganar potencia; no
-// implementado aca (ver help para el detalle y las referencias).
-void svylet_vsref(string scalar bname, string scalar Vname, real scalar df,
-                   real scalar ref_idx, real scalar k,
-                   string scalar pname, string scalar prawname)
-{
-    real matrix b, V
-    real colvector p_adj, p_raw
-    real scalar i, se, t, ncomp
-
-    b = st_matrix(bname)
-    V = st_matrix(Vname)
-    p_adj = J(k,1,.)
-    p_raw = J(k,1,.)
-    ncomp = k - 1
-
-    for (i=1; i<=k; i++) {
-        if (i == ref_idx) continue
-        if (missing(V[i,i]) | missing(V[ref_idx,ref_idx]) | V[i,i]<=0 | V[ref_idx,ref_idx]<=0) continue
-        se = sqrt(V[i,i] + V[ref_idx,ref_idx] - 2*V[i,ref_idx])
-        if (se<=0 | missing(se)) continue
-        t = (b[i] - b[ref_idx]) / se
-        p_raw[i] = 2*ttail(df, abs(t))
-        p_adj[i] = min((p_raw[i]*ncomp, 1))
-    }
-    st_matrix(pname, p_adj)
-    st_matrix(prawname, p_raw)
 }
 end

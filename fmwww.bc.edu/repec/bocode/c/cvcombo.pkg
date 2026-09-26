@@ -1,0 +1,34 @@
+d 'CVCOMBO': module to perform control-variable all-combinations robustness test
+d
+d  cvcombo enumerates all nonempty combinations of user-specified
+d control variables and estimates each specification using a
+d user-supplied method(). It supports regress, xtreg, logit,
+d probit, reghdfe, and other compatible Stata estimators. Version
+d 2.0.0 additionally provides automated paper-output facilities,
+d including Specification Curve, Specification Matrix,
+d coefficient-distribution figures, robustness summaries, and a
+d Word-format robustness table. 
+d
+d KW: control variables
+d KW: regression
+d KW: logit
+d KW: probit
+d
+d Requires: Stata version 15.1
+d
+d Distribution-Date: 20260925
+d
+d Author: Jiang ZhenYuan ,  School of Economics, Northwest Normal University
+d Support: email kangjang504@@gmail.com
+d
+d Author: Zhang Na ,  School of Economics, Northwest Normal University
+d Support: email zhangna@@nwnu.edu.cn
+d
+f cvcombo.ado
+f cvcombo.sthlp
+f cvcombo_specification_curve.gph
+f cvcombo_specification_curve.png
+f cvcombo_specification_curve.svg
+f cvcombo_test_logit.dta
+f cvcombo_test_regress.dta
+f test_cvcombo.do

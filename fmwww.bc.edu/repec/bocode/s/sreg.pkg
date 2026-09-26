@@ -1,0 +1,43 @@
+d 'SREG': module to provide ATE estimation and inference in stratified randomized experiments
+d
+d  sreg provides estimation and inference for average treatment
+d effects in stratified randomized experiments. It implements
+d design-specific treatment-effect estimators and variance
+d estimators for matched pairs, general k-tuple designs, large
+d strata of potentially unequal sizes, and designs combining small
+d and large strata. The package accommodates multiple treatments,
+d individual- and cluster-level treatment assignment, and optional
+d linear covariate adjustment. It reports treatment effects
+d relative to control, standard errors, test statistics, p-values,
+d and asymptotic confidence intervals. Companion commands generate
+d experimental data and plot estimated treatment effects. 
+d
+d KW: randomized experiments; stratification; average treatment effects;
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20260925
+d
+d Author: Juri Trifonov ,  Northwestern University
+d Support: email  jutrifonov@@u.northwestern.edu
+d
+d Author: Yuehao Bai ,  University of Southern California
+d Support: email yuehao.bai@@usc.edu
+d
+d Author: Azeem Shaikh ,  University of Chicago
+d Support: email amshaikh@@uchicago.edu
+d
+d Author: Max Tabord-Meehan ,  University of Toronto
+d Support: email m.tabordmeehan@@utoronto.ca
+d
+f sreg.ado
+f sreg.sthlp
+f sreg_aejapp.dta
+f sreg_aejapp.sthlp
+f sreg_mata.mata
+f sreg_rgen.ado
+f sreg_rgen.mata
+f sreg_rgen.sthlp
+f sregplot.ado
+f sregplot.sthlp
+f ../t/try_sreg.do

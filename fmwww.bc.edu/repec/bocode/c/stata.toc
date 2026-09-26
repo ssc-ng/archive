@@ -318,6 +318,7 @@ p csumchart module to compute cumulative sum (CUSUM) charts for monitoring clini
 p csvconvert module to append multiple csv files
 p cta module for conducting Classification Tree Analysis
 p ctabstat module to display table of summary statistics
+p ctoclient module providing client for the SurveyCTO API
 p ctohri module to translate From Counts to Hazard Ratio
 p ctreatreg module for estimating dose-response models under exogenous and endogenous treatment
 p cub module to estimate ordinal outcome model estimated by a mixture of a uniform and a shifted binomial
@@ -334,6 +335,7 @@ p cv2 module to calculate the coefficient of variation for variables
 p cv_kfold module to implement k-fold cross-validation procedures
 p cv_regress module to estimate the leave-one-out error for linear regression models
 p cvauroc module to compute Cross-validated Area Under the Curve for ROC Analysis after Predictive Modelling for Binary Outcomes
+p cvcombo module to perform control-variable all-combinations robustness test
 p cvcrand module for efficient design and analysis of Cluster Randomized Trials
 p cvequal module to compute the equality of coefficients of variation (CV) from k populations
 p cvmtest module to perform a k-sample Cramer-von Mises equality-of-distributions test

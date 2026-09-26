@@ -1,0 +1,26 @@
+d 'TWFEDEC': module to compute Two-way fixed effects coefficient as a weighted average of first-difference coefficients
+d
+d    twfedec decomposes the coefficient on a scalar treatment in a
+d two-way fixed effects (TWFE) regression on a balanced panel,
+d following Ishimaru (2026, The Econometrics Journal, Theorem 2.2).
+d The TWFE coefficient equals a weighted average of k-period
+d first-difference (FD) coefficients over all horizons k = 1, ...,
+d T-1; with time-varying covariates, an adjustment term is added.
+d twfedec reports the TWFE coefficient, the FD coefficients, the
+d weights, and the adjustment term, and optionally plots the FD
+d coefficients and weights by horizon. 
+d
+d KW: panel data
+d KW: TWFE
+d KW: fixed effects
+d
+d Requires: Stata version 15 and reghdfe, ftools from SSC (q.v.)
+d
+d Distribution-Date: 20260925
+d
+d Author:    Shoya Ishimaru,   Hitotsubashi University
+d Support: email  shoya.ishimaru@@r.hit-u.ac.jp
+d
+f twfedec.ado
+f twfedec.sthlp
+f twfedec_example.dta

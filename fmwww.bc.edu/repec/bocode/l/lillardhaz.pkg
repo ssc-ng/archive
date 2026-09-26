@@ -1,0 +1,32 @@
+d 'LILLARDHAZ': module to estimate simultaneous-equations hazard/probit models with a Gaussian-copula correlation (Lillard 1993)
+d
+d    lillardhaz fits a two-equation simultaneous model of the kind
+d introduced in Lillard (J. Econometrics, 1993): a pair of
+d processes -- each a	 binary probit outcome or a continuous-time
+d hazard duration -- linked through a single correlation parameter
+d rho between their    underlying error terms, estimated jointly by
+d maximum likelihood via a Gaussian copula.  Equation 1 (eq1()) may
+d be a probit, a    log-normal hazard, or a piecewise
+d (linear-log-hazard) Gompertz hazard with an arbitrary number of
+d user-specified nodes;    equation 2 (eq2()) is always a hazard,
+d log-normal or piecewise Gompertz. With nocorr, the two equations
+d are fit under the    (testable) restriction rho=0, which -- as
+d shown in The model below -- reduces exactly to two independent
+d univariate fits. 
+d
+d KW: hazard model
+d KW: probit model
+d KW: Gaussian copula
+d
+d Requires: Stata version 17
+d
+d Distribution-Date: 20260925
+d
+d Author:  Nobutaka Fukuda,   Tohoku University
+d Support: email  nobutaka.fukuda@@tohoku.ac.jp
+d
+f lillardhaz.ado
+f lillardhaz.sthlp
+f ../_/_lillardhaz_pgomp.ado
+f lillardhaz_d0.ado
+f lillardhaz_p.ado

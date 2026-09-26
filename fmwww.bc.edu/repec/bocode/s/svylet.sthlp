@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.5.0  26aug2026}{...}
+{* *! version 1.2.0  24aug2026}{...}
 {vieweralsosee "[R] svy: mean" "help mean"}{...}
 {vieweralsosee "[R] svy: total" "help total"}{...}
 {vieweralsosee "[R] svy: proportion" "help proportion"}{...}
@@ -24,6 +24,8 @@
 and Compact Letter Display, for {cmd:svy:}{space 1}{cmd:mean}/{cmd:total}/
 {cmd:proportion}
 
+{phang}
+{it:Version {bf:1.2} (24aug2026)}{p_end}
 
 {marker syntax}{...}
 {title:Syntax}
@@ -56,13 +58,6 @@ for {cmd:mean}, {cmd:total}, and {cmd:ratio}{p_end}
 Required with {cmd:stat(ratio)}, ignored (with a note) otherwise{p_end}
 {synopt:{opt a:lpha(#)}}significance level used for the Bonferroni pairwise
 comparisons and the Compact Letter Display; default is {cmd:alpha(0.05)}{p_end}
-
-{syntab:Vs-a-reference (optional)}
-{synopt:{opt ref(#)}}value of {cmd:over()} to use as a fixed baseline
-category. Adds {cmd:k-1} Bonferroni-corrected Wald contrasts (each other
-category against {cmd:ref()}) alongside the all-pairs CLD -- a DIFFERENT
-family of hypotheses, not a replacement; see
-{help svylet##remarks_ref:Remarks}{p_end}
 
 {syntab:Bootstrap (optional)}
 {synopt:{opt boot(#)}}number of bootstrap replications for a prepivoted
@@ -128,13 +123,9 @@ table (national/region/department, by year) in one pass.
 {opt over(varname)} specifies the variable whose categories define the
 groups to compare (for example, a year variable). It must have at least 2
 distinct values in the estimation sample; {cmd:svylet} stops with an error
-otherwise. {it:varname} must be NUMERIC -- {cmd:svy: mean}/{cmd:total}/
-{cmd:proportion}/{cmd:ratio} do not accept a string {cmd:over()} at all
-({cmd:svylet} checks for this and stops with a clear message naming
-{helpb encode} as the fix, rather than letting the underlying {cmd:svy:}
-call fail with its own less specific error). If {it:varname} has a value
-label, {cmd:svylet} does not use it for the test itself (values are only
-shown as returned by {cmd:levelsof}), so the mapping from a raw code to a
+otherwise. {it:varname} may be numeric or string; if it has a value label,
+{cmd:svylet} does not use it for the test itself (values are only shown as
+returned by {cmd:levelsof}), so the mapping from a raw code to a
 human-readable label, if you need one, is the caller's responsibility (see
 the {cmd:years()} logic in {helpb tsvy} for one way to do this without
 depending on a value label).
@@ -215,7 +206,6 @@ Remarks are presented under the following headings:
 
 {phang2}{help svylet##remarks_test:The omnibus F-test and the Korn-Graubard adjustment}{p_end}
 {phang2}{help svylet##remarks_cld:Bonferroni pairs and the Compact Letter Display}{p_end}
-{phang2}{help svylet##remarks_ref:ref(): comparing against a fixed baseline, not all pairs}{p_end}
 {phang2}{help svylet##remarks_degenerate:Degenerate variance (proportions of exactly 0 or 1)}{p_end}
 {phang2}{help svylet##remarks_boot:Why boot() resamples and reassigns by whole PSU}{p_end}
 {phang2}{help svylet##remarks_limits:What svylet deliberately does not do}{p_end}
@@ -264,56 +254,6 @@ same logic used by {cmd:pwcompare, cld} and by the classic
 letter-display output of ANOVA packages: shared letters mean "not
 distinguishable here", not "equal".
 
-{marker remarks_ref}{...}
-{pstd}{bf:ref(): comparing against a fixed baseline, not all pairs}
-
-{pstd}
-GRUPO/CLD and {cmd:ref()} answer two DIFFERENT questions, and can
-legitimately disagree on the same data -- neither is "wrong" when they do.
-This matters in practice: comparing tsvy's CLD letters against a reference
-script that only tested each year against the most recent one found
-about 17% of the derived year-vs-2026 calls disagreeing, entirely because
-the two procedures test different families of hypotheses (see the tsvy.ado
-v1.5 changelog for the worked example).
-
-{pstd}
-GRUPO/CLD (the default, always computed) answers "which of these {it:k}
-categories differ from EACH OTHER" -- all {it:k}(k-1)/2 pairs are
-compared, and the Bonferroni correction multiplies each raw p-value by
-{it:k}(k-1)/2. {cmd:ref(#)} answers a narrower, DIFFERENT question --
-"which categories differ from THIS ONE baseline category" -- only {it:k}-1
-comparisons are in that family, so the Bonferroni correction multiplies by
-{it:k}-1 instead. A comparison that survives Bonferroni at {it:k}-1
-comparisons can fail to survive it at {it:k}(k-1)/2 comparisons (and,
-less intuitively but just as legitimately, the reverse can happen too, in
-either direction), because the two corrections are controlling the
-family-wise error rate over two DIFFERENT families of hypotheses, not the
-same family with a different sample size. Dunn (1961) is the classical
-reference for applying the Bonferroni inequality to multiple-comparison
-problems, including comparing several groups against one control.
-
-{pstd}
-The {it:k}-1 comparisons {cmd:ref()} builds share the same baseline
-category, so their test statistics are correlated with each other in a
-known way -- an all-pairs procedure (this command's own CLD, Tukey's
-method, or a plain Bonferroni split across {it:k}-1 comparisons as
-{cmd:ref()} does) does not exploit that correlation and is therefore more
-conservative than necessary for this specific family. Dunnett (1955, 1964)
-derived a single-step procedure for exactly this "several treatments vs a
-control" design that uses the correlation among the {it:k}-1 contrasts to
-get sharper (less conservative, more powerful) critical values while still
-controlling the family-wise error rate at the nominal level; see also Hsu
-(1996, chapter 4) and Bretz, Hothorn & Westfall (2010, chapter 4) for
-modern treatments and worked examples (the latter's R package
-{cmd:multcomp} implements it as {cmd:contrMat(..., type="Dunnett")}).
-{cmd:ref()} in this command uses the simpler Bonferroni split (Dunn 1961),
-not the Dunnett single-step critical value -- it is always valid (Bonferroni
-never inflates the false-positive rate, regardless of the correlation
-structure) but somewhat conservative relative to Dunnett's for this
-specific comparison family; implementing genuine Dunnett critical values
-requires the multivariate t distribution, not attempted here. See
-{help svylet##references:References} below.
-
 {marker remarks_degenerate}{...}
 {pstd}{bf:Degenerate variance (proportions of exactly 0 or 1)}
 
@@ -329,17 +269,6 @@ Letter Display. A warning naming the affected categories (by their
 position within {cmd:over()}, not their raw value) is printed. Treat
 {cmd:?} as "the test could not be computed here", never as "no
 difference".
-
-{pstd}
-The omnibus F only drops the degenerate categories from its own
-contrast -- it does not go missing just because one category out of
-many is degenerate. As long as at least 2 categories have a defined,
-positive variance, the omnibus F and its p-value are computed on that
-subset (a note is printed naming how many of the {cmd:over()}
-categories were used); with fewer than 2 usable categories there is
-nothing left to test, so {cmd:r(F_omnibus)}/{cmd:r(p_omnibus)} are
-returned missing. Point estimates and pairwise comparisons that do not
-involve a degenerate category are unaffected either way.
 
 {marker remarks_boot}{...}
 {pstd}{bf:Why boot() resamples and reassigns by whole PSU}
@@ -414,13 +343,6 @@ repair-record categories? {opt denominator()} is a separate option, not a
 {cmd:num/den} expression typed into the main argument{p_end}
 {phang2}{cmd:. svylet trunk, over(rep78) stat(ratio) denominator(length)}{p_end}
 
-{pstd}{cmd:over()} must be numeric -- if the grouping variable you have is
-a STRING (say, {cmd:origin}, holding "Domestic"/"Foreign" text), run it
-through {helpb encode} first, then pass the resulting numeric variable:{p_end}
-{phang2}{cmd:. decode foreign, generate(origin)}{p_end}
-{phang2}{cmd:. encode origin, generate(origin_num)}{p_end}
-{phang2}{cmd:. svylet mpg, over(origin_num) stat(mean)}{p_end}
-
 {pstd}With a bootstrap-calibrated p-value (needs a design with real PSUs
 and strata; {cmd:industry}/{cmd:south} in {cmd:nlsw88.dta} are used here
 only to have multi-row clusters to demonstrate the mechanism, not as a
@@ -434,26 +356,6 @@ letter (fewer groups end up "significantly different"), without changing
 the omnibus F-test itself, only the pairwise comparisons behind
 {cmd:GRUPO}:{p_end}
 {phang2}{cmd:. svylet mpg, over(rep78) stat(mean) alpha(0.10)}{p_end}
-
-{pstd}{cmd:ref()}: compare every {cmd:rep78} category against ONE fixed
-baseline (here, 5 = "Excellent") instead of all pairs -- {it:k}-1
-Bonferroni-adjusted contrasts (Dunn 1961), a DIFFERENT family of
-hypotheses from the all-pairs CLD above (see
-{help svylet##remarks_ref:Remarks}). This is the pattern for "did each
-group change relative to a reference category/year", the question
-{helpb tsvy}'s {cmd:refyear()} answers over time -- see its help for a
-worked example with years:{p_end}
-{phang2}{cmd:. svylet mpg, over(rep78) stat(mean) ref(5)}{p_end}
-{phang2}{cmd:. return list}{p_end}
-{phang2}{cmd:. matrix list r(p_vsref)}{p_end}
-
-{pstd}Reading the per-category vs-baseline p-value programmatically
-(missing at {cmd:r(ref_idx)}'s own position, and throughout if
-{cmd:ref()} was not specified):{p_end}
-{phang2}{cmd:. forvalues i = 1/`r(k_categorias)' {c 123}}{p_end}
-{phang2}{cmd:.     if `i'' != `r(ref_idx)'' di "rep78 = " `r(nombre_categoria_`i'')' ///}{p_end}
-{phang2}{cmd:.        "  vs baseline p = " el(r(p_vsref), `i'', 1)}{p_end}
-{phang2}{cmd:. {c 125}}{p_end}
 
 {pstd}Reading the results back after the command runs -- the scalars and
 matrices in {help svylet##results:Stored results} above:{p_end}
@@ -495,8 +397,6 @@ completed without error; missing if {cmd:boot()} was not specified{p_end}
 ordinary {it:t}-based confidence interval by hand{p_end}
 {synopt:{cmd:r(k_categorias)}}number of {cmd:over()} categories tested
 ({it:k}){p_end}
-{synopt:{cmd:r(ref_idx)}}position (1,...,{it:k}) of {cmd:ref()} within
-{cmd:over()}'s categories; 0 if {cmd:ref()} was not specified{p_end}
 {p2colreset}{...}
 
 {synoptset 24 tabbed}{...}
@@ -515,23 +415,15 @@ category, in the same order as {cmd:r(nombre_categoria_}{it:i}{cmd:)}{p_end}
 {synopt:{cmd:r(V)}}{it:k} x {it:k}: design-based variance-covariance
 matrix of {cmd:r(b)}{p_end}
 {synopt:{cmd:r(n_ponderado)}}{it:k} x 1: weighted sample size
-({cmd:e(_N_subp)}) per category{p_end}
-{synopt:{cmd:r(n_sin_ponderar)}}{it:k} x 1: unweighted sample size
 ({cmd:e(_N)}) per category{p_end}
+{synopt:{cmd:r(n_sin_ponderar)}}{it:k} x 1: unweighted sample size
+({cmd:e(_N_subp)}) per category{p_end}
 {synopt:{cmd:r(ci_lower)}}{it:k} x 1: lower confidence limit per category,
 read directly from {cmd:r(table)} of the underlying {cmd:svy:} call (in
 the logit-transformed scale Stata itself uses for {cmd:proportion}, not
 reconstructed by hand){p_end}
 {synopt:{cmd:r(ci_upper)}}{it:k} x 1: upper confidence limit per category,
 same source as {cmd:r(ci_lower)}{p_end}
-{synopt:{cmd:r(p_vsref)}}{it:k} x 1: Bonferroni-adjusted ({it:k}-1
-comparisons) p-value of each category against {cmd:ref()}'s category;
-missing throughout if {cmd:ref()} was not specified, and at
-{cmd:r(ref_idx)}'s own position always (a category is not tested against
-itself){p_end}
-{synopt:{cmd:r(p_vsref_raw)}}{it:k} x 1: same comparisons, raw (unadjusted)
-p-value -- for audit/diagnostic use; apply your own correction if
-{cmd:r(p_vsref)}'s plain Bonferroni is not what you want{p_end}
 {p2colreset}{...}
 
 {pstd}
@@ -552,10 +444,6 @@ Prepivoting test statistics: A bootstrap view of asymptotic refinements.
 {it:Journal of the American Statistical Association} 83(403): 687{c -}697.
 
 {pstd}
-Bretz, F., T. Hothorn, and P. Westfall. 2010.
-{it:Multiple Comparisons Using R}. Boca Raton, FL: CRC Press.
-
-{pstd}
 Canty, A. J., and A. C. Davison. 1999.
 Resampling-based variance estimation for labour force surveys.
 {it:The Statistician} 48(3): 379{c -}391.
@@ -563,22 +451,6 @@ Resampling-based variance estimation for labour force surveys.
 {pstd}
 Davison, A. C., and D. V. Hinkley. 1997.
 {it:Bootstrap Methods and Their Application}. Cambridge University Press.
-
-{pstd}
-Dunn, O. J. 1961.
-Multiple comparisons among means.
-{it:Journal of the American Statistical Association} 56(293): 52{c -}64.
-
-{pstd}
-Dunnett, C. W. 1955.
-A multiple comparison procedure for comparing several treatments with a
-control.
-{it:Journal of the American Statistical Association} 50(272): 1096{c -}1121.
-
-{pstd}
-Dunnett, C. W. 1964.
-New tables for multiple comparisons with a control.
-{it:Biometrics} 20(3): 482{c -}491.
 
 {pstd}
 Field, C. A., and A. H. Welsh. 2007.
@@ -589,11 +461,6 @@ Bootstrapping clustered data.
 Hall, P., and S. R. Wilson. 1991.
 Two guidelines for bootstrap hypothesis testing.
 {it:Biometrics} 47(2): 757{c -}762.
-
-{pstd}
-Hsu, J. C. 1996.
-{it:Multiple Comparisons: Theory and Methods}. Boca Raton, FL: Chapman &
-Hall/CRC.
 
 {pstd}
 Korn, E. L., and B. I. Graubard. 1990.

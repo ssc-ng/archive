@@ -43,6 +43,7 @@ p qsim module to produce variables for clarify routines
 p qsub module to emulate a cluster environment using your desktop PC
 p qta module to implement Quantitative Text Analysis (qta) for ESG Disclosures
 p quadas module to provide graphical depiction of quality assessment in diagnostic accuracy reviews
+p quadriceps module implementing positive-weight cubature rules for the Gaussian weight (ghpos) and the cube (lepos)
 p quaidsce module to estimate censored almost-ideal demand systems
 p qualtricsload module to download survey results from Qualtrics server and optionally convert to Stata dataset
 p quandl module to obtain data from Quandl using the Quandl API

@@ -1,8 +1,8 @@
-*! _xtpqroot_fourier v1.0.1
+*! _xtpqroot_fourier v1.0.3
 *! Panel Unit Root Test with Smooth (Fourier) + Sharp (LST) Structural Breaks
 *! Implements: Corakci & Omay (2023, Renewable Energy 205, 648-662)
 *! Author: Dr. Merwan Roudane (merwanroudane920@gmail.com)
-*! Date: March 2026
+*! Date: September 2026
 capture program drop _xtpqroot_fourier
 program define _xtpqroot_fourier, rclass sortpreserve
     version 14.0

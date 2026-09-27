@@ -1,7 +1,7 @@
-*! xtpqroot v1.0.1
+*! xtpqroot v1.0.3
 *! Panel Quantile Unit Root Tests
 *! Author: Dr. Merwan Roudane
-*! Date: March 2026
+*! Date: September 2026
 capture program drop xtpqroot
 program define xtpqroot, rclass sortpreserve
     version 14.0
@@ -36,6 +36,12 @@ program define xtpqroot, rclass sortpreserve
     
     if "`quantile'" != "" & "`fourier'" != "" {
         di as error "Cannot specify both quantile() and fourier options."
+        exit 198
+    }
+    
+    if "`fourier'" == "" & "`model'" == "trendshift" {
+        di as error "model(trendshift) is only available with the fourier option;"
+        di as error "use model(intercept) or model(trend) for CIPS(tau)."
         exit 198
     }
     

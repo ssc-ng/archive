@@ -1,8 +1,11 @@
-*! _xtpqroot_cips v1.0.1
+*! _xtpqroot_cips v1.0.3
 *! Quantile Panel Unit Root Test with Common Shocks (CIPS(tau))
 *! Implements: Yang, Wei & Cai (2022, EL) / Nazlioglu et al. (2026, NAJEF)
 *! Author: Dr. Merwan Roudane (merwanroudane920@gmail.com)
-*! Date: March 2026
+*! Date: September 2026
+*! v1.0.3: model(trend) now enters the observed CADF / CADF(tau) regressions
+*!         (previously only the simulated null distribution); Pesaran (2007)
+*!         truncation constants corrected (intercept 6.19/2.61, trend 6.42/1.70)
 capture program drop _xtpqroot_cips
 program define _xtpqroot_cips, rclass sortpreserve
     version 14.0
@@ -44,14 +47,24 @@ program define _xtpqroot_cips, rclass sortpreserve
     * CD test storage
     mat `cd_mat' = J(1 + `nq', 2, .)  // stat, p-value for OLS + each tau
     
-    * Truncation constants (Pesaran 2007, p.35)
+    * Truncation constants (Pesaran 2007, Section 4)
+    *   Case II  (intercept):         K1 = 6.19, K2 = 2.61
+    *   Case III (intercept + trend): K1 = 6.42, K2 = 1.70
     if "`model'" == "intercept" {
         local K1 = 6.19
-        local K2 = 2.16
+        local K2 = 2.61
     }
     else {
-        local K1 = 6.19
-        local K2 = 2.61
+        local K1 = 6.42
+        local K2 = 1.70
+    }
+
+    * Linear trend regressor (model(trend) only); enters every CADF regression
+    * right after dybar_t, matching the simulated null in Mata
+    local trnd ""
+    if "`model'" == "trend" {
+        tempvar trnd
+        qui gen double `trnd' = `timevar' if `touse'
     }
     
     * =========================================================================
@@ -98,8 +111,8 @@ program define _xtpqroot_cips, rclass sortpreserve
     foreach pid of local panels {
         local ++i
         
-        * Build regressor list: y_{i,t-1}, ybar_{t-1}, Dybar_t, Dybar_{t-1}, ..., Dy_{i,t-1}, ...
-        local xvars "`Ly' `Lybar' `dybar'"
+        * Build regressor list: y_{i,t-1}, ybar_{t-1}, Dybar_t, [t], Dybar_{t-1}, ..., Dy_{i,t-1}, ...
+        local xvars "`Ly' `Lybar' `dybar' `trnd'"
         forvalues j = 1/`maxlag' {
             local xvars "`xvars' `dybar_L`j''"
         }
@@ -158,7 +171,7 @@ program define _xtpqroot_cips, rclass sortpreserve
         mat `cadftau_vec_`q_idx'' = J(`N', 1, .)
         
         * Call Mata to compute CADF(tau) for ALL panels at this quantile
-        mata: _xtpqroot_cadf_tau_real("`varlist'", "`Ly'", "`Lybar'", "`dybar'", ///
+        mata: _xtpqroot_cadf_tau_real("`varlist'", "`Ly'", "`Lybar'", "`dybar'", "`trnd'", ///
             "`panelvar'", "`touse'", `tau', `maxlag', `K1', `K2', `N', ///
             "`cadftau_vec_`q_idx''", "`cadf_ind_mat'", `q_idx')
         
@@ -198,7 +211,7 @@ program define _xtpqroot_cips, rclass sortpreserve
         
         * Run panel-specific OLS CADF regressions and collect residuals
         foreach pid of local panels {
-            local xvars "`Ly' `Lybar' `dybar'"
+            local xvars "`Ly' `Lybar' `dybar' `trnd'"
             forvalues j = 1/`maxlag' {
                 local xvars "`xvars' `dybar_L`j''"
             }
@@ -226,7 +239,7 @@ program define _xtpqroot_cips, rclass sortpreserve
             qui gen double `qr_resid_`q_idx'' = . if `touse'
             
             * Run panel-specific quantile CADF regressions
-            mata: _xtpqroot_cd_qreg_panel("`varlist'", "`Ly'", "`Lybar'", "`dybar'", ///
+            mata: _xtpqroot_cd_qreg_panel("`varlist'", "`Ly'", "`Lybar'", "`dybar'", "`trnd'", ///
                 "`panelvar'", "`touse'", `tau', `maxlag', `N', "`qr_resid_`q_idx''")
             
             mata: _xtpqroot_cd_test("`qr_resid_`q_idx''", "`panelvar'", "`timevar'", "`touse'", `N', `T', "`cd_mat'", `=1+`q_idx'')
@@ -238,7 +251,7 @@ program define _xtpqroot_cips, rclass sortpreserve
     * =========================================================================
     
     if "`nograph'" == "" {
-        mata: _xtpqroot_rho_graph("`varlist'", "`Ly'", "`Lybar'", "`dybar'", ///
+        mata: _xtpqroot_rho_graph("`varlist'", "`Ly'", "`Lybar'", "`dybar'", "`trnd'", ///
             "`panelvar'", "`touse'", `maxlag', `N', `nq_fine', "`rho_mat'")
     }
     
@@ -768,6 +781,7 @@ void _xtpqroot_cadf_tau_real(
     string scalar lyvar,
     string scalar lybarvar,
     string scalar dybarvar,
+    string scalar trendvar,
     string scalar panelvar,
     string scalar tousevar,
     real scalar tau,
@@ -780,7 +794,7 @@ void _xtpqroot_cadf_tau_real(
     real scalar q_idx
 )
 {
-    real colvector dep_all, ly_all, lybar_all, dybar_all, panel_all
+    real colvector dep_all, ly_all, lybar_all, dybar_all, panel_all, trend_all, trend_i
     real colvector unique_panels, sel, dep_i, ly_i, lybar_i, dybar_i
     real colvector dep_full, dy_i, dybar_lj, dy_lj
     real matrix X_i, X_nolag, XnXn_inv, cadftau_vec, cadf_ind
@@ -795,6 +809,7 @@ void _xtpqroot_cadf_tau_real(
     st_view(ly_all, ., lyvar, tousevar)
     st_view(lybar_all, ., lybarvar, tousevar)
     st_view(dybar_all, ., dybarvar, tousevar)
+    if (trendvar != "") st_view(trend_all, ., trendvar, tousevar)
     st_view(panel_all, ., panelvar, tousevar)
     
     unique_panels = uniqrows(panel_all)
@@ -828,8 +843,12 @@ void _xtpqroot_cadf_tau_real(
             t_eff = n_raw - t_start + 1
             
             if (t_eff >= 8) {
-                // Build X: intercept, ly, lybar, dybar
+                // Build X: intercept, ly, lybar, dybar, [trend]
                 X_i = J(t_eff, 1, 1), ly_i[t_start..n_raw], lybar_i[t_start..n_raw], dybar_i[t_start..n_raw]
+                if (trendvar != "") {
+                    trend_i = select(trend_all, sel)
+                    X_i = X_i, trend_i[t_start..n_raw]
+                }
                 dep_i = dep_i[t_start..n_raw]
                 
                 // Compute dy_i for full panel
@@ -1224,6 +1243,7 @@ void _xtpqroot_cd_qreg_panel(
     string scalar lyvar,
     string scalar lybarvar,
     string scalar dybarvar,
+    string scalar trendvar,
     string scalar panelvar,
     string scalar tousevar,
     real scalar tau,
@@ -1232,7 +1252,7 @@ void _xtpqroot_cd_qreg_panel(
     string scalar residvar
 )
 {
-    real colvector dep_all, ly_all, lybar_all, dybar_all, panel_all
+    real colvector dep_all, ly_all, lybar_all, dybar_all, panel_all, trend_all, trend_i
     real colvector unique_panels, sel, dep_i, ly_i, lybar_i, dybar_i
     real colvector dep_full, dy_i, dybar_lj, dy_lj
     real matrix X_i
@@ -1243,6 +1263,7 @@ void _xtpqroot_cd_qreg_panel(
     st_view(ly_all, ., lyvar, tousevar)
     st_view(lybar_all, ., lybarvar, tousevar)
     st_view(dybar_all, ., dybarvar, tousevar)
+    if (trendvar != "") st_view(trend_all, ., trendvar, tousevar)
     st_view(panel_all, ., panelvar, tousevar)
     
     unique_panels = uniqrows(panel_all)
@@ -1272,8 +1293,12 @@ void _xtpqroot_cd_qreg_panel(
             t_eff = n_raw - t_start + 1
             
             if (t_eff >= 8) {
-                // Build X: intercept, ly, lybar, dybar
+                // Build X: intercept, ly, lybar, dybar, [trend]
                 X_i = J(t_eff, 1, 1), ly_i[t_start..n_raw], lybar_i[t_start..n_raw], dybar_i[t_start..n_raw]
+                if (trendvar != "") {
+                    trend_i = select(trend_all, sel)
+                    X_i = X_i, trend_i[t_start..n_raw]
+                }
                 dep_i = dep_i[t_start..n_raw]
                 
                 // Compute dy_i for full panel
@@ -1409,6 +1434,7 @@ void _xtpqroot_rho_graph(
     string scalar lyvar,
     string scalar lybarvar,
     string scalar dybarvar,
+    string scalar trendvar,
     string scalar panelvar,
     string scalar tousevar,
     real scalar maxlag,
@@ -1417,7 +1443,7 @@ void _xtpqroot_rho_graph(
     string scalar rho_matname
 )
 {
-    real colvector dep_all, ly_all, lybar_all, dybar_all, panel_all
+    real colvector dep_all, ly_all, lybar_all, dybar_all, panel_all, trend_all, trend_i
     real colvector unique_panels, sel, dep_i, ly_i, lybar_i, dybar_i
     real colvector dep_full, dy_i, dybar_lj, dy_lj
     real matrix X_i, rho_mat
@@ -1429,6 +1455,7 @@ void _xtpqroot_rho_graph(
     st_view(ly_all, ., lyvar, tousevar)
     st_view(lybar_all, ., lybarvar, tousevar)
     st_view(dybar_all, ., dybarvar, tousevar)
+    if (trendvar != "") st_view(trend_all, ., trendvar, tousevar)
     st_view(panel_all, ., panelvar, tousevar)
     
     unique_panels = uniqrows(panel_all)
@@ -1458,8 +1485,12 @@ void _xtpqroot_rho_graph(
         t_eff = n_raw - t_start + 1
         if (t_eff < 8) continue
         
-        // Build X: intercept, ly, lybar, dybar
+        // Build X: intercept, ly, lybar, dybar, [trend]
         X_i = J(t_eff, 1, 1), ly_i[t_start..n_raw], lybar_i[t_start..n_raw], dybar_i[t_start..n_raw]
+        if (trendvar != "") {
+            trend_i = select(trend_all, sel)
+            X_i = X_i, trend_i[t_start..n_raw]
+        }
         dep_i = dep_i[t_start..n_raw]
         
         // Compute dy_i for full panel

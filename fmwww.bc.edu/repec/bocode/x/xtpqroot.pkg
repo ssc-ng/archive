@@ -17,10 +17,9 @@ d structural breaks, proposed by	    Corakci & Omay (2023,
 d Renewable Energy). It combines the fractional Fourier function
 d (for		  smooth, gradual breaks) with the logistic smooth
 d transition (LST) function (for sharp, 	   abrupt breaks).
-d This allows the test to capture {bf:both types of structural
-d change	    simultaneously}. Cross-sectional dependence is
-d corrected via the sieve bootstrap	       procedure of Chang
-d (2004). 
+d This allows the test to capture both types of structural change  
+d	   simultaneously. Cross-sectional dependence is corrected
+d via the sieve bootstrap	     procedure of Chang (2004). 
 d
 d KW: time series
 d KW: panel data
@@ -31,7 +30,7 @@ d KW: Structural Breaks
 d
 d Requires: Stata version 14
 d
-d Distribution-Date: 20260228
+d Distribution-Date: 20260926
 d
 d Author:   Merwan Roudane, NA
 d Support: email  merwanroudane920@@gmail.com

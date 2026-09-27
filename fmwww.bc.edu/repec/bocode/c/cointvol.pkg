@@ -1,0 +1,70 @@
+d 'COINTVOL': module to evaluate Cointegration under volatility and heteroskedasticity
+d
+d	cointvol collects in one package the econometric methods
+d for cointegration when the innovations are conditionally   
+d heteroskedastic (ARCH/GARCH), have nonstationary volatility
+d (variance breaks, trending or stochastic volatility), or are	 
+d heteroskedastic in other ways. The methods are implemented from
+d the original papers. Each help file maps every computational	 
+d step to the equation of its source and labels each option
+d "Original" or "Extended implementation". 
+d
+d KW: cointegration
+d KW: ARCH volatility
+d KW: heteroskedasticity
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20260926
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f cointvol.ado
+f cointvol.sthlp
+f cointvol_adaptive.ado
+f cointvol_adaptive.sthlp
+f cointvol_diag.ado
+f cointvol_diag.sthlp
+f cointvol_ecm.ado
+f cointvol_ecm.sthlp
+f cointvol_eng_adaptive.ado
+f cointvol_eng_diag.ado
+f cointvol_eng_garchrank.ado
+f cointvol_eng_nullcoint.ado
+f cointvol_eng_resid.ado
+f cointvol_eng_restrict.ado
+f cointvol_eng_stoch.ado
+f cointvol_eng_vecmgarch.ado
+f cointvol_engine.ado
+f cointvol_example.do
+f cointvol_garchrank.ado
+f cointvol_garchrank.sthlp
+f cointvol_graph.ado
+f cointvol_graph.sthlp
+f cointvol_hetcoint.ado
+f cointvol_hetcoint.sthlp
+f cointvol_nullcoint.ado
+f cointvol_nullcoint.sthlp
+f cointvol_rank.ado
+f cointvol_rank.sthlp
+f cointvol_resid.ado
+f cointvol_resid.sthlp
+f cointvol_restrict.ado
+f cointvol_restrict.sthlp
+f cointvol_restrict_p.ado
+f cointvol_select.ado
+f cointvol_select.sthlp
+f cointvol_simulate.ado
+f cointvol_simulate.sthlp
+f cointvol_stoch.ado
+f cointvol_stoch.sthlp
+f cointvol_stoch_p.ado
+f cointvol_table.ado
+f cointvol_table.sthlp
+f cointvol_vecmgarch.ado
+f cointvol_vecmgarch.sthlp
+f cointvol_vecmgarch_estat.ado
+f cointvol_vecmgarch_p.ado
+f cointvol_vecmgarch_postestimation.sthlp
+f ../_/_cointvol_store.ado

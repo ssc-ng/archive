@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.2  06mar2026}{...}
+{* *! version 1.0.3  26sep2026}{...}
 {vieweralsosee "xtcips" "help xtcips"}{...}
 {vieweralsosee "pescadf" "help pescadf"}{...}
 {vieweralsosee "xtunitroot" "help xtunitroot"}{...}
@@ -383,10 +383,10 @@ preserves the cross-panel correlation structure by resampling full time-period r
 of centered residuals.{p_end}
 
 {phang}
-{bf:Truncation:} Following Pesaran (2007, p.35), individual CADF statistics are
+{bf:Truncation:} Following Pesaran (2007, Section 4), individual CADF statistics are
 truncated at [-K1, K2] before averaging. This ensures that the CIPS statistic has
 finite moments even when some individual panel statistics are extreme. The truncation
-constants are K1=6.19 for both models and K2=2.16 (intercept) or K2=2.61 (trend).
+constants are K1=6.19, K2=2.61 (intercept) and K1=6.42, K2=1.70 (intercept + trend).
 Un-truncated statistics are used for individual panel p-value calculations.{p_end}
 
 {phang}
@@ -471,9 +471,10 @@ reject out of N at each quantile.
 {phang2}{cmd:. xtpqroot invest, quantile(0.1 0.3 0.5 0.7 0.9) model(trend) maxlag(2) reps(1000)}{p_end}
 
 {pstd}
-Includes a linear trend in the CADF regression. Use this specification
-when the series exhibits trending behavior. The truncation constant K2
-changes from 2.16 (intercept) to 2.61 (trend).
+Includes a linear trend in every CADF and CADF(tau) regression (observed
+and simulated). Use this specification when the series exhibits trending
+behavior. The truncation constants change from (K1, K2) = (6.19, 2.61)
+(intercept) to (6.42, 1.70) (trend).
 
 {pstd}
 {bf:Example 4: Suppress graphs for speed}

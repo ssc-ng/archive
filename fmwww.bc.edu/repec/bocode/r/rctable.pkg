@@ -21,9 +21,9 @@ d KW:  data management
 d KW: randomized controlled trials
 d KW: RCT
 d
-d Requires: Stata version 15.1
+d Requires: Stata version 16
 d
-d Distribution-Date: 20240211
+d Distribution-Date: 20260926
 d
 d Author: Adrien Bouguen, Santa Clara University
 d Support: email abouguen@@scu.edu

@@ -15875,6 +15875,7 @@ fmwww.bc.edu/repec/bocode/r/regtable.sthlp
 fmwww.bc.edu/repec/bocode/r/robskew.src
 fmwww.bc.edu/repec/bocode/r/rwrmed_calc.ado
 fmwww.bc.edu/repec/bocode/r/rds.sthlp
+fmwww.bc.edu/repec/bocode/r/rcsardl.sthlp
 fmwww.bc.edu/repec/bocode/r/runmixregls.ado
 fmwww.bc.edu/repec/bocode/r/raltest6.dta
 fmwww.bc.edu/repec/bocode/r/rsz.ado
@@ -15930,6 +15931,7 @@ fmwww.bc.edu/repec/bocode/r/rdbwdensity.ado
 fmwww.bc.edu/repec/bocode/r/rifsureg2.ado
 fmwww.bc.edu/repec/bocode/r/regsave_examples.do
 fmwww.bc.edu/repec/bocode/r/r2_nakagawa.ado
+fmwww.bc.edu/repec/bocode/r/rcsardl.ado
 fmwww.bc.edu/repec/bocode/r/retroclassical.ado
 fmwww.bc.edu/repec/bocode/r/robustate.ado
 fmwww.bc.edu/repec/bocode/r/raschcvt.html
@@ -16592,6 +16594,7 @@ fmwww.bc.edu/repec/bocode/r/regdis.hlp
 fmwww.bc.edu/repec/bocode/r/rel_clust.pkg
 fmwww.bc.edu/repec/bocode/r/reg2docx.sthlp
 fmwww.bc.edu/repec/bocode/r/rori.sthlp
+fmwww.bc.edu/repec/bocode/r/rcsardl_oecd_validation.do
 fmwww.bc.edu/repec/bocode/r/repcmd6.html
 fmwww.bc.edu/repec/bocode/r/rowranks.pkg
 fmwww.bc.edu/repec/bocode/r/rct_minim.pkg
@@ -16790,9 +16793,11 @@ fmwww.bc.edu/repec/bocode/r/revrs.hlp
 fmwww.bc.edu/repec/bocode/r/rndpoix.hlp
 fmwww.bc.edu/repec/bocode/r/rel_clust.sthlp
 fmwww.bc.edu/repec/bocode/r/rctmiss.pkg
+fmwww.bc.edu/repec/bocode/r/rcsardl_example.do
 fmwww.bc.edu/repec/bocode/r/rpme.sthlp
 fmwww.bc.edu/repec/bocode/r/rcl_functions_shares.do
 fmwww.bc.edu/repec/bocode/r/rangerun_run.ado
+fmwww.bc.edu/repec/bocode/r/rcsardl.pkg
 fmwww.bc.edu/repec/bocode/r/rmclass.ado
 fmwww.bc.edu/repec/bocode/r/r2c.html
 fmwww.bc.edu/repec/bocode/r/reftex.ado

@@ -1,0 +1,30 @@
+d 'RCSARDL': module to provide Robust Cross-Sectionally Augmented ARDL adjustment estimator
+d
+d      rcsardl implements the point-estimation algorithm of the
+d RCS-ARDL approach described by Zehra Yalnız (2026). The command
+d first    estimates a conventional CS-ARDL model using xtdcce2.
+d The conventional CS-ARDL long-run coefficient vector is retained 
+d   unchanged. Robustification is applied only to the
+d equilibrium-adjustment component.    Conditional on the
+d conventional CS-ARDL long-run coefficients, the command
+d constructs the lagged equilibrium error and	 estimates a robust
+d error-correction regression separately for each panel unit using
+d Stata's rreg. The robust stage includes    cross-sectional
+d medians of the dependent-variable change, explanatory-variable
+d changes, and lagged equilibrium error. 
+d
+d KW: ARDL
+d KW: cross-section
+d KW: robust
+d
+d Requires: Stata version 19
+d
+d Distribution-Date: 20260927
+d
+d Author:  Zehra Yalnız,  Kocaeli University
+d Support: email zehrayalnizz41@@gmail.com
+d
+f rcsardl.ado
+f rcsardl.sthlp
+f rcsardl_example.do
+f rcsardl_oecd_validation.do

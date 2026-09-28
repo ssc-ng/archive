@@ -57,6 +57,7 @@ p rcentile module to compute robust confidence intervals for percentiles
 p rcl module for estimation and simulation of random coefficient logit models
 p rcm module to implement regression control method / panel data approach to program evaluation
 p rcolp2mat module to produce a two-way table with row and column percentages as a matrix
+p rcsardl module to provide Robust Cross-Sectionally Augmented ARDL adjustment estimator
 p rcsgen module to generate restricted cubic splines and their derivatives
 p rcspline module  for restricted cubic spline smoothing 
 p rct_minim module to assign treatments to subjects in a controlled trial 

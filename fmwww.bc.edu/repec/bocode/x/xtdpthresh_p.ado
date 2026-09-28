@@ -1,4 +1,4 @@
-*! version 0.9.23  13jul2026  (companion predict program; recomputed cache checksum, guarded serial/token identity and data-integrity checks)
+*! version 0.9.35  27sep2026  (FD/FOD-only companion predict program)
 *!
 *! predict program for xtdpthresh: residuals, xb, regime, arresiduals.
 *!
@@ -24,9 +24,6 @@
 *!     residuals    residual of the ESTIMATED equation (must be requested):
 *!                    method(fd)     — FD residual dy - dW(g)theta
 *!                    method(fod)    — forward-orthogonal-deviation residual
-*!                    method(system) — FD-restack residual (level-equation
-*!                                     residuals are not yet exposed; equals
-*!                                     -arresiduals- for this method)
 *!     arresiduals  the FD residual series the AR(1)/AR(2) tests consume
 *!                  (xtabond2 convention; always FD-form). For method(fd) this
 *!                  equals -residuals-; for method(fod) it is the FD restack,
@@ -123,13 +120,32 @@ program xtdpthresh_p
     // when the source columns changed since estimation (or a different
     // dataset with coincident panel-time keys is in memory).
     if `"`e(p_dsig)'"' != "" {
-        cap qui _datasignature `e(p_dsig_vars)'
+        cap confirm numeric variable `e(p_dsig_vars)'
         if _rc {
             di as err "data have changed since estimation (source variables missing or"
             di as err "renamed); cached residuals/fitted values are no longer valid."
             exit 459
         }
-        if `"`r(datasignature)'"' != `"`e(p_dsig)'"' {
+        if "`e(p_dsig_type)'" == "rowsig2" {
+            // v0.9.33: key-tied signature (see xdpt2_rowsig2 in xtdpthresh.ado).
+            local _now ""
+            cap mata: st_local("_now", xdpt2_rowsig2("`e(p_dsig_vars)'"))
+            if _rc {
+                di as err "predict requires the Mata state of the fit; re-run xtdpthresh"
+                exit 498
+            }
+            local _same = (`"`_now'"' == `"`e(p_dsig)'"')
+        }
+        else {
+            // v0.9.34: results of earlier versions (rowsig1 of 0.9.29-0.9.32,
+            // column checksums before) are refused: their data checks miss
+            // some changes of the data (rowsig1 weights were linear in the
+            // row rank), so cached series could be served for changed data.
+            di as err "these results come from an earlier version of xtdpthresh, whose check"
+            di as err "for changed data is not reliable; re-run xtdpthresh, then predict"
+            exit 498
+        }
+        if !`_same' {
             di as err "data have changed since estimation; cached residuals and fitted"
             di as err "values are no longer valid. Re-run xtdpthresh on the current data."
             exit 459
@@ -138,9 +154,8 @@ program xtdpthresh_p
 
     // source: 1 = FD AR-test series, 2 = estimation-equation series.
     //   arresiduals -> always the FD AR-test series (source 1)
-    //   residuals/xb -> estimation-equation series (source 2) EXCEPT for
-    //     fd (the two series are identical; use 1) and system (level rows make
-    //     the estimation series non-mergeable by key; route to the FD series).
+    //   residuals/xb -> estimation-equation series (source 2) for FOD;
+    //     for FD the two series are identical, so source 1 is used.
     // which: 1 = residual, 2 = xb (fit = dy - e-hat, row by row).
     if "`stat'" == "arresiduals" {
         local source = 1
@@ -176,16 +191,12 @@ program xtdpthresh_p
     else if "`stat'" == "xb" {
         if "`method'" == "fod" ///
             label var `varlist' "FOD fit (estimation eq, xtdpthresh)"
-        else if "`method'" == "system" ///
-            label var `varlist' "FD-restack fit (xtdpthresh system)"
         else ///
             label var `varlist' "FD fit dW*theta_hat (xtdpthresh)"
     }
     else {
         if "`method'" == "fod" ///
             label var `varlist' "FOD residual (estimation eq, xtdpthresh)"
-        else if "`method'" == "system" ///
-            label var `varlist' "FD-restack residual (xtdpthresh system)"
         else ///
             label var `varlist' "FD residual (estimation eq, xtdpthresh)"
     }
@@ -288,6 +299,48 @@ void xdpt2_p_fill(string scalar pvar, string scalar tvar,
         v = asarray(A, (D[r, 1], D[r, 2]))
         if (v < .) D[r, 3] = v
     }
+}
+
+// v0.9.33: key-tied data signature (rowsig2) -- an exact copy of
+// xdpt2_rowsig2 in xtdpthresh.ado (Mata functions of one ado are private to
+// it). The two copies must stay identical, or every predict call will report
+// changed data. See the comment there.
+string scalar xdpt2_rowsig2(string scalar vars)
+{
+    real matrix X
+    real colvector ord, w1, w2
+    real scalar j, n, x1, x2
+    string scalar s
+    X = st_data(., vars)
+    n = rows(X)
+    if (n == 0) return("0")
+    // v0.9.34: sort by every column, not only (panel, time): rows that
+    // share a key (several rows of a panel with a missing time) are ties
+    // that order() does not keep in a fixed order; identical rows are
+    // interchangeable. For unique keys the order is unchanged.
+    ord = order(X, (1..cols(X)))
+    X = editmissing(X[ord, .], -9876543210.125)
+    // Park-Miller sequences x(j) = a*x(j-1) mod (2^31 - 1), x(0) = 1, for
+    // a = 48271 and a = 69621; a*x < 2^48, so every step is exact in double
+    w1 = J(n, 1, .)
+    w2 = J(n, 1, .)
+    x1 = 1
+    x2 = 1
+    for (j = 1; j <= n; j++) {
+        x1 = mod(48271 * x1, 2147483647)
+        x2 = mod(69621 * x2, 2147483647)
+        w1[j] = x1
+        w2[j] = x2
+    }
+    w1 = 1 :+ w1 :/ 2147483647
+    w2 = 1 :+ w2 :/ 2147483647
+    s = "2:" + strofreal(n) + ":" + strofreal(cols(X))
+    for (j = 1; j <= cols(X); j++) {
+        s = s + ":" + strofreal(sum(X[., j]), "%21x") +
+                "," + strofreal(sum(X[., j] :* w1), "%21x") +
+                "," + strofreal(sum(X[., j] :* w2), "%21x")
+    }
+    return(s)
 }
 
 end

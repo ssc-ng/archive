@@ -1,4 +1,4 @@
-*! version 0.9.24  16jul2026
+*! version 0.9.35  27sep2026
 *! xtdpthresh -- dynamic panel threshold regression (Seo-Shin 2016; Gong-Seo 2026)
 *! Duy Chinh Nguyen (IU VNU-HCM) & Nhat Duy Lai (SGU, corresponding). See -help xtdpthresh-.
 
@@ -10,8 +10,19 @@ program define xtdpthresh, eclass sortpreserve
     // new model with a missing varlist/qx().
     if replay() {
         if "`e(cmd)'" != "xtdpthresh" error 301
-        syntax [, Level(cilevel)]
+        // v0.9.29: default to the level of the estimation, not c(level).
+        syntax [, Level(string)]
+        if `"`level'"' == "" {
+            local level = e(level)
+            if missing(`level') local level = c(level)
+        }
         ereturn display, level(`level')
+        di as text "γ̂ = " as res %9.0g e(gamma) _c
+        if !missing(e(gamma_lo)) & !missing(e(gamma_hi)) {
+            di as text "   threshold set hull (" as res e(level) as text "%) = [" ///
+               as res %9.0g e(gamma_lo) as text ", " as res %9.0g e(gamma_hi) as text "]"
+        }
+        else di ""
         exit
     }
 
@@ -31,9 +42,12 @@ program define xtdpthresh, eclass sortpreserve
         TD                                          ///
         COLLAPSE                                    ///
         MAXLAG(numlist max=2 min=1 integer >0)      ///
-        LEVMAXLAG(numlist max=2 min=1 integer >0)   ///
+        LEVMAXLAG(string)                           ///
         METHOD(string)                              ///
         GRID(integer 100)                           ///
+        SEARCHMode(string)                          ///
+        SEARCHMAX(integer -1)                       ///
+        SEARCHTol(real 1e-8)                        ///
         GRIDCI(integer 100)                         ///
         GRIDType(string)                            ///
         MINREGime(integer 0)                        ///
@@ -41,6 +55,7 @@ program define xtdpthresh, eclass sortpreserve
         BOOTType(string)                            ///
         HISTory(string)                             ///
         REFine(integer 0)                           ///
+        BWscale(real 1.5)                           ///
         TRIM(real 0.10)                             ///
         BOOT(integer 299)                           ///
         RSEED(string)                               ///
@@ -62,8 +77,8 @@ program define xtdpthresh, eclass sortpreserve
     // vce(windmeijer) applies the Windmeijer (2005) finite-sample correction
     // to the two-step variance (computed once at the final estimate; no
     // effect on the grid search or the CI/test bootstraps, which run on the
-    // fast one-step machinery; the coefficient bootstrap, by contrast,
-    // replays the reported two-step estimator by default (coefboot()).
+    // fast one-step machinery; the legacy coefficient bootstrap can replay
+    // the reported two-step estimator when explicitly requested.
     local vce = lower(trim("`vce'"))
     if "`vce'" == "" local vce "robust"
     // v0.9.9 R25: "uncorrected" read as model-based/nonrobust in the Stata
@@ -83,7 +98,8 @@ program define xtdpthresh, eclass sortpreserve
     // restores the uncentered Arellano-Bond / xtabond2 form for
     // cross-checking Hansen/AR against xtabond2 (difference is O(1/n)).
     local flag_center = cond("`nocenter'" == "", 1, 0)
-    // v0.8.1 (audit R6, #5): symmetric coefficient bootstrap CIs by default.
+    // v0.8.1 (audit R6, #5): symmetric coefficient bootstrap CIs when the
+    // legacy coefficient-bootstrap replay is explicitly requested.
     local coefcitype = lower(trim("`coefcitype'"))
     if "`coefcitype'" == "" local coefcitype "symmetric"
     if !inlist("`coefcitype'", "symmetric", "percentile") {
@@ -91,11 +107,11 @@ program define xtdpthresh, eclass sortpreserve
         exit 198
     }
     local flag_coefci_sym = cond("`coefcitype'" == "symmetric", 1, 0)
-    // v0.8.1 (audit R6, #3): the coefficient bootstrap replays the REPORTED
-    // estimator (two-step) by default; coefboot(onestep) gives the fast
-    // one-step replay.
+    // v0.9.26: coefficient bootstrap is outside the supported core. Keep the
+    // existing implementation as an opt-in legacy compatibility path, but do
+    // not run it silently as part of every threshold-CI request.
     local coefboot = lower(trim("`coefboot'"))
-    if "`coefboot'" == "" local coefboot "twostep"
+    if "`coefboot'" == "" local coefboot "none"
     if "`coefboot'" == "gs" {
         // v0.9.3 R19 (#5): honesty gate. The implemented scheme is a
         // threshold-search-aware cluster wild residual bootstrap -- NOT the
@@ -110,6 +126,10 @@ program define xtdpthresh, eclass sortpreserve
     if !inlist("`coefboot'", "twostep", "onestep", "none") {
         di as err "option coefboot() must be twostep, onestep, or none"
         exit 198
+    }
+    if inlist("`coefboot'", "twostep", "onestep") & "`nowarn'" == "" {
+        di as txt "note: coefboot(`coefboot') is a legacy compatibility feature of xtdpthresh;"
+        di as txt "      coefficient-bootstrap inference is outside the supported core."
     }
     local flag_coefboot_2s  = cond("`coefboot'" == "twostep", 1, 0)
     local flag_coefboot_off = cond("`coefboot'" == "none", 1, 0)
@@ -147,25 +167,38 @@ program define xtdpthresh, eclass sortpreserve
     // with that: if/in restricts the EQUATION sample only. history(sample)
     // treats if/in as a hard boundary instead and nulls the auto L.y
     // wherever its source row falls outside the history sample.
-    // v0.9.10 R27: opt-in local grid refinement around the coarse argmin
-    // (support-point candidates between the two grid neighbors, appended
-    // to the estimation grid and re-searched). Default 0 keeps results
-    // grid()-comparable.
+    // v0.9.25: refine() is a FINAL, jump-only support search under the one
+    // fixed W2 constructed after the global stage-1 search.  Unlike the old
+    // implementation it never restarts the estimator and never rebuilds W2.
+    if `bwscale' <= 0 | missing(`bwscale') {
+        di as err "option bwscale() must be positive"
+        exit 198
+    }
     if `refine' < 0 | `refine' > 20 {
         di as err "option refine() must be an integer between 0 and 20"
         exit 198
     }
-    // v0.9.11 R30 (blocker 2): under kink the threshold regressor is
-    // (q - gamma)*1(q > gamma) -- it varies CONTINUOUSLY in gamma, so the
-    // criterion changes between observed support points and support-point
-    // refinement is not a complete search. Jump-only until a numerical
-    // local-grid variant is implemented.
     if `refine' > 0 & "`kink'" != "" {
-        di as err "refine() is currently supported for the jump specification only"
-        di as err "(the kink regressor (q-gamma)*1(q>gamma) varies continuously in gamma,"
-        di as err "so observed-support refinement cannot bracket its optimum)"
+        di as err "refine() is supported for the jump specification only"
+        di as err "(the kink regressor (q-gamma)*1(q>gamma) varies continuously in gamma)"
         exit 198
     }
+    // v0.9.26: the numerical estimator is the profiled argmin over the
+    // finite grid explicitly requested by grid(), followed (for jump models)
+    // by the optional final fixed-W2 refine().  Retired adaptive controls are
+    // parsed solely to return an informative compatibility error.
+    local _legacy_searchopt = ("`searchmode'" != "" | `searchmax' != -1 | ///
+        `searchtol' != 1e-8 | strpos(lower(`"`cmdline'"'), "searchtol(") > 0)
+    if `_legacy_searchopt' {
+        di as err "searchmode(), searchmax(), and searchtol() are no longer supported in xtdpthresh 0.9.26"
+        di as err "The threshold search is a fixed finite grid selected by grid(#), with optional refine(#)."
+        exit 198
+    }
+    local searchmode "fixed"
+    local searchmax_set 0
+    local search_max_level 1
+    local searchmax_effective `grid'
+    local searchtol .
 
     local history = lower(trim("`history'"))
     if "`history'" == "" local history "panel"
@@ -189,12 +222,13 @@ program define xtdpthresh, eclass sortpreserve
         }
     }
 
-    // v0.9.2 R18 (#1): boottype(wild|unit). wild = fast cluster wild
+    // v0.9.26: boottype(wild|unit). wild is the supported fast cluster wild
     // residual bootstrap (default; a computational approximation of
     // Gong-Seo Alg. 1, see Remarks). unit = EXPERIMENTAL unit-multiplicity
     // resampling ORIENTED at Gong-Seo Alg. 1 (unrestricted-residual DGP,
     // recentering at theta-hat, fixed sample W1 and per-draw Omega/W2*) but NOT
-    // certified against the paper -- hence not named "exact". Threshold-CI
+    // certified against the paper -- hence not named "exact". In 0.9.26 it
+    // is retained strictly as a reproducibility/verification path. Threshold-CI
     // inversion only (linearity/continuity/coefficient bootstraps keep the
     // wild scheme); fd without kink only (the Alg. 1 theory is developed
     // for the first-differenced jump estimator).
@@ -238,6 +272,12 @@ program define xtdpthresh, eclass sortpreserve
     // sub-option is rejected with an explanation — it never affected user IVs
     // (they always enter as the period-t value) but silently overrode the
     // top-level maxlag() for GMM-style instruments, a serious silent trap.
+    // levmaxlag() belonged exclusively to the retired System-GMM level
+    // block. Check it before the nested iv() parser can clobber option locals.
+    if "`levmaxlag'" != "" {
+        di as err "levmaxlag() was retired with method(system); use maxlag() for FD/FOD moments"
+        exit 198
+    }
     local flag_ivcol_sub 0
     if "`iv'" != "" {
         // Save outer locals — the inner `syntax' call below clobbers `varlist',
@@ -250,10 +290,14 @@ program define xtdpthresh, eclass sortpreserve
 
         // Robust parser for iv(z1 z2 [, collapse]).
         local 0 `"`iv'"'
-        cap syntax varlist(numeric ts) [, MAXLAG(numlist max=2 min=1 integer >0) COLLAPSE]
+        // v0.9.31: keep Stata's own message and return code (111 for a
+        // variable that does not exist, 109 for a string variable, 198 for
+        // a bad option); every error used to be reported as 198.
+        cap noisily syntax varlist(numeric ts) [, MAXLAG(numlist max=2 min=1 integer >0) COLLAPSE]
         if _rc {
-            di as err "invalid iv(...) syntax — use iv(varlist [, collapse])"
-            exit 198
+            local _iv_rc = _rc
+            di as err "  (in iv(); use iv(varlist [, collapse]))"
+            exit `_iv_rc'
         }
         local iv_vars `"`varlist'"'
         if "`maxlag'" != "" {
@@ -284,13 +328,17 @@ program define xtdpthresh, eclass sortpreserve
     // rather than rejected by the case-sensitive inlist checks below.
     local method = lower(trim("`method'"))
     if "`method'" == "" local method "fd"
-    if !inlist("`method'", "fd", "fod", "system") {
-        di as err "option method() must be fd, fod, or system"
+    if "`method'" == "system" {
+        di as err "method(system) is no longer supported as of xtdpthresh 0.9.25"
+        di as err "The supported estimators are method(fd) and method(fod)."
         exit 198
     }
-    if "`levmaxlag'" != "" & "`method'" != "system" {
-        di as err "levmaxlag() applies only to method(system) level-equation instruments"
-        di as err "remove levmaxlag(), or use method(system)"
+    if !inlist("`method'", "fd", "fod") {
+        di as err "option method() must be fd or fod"
+        exit 198
+    }
+    if "`levmaxlag'" != "" {
+        di as err "levmaxlag() was retired with method(system); use maxlag() for FD/FOD moments"
         exit 198
     }
     // v0.8.0 (audit R5): citype() removed. It duplicated -noboot- exactly
@@ -363,25 +411,6 @@ program define xtdpthresh, eclass sortpreserve
     }
     if `maxlag_lo' > `maxlag_hi' {
         di as err "maxlag(# #) requires min <= max"
-        exit 198
-    }
-
-    // Parse levmaxlag(# [#]): level-equation lag range; default (1 1)
-    local n_ll : word count `levmaxlag'
-    if `n_ll' == 0 {
-        local levmaxlag_lo = 1
-        local levmaxlag_hi = 1
-    }
-    else if `n_ll' == 1 {
-        local levmaxlag_lo = 1
-        local levmaxlag_hi : word 1 of `levmaxlag'
-    }
-    else {
-        local levmaxlag_lo : word 1 of `levmaxlag'
-        local levmaxlag_hi : word 2 of `levmaxlag'
-    }
-    if `levmaxlag_lo' > `levmaxlag_hi' {
-        di as err "levmaxlag(# #) requires min <= max"
         exit 198
     }
 
@@ -504,7 +533,7 @@ program define xtdpthresh, eclass sortpreserve
             if "`_tc'" == "`q_var'" local _qrhs 1
         }
         if !`_qrhs' {
-            di as err  "Warning:" as text " " as res "kink" as text " specified but " ///
+            di as text "{err}Warning:{txt} " as res "kink" as text " specified but " ///
                as res "`q_var'" as text " is not a base regressor (indepvars, "       ///
                as res "exogenous()" as text ", " as res "endogenous()" as text ", or " ///
                as res "predetermined()" as text ")."
@@ -576,6 +605,7 @@ program define xtdpthresh, eclass sortpreserve
             exit 198
         }
         local indepvars `"`_expanded'"'
+        _xdpt_tsdouble, expanded(`indepvars') labels(`indepvars_lab')
     }
     if `"`exog_extra'"' != "" {
         local _old_type "`c(type)'"
@@ -595,6 +625,7 @@ program define xtdpthresh, eclass sortpreserve
             exit 198
         }
         local exog_extra `"`_expanded'"'
+        _xdpt_tsdouble, expanded(`exog_extra') labels(`exog_extra_lab')
     }
     if `"`endog'"' != "" {
         local _old_type "`c(type)'"
@@ -614,6 +645,7 @@ program define xtdpthresh, eclass sortpreserve
             exit 198
         }
         local endog `"`_expanded'"'
+        _xdpt_tsdouble, expanded(`endog') labels(`endog_lab')
     }
     if `"`predet'"' != "" {
         local _old_type "`c(type)'"
@@ -633,6 +665,7 @@ program define xtdpthresh, eclass sortpreserve
             exit 198
         }
         local predet `"`_expanded'"'
+        _xdpt_tsdouble, expanded(`predet') labels(`predet_lab')
     }
     if `"`inst_extra'"' != "" {
         local _old_type "`c(type)'"
@@ -652,6 +685,7 @@ program define xtdpthresh, eclass sortpreserve
             exit 198
         }
         local inst_extra `"`_expanded'"'
+        _xdpt_tsdouble, expanded(`inst_extra') labels(`inst_extra_lab')
     }
 
     // Re-check overlap AFTER tsrevar expansion. Textually different terms can
@@ -789,6 +823,122 @@ program define xtdpthresh, eclass sortpreserve
         }
     }
 
+    // v0.9.28/0.9.29: classification guards for time-series-operated terms.
+    // (a) The dependent variable. In indepvars/exogenous() every operator on
+    //     depvar is rejected: a lag depends on earlier errors, so it is not
+    //     strictly exogenous (it belongs in predetermined()); D., S., and F.
+    //     terms contain the current or a future value of depvar. Under
+    //     strict exogeneity such a term would be instrumented by its own
+    //     transformed value, which is invalid, with no warning. In
+    //     endogenous(), predetermined(), and iv() only pure lags (net lag of at
+    //     least 1, no D., S., or F.) are allowed.
+    // (b) A strictly exogenous term may not be a lag (or the same date) of a
+    //     variable declared in endogenous()/predetermined(): if x_{t-k} may
+    //     respond to past errors, so may x_{t-j} for j >= k, and those lags
+    //     are not strictly exogenous. The reverse -- x strictly exogenous and
+    //     a further lag such as L.x declared predetermined() -- is only
+    //     conservative and is allowed. Terms with D., S., or F. are treated
+    //     conservatively as containing the contemporaneous value.
+    // Terms are decomposed by _xdpt_tsterm (defined after this program).
+    local _ep_bases ""
+    local _ep_minlag ""
+    local _ep_kind ""
+    foreach _ul in `endog_lab' {
+        _xdpt_tsterm `_ul'
+        local _ep_bases  "`_ep_bases' `r(base)'"
+        local _ep_minlag "`_ep_minlag' `=cond(r(hasdsf), min(r(netlag), 0), r(netlag))'"
+        local _ep_kind   "`_ep_kind' en"
+    }
+    foreach _ul in `predet_lab' {
+        _xdpt_tsterm `_ul'
+        local _ep_bases  "`_ep_bases' `r(base)'"
+        local _ep_minlag "`_ep_minlag' `=cond(r(hasdsf), min(r(netlag), 0), r(netlag))'"
+        local _ep_kind   "`_ep_kind' pr"
+    }
+    local _n_ep : word count `_ep_bases'
+    foreach _grp in sx ep iv {
+        if "`_grp'" == "sx" local _terms "`indepvars_lab' `exog_extra_lab'"
+        if "`_grp'" == "ep" local _terms "`endog_lab' `predet_lab'"
+        if "`_grp'" == "iv" local _terms "`inst_extra_lab'"
+        foreach _ul of local _terms {
+            _xdpt_tsterm `_ul'
+            local _b   "`r(base)'"
+            local _isop = r(isop)
+            local _nl   = r(netlag)
+            local _dsf  = r(hasdsf)
+            if "`_b'" == "`depvar'" & `_isop' {
+                if "`_grp'" == "sx" {
+                    if !`_dsf' & `_nl' >= 1 {
+                        di as err "`_ul' is a lag of the dependent variable and cannot be strictly exogenous"
+                        di as err "  declare it in predetermined() instead of indepvars or exogenous()"
+                    }
+                    else {
+                        di as err "`_ul' contains the current or a future value of the dependent variable"
+                        di as err "  differences, seasonal differences, and leads of `depvar' cannot be regressors"
+                    }
+                    exit 198
+                }
+                if `_dsf' | `_nl' < 1 {
+                    di as err "`_ul' contains the current or a future value of the dependent variable"
+                    if "`_grp'" == "iv" {
+                        di as err "  it cannot be an instrument; only lags of `depvar' may appear in iv()"
+                    }
+                    else {
+                        di as err "  it cannot be a regressor; lags of `depvar' belong in predetermined()"
+                    }
+                    exit 198
+                }
+            }
+            // v0.9.34: an iv() term must be uncorrelated with the transformed
+            // error: under FD with e(t) and e(t-1), under FOD with e(t) and
+            // later errors. A lag of order j of depvar or of an endogenous
+            // variable contains e(t-j), and a predetermined variable may
+            // respond to the previous error. So under FD the net lag must be
+            // at least 2 for depvar and endogenous bases and 1 for
+            // predetermined bases, counted from the lag at which the base is
+            // declared; under FOD, 1 and 0. iv(L.depvar) under FD, accepted
+            // before, biased the estimates without a Hansen-test signal.
+            if "`_grp'" == "iv" {
+                local _need = .
+                if "`_b'" == "`depvar'" local _need = cond("`method'" == "fd", 2, 1)
+                forvalues _k = 1/`_n_ep' {
+                    local _eb : word `_k' of `_ep_bases'
+                    if "`_eb'" == "`_b'" {
+                        local _em : word `_k' of `_ep_minlag'
+                        local _ek : word `_k' of `_ep_kind'
+                        local _rq = `_em' + cond("`_ek'" == "en", ///
+                            cond("`method'" == "fd", 2, 1), cond("`method'" == "fd", 1, 0))
+                        if `_need' >= . | `_rq' > `_need' local _need = `_rq'
+                    }
+                }
+                local _nle = cond(`_dsf', min(`_nl', 0), `_nl')
+                if `_need' < . & `_nle' < `_need' {
+                    di as err "`_ul' is not a valid instrument under method(`method'): it is"
+                    di as err "  correlated with the transformed error; instruments built on"
+                    di as err "  `_b' need a lag of at least `_need' here"
+                    exit 198
+                }
+            }
+            if "`_grp'" == "sx" & `_n_ep' > 0 {
+                local _hit = 0
+                forvalues _k = 1/`_n_ep' {
+                    local _eb : word `_k' of `_ep_bases'
+                    local _em : word `_k' of `_ep_minlag'
+                    if "`_eb'" == "`_b'" {
+                        if `_dsf' local _hit = 1
+                        else if `_em' <= `_nl' local _hit = 1
+                    }
+                }
+                if `_hit' {
+                    di as err "`_ul' is declared strictly exogenous, but it is a lag (or the same"
+                    di as err "  date) of `_b', which is declared in endogenous() or predetermined();"
+                    di as err "  declare `_ul' in predetermined() or endogenous() instead"
+                    exit 198
+                }
+            }
+        }
+    }
+
     // === Time-effect treatment (td) ============================================
     // v0.7.13 (audit R4, C2): two treatments.
     //   td      -> FWL-CORRECT: common-across-regime time dummies are
@@ -809,12 +959,6 @@ program define xtdpthresh, eclass sortpreserve
     // to time dummies; the package is pre-release, so no user results depend
     // on it. td (FWL-correct) is the only time-effects treatment.
     local flag_td_fwl   = cond("`td'" != "", 1, 0)
-    if `flag_td_fwl' & "`method'" == "system" {
-        di as err "td is not available with method(system): partialling time dummies"
-        di as err "  out of the level equation makes the level constant collinear."
-        di as err "  Use method(fd) or method(fod)."
-        exit 198
-    }
     local flag_td = `flag_td_fwl'
     // v0.9.21 R42: td is FWL-correct on the estimation sample, but the
     // projection itself changes when units are resampled. The experimental
@@ -897,7 +1041,12 @@ program define xtdpthresh, eclass sortpreserve
             qui replace `Ly' = . if L.`touse_hist' != 1
         }
     }
-    markout `touse' `depvar' `q_var' `indepvars' `endog' `predet' `exog_extra' `inst_extra'
+    // v0.9.29: iv() variables are instruments only and no longer define the
+    // equation sample. A missing value contributes a zero instrument in that
+    // row (the Z builder reads iv() values under a nonmissing guard), exactly
+    // as for the internal lag instruments. Before, a missing value removed
+    // the equation, and under FD also the next period's equation.
+    markout `touse' `depvar' `q_var' `indepvars' `endog' `predet' `exog_extra'
     if !`flag_static' {
         markout `touse' `Ly'
     }
@@ -906,6 +1055,100 @@ program define xtdpthresh, eclass sortpreserve
         di as err "no usable complete-case observations in the requested sample"
         exit 2000
     }
+
+    // v0.9.29: regressors that the transformation (or td) removes exactly.
+    // FD turned such a column into exact zeros and every candidate threshold
+    // failed with a generic message; FOD left rounding noise that the
+    // estimator then fitted, giving absurd coefficients and silently wrong
+    // estimates of the other parameters. Checked on the equation-eligible
+    // rows with exact comparisons, so no admissible specification is affected.
+    local _cw_vars "`indepvars' `exog_extra' `endog' `predet'"
+    local _cw_labs "`indepvars_lab' `exog_extra_lab' `endog_lab' `predet_lab'"
+    // v0.9.34: with no regressor besides the automatic L.depvar the lists
+    // are empty and the concatenation is blanks; without -list clean- the
+    // test below passed and st_data() failed (r(3598)) on every such model.
+    local _cw_vars : list clean _cw_vars
+    local _cw_labs : list clean _cw_labs
+    if `"`_cw_vars'"' != "" {
+        local _cw_flags ""
+        mata: st_local("_cw_flags", invtokens(strofreal( ///
+            xdpt2_const_within("`_cw_vars'", "`panelvar'", "`touse'"))))
+        local _j = 0
+        foreach _f of local _cw_flags {
+            local ++_j
+            if `_f' {
+                local _lab : word `_j' of `_cw_labs'
+                di as err "`_lab' does not vary over time within any unit of the estimation sample;"
+                di as err "  the `method' transformation removes it, so its coefficient is not identified"
+                di as err "  (remove it, or model it through the unit effects)"
+                exit 498
+            }
+        }
+        if `flag_td' {
+            mata: st_local("_cw_flags", invtokens(strofreal( ///
+                xdpt2_const_within("`_cw_vars'", "`timevar'", "`touse'"))))
+            local _j = 0
+            foreach _f of local _cw_flags {
+                local ++_j
+                if `_f' {
+                    local _lab : word `_j' of `_cw_labs'
+                    di as err "`_lab' takes the same value for all units in every period;"
+                    di as err "  td removes it, so its coefficient is not identified"
+                    exit 498
+                }
+            }
+        }
+    }
+    // The threshold variable: if it never changes within a unit, the regime
+    // indicator is time-invariant and the regime intercept (and, under kink,
+    // the kink regressor) is removed by the transformation; under td, a q
+    // common to all units in every period makes the indicator a time effect.
+    local _cw_flags ""
+    mata: st_local("_cw_flags", strofreal( ///
+        xdpt2_const_within("`q_var'", "`panelvar'", "`touse'")))
+    if `_cw_flags' {
+        di as err "the threshold variable `q_var' does not vary over time within any unit;"
+        di as err "  the regime indicator is removed by the `method' transformation, so the"
+        di as err "  regime shift is not identified"
+        exit 498
+    }
+    if `flag_td' {
+        mata: st_local("_cw_flags", strofreal( ///
+            xdpt2_const_within("`q_var'", "`timevar'", "`touse'")))
+        if `_cw_flags' {
+            di as err "the threshold variable `q_var' takes the same value for all units in"
+            di as err "  every period; td removes the regime indicator, so the regime shift is"
+            di as err "  not identified"
+            exit 498
+        }
+    }
+
+    // v0.9.30: regressors and iv() variables that take one value for every
+    // unit in each period (macro variables, trends). Without td they are
+    // identified through the per-period constants in Z; the Z builder drops
+    // their own instrument columns, which only repeat those constants, and
+    // the output note names them. _cc_vars/_cc_labs are also read by the
+    // Mata rank check to name nearly (not exactly) common variables.
+    local _cc_vars "`_cw_vars' `inst_extra'"
+    local _cc_vars : list clean _cc_vars
+    local _cc_labs "`_cw_labs' `inst_extra_lab'"
+    local _cc_labs : list clean _cc_labs
+    local iv_common_vars ""
+    if `"`_cc_vars'"' != "" {
+        local _cw_flags ""
+        mata: st_local("_cw_flags", invtokens(strofreal( ///
+            xdpt2_const_within("`_cc_vars'", "`timevar'", "`touse'"))))
+        local _j = 0
+        foreach _f of local _cw_flags {
+            local ++_j
+            if `_f' {
+                local _lab : word `_j' of `_cc_labs'
+                local iv_common_vars "`iv_common_vars' `_lab'"
+            }
+        }
+        local iv_common_vars : list clean iv_common_vars
+    }
+
     tempvar eqflag
     qui gen byte `eqflag' = `touse'   // equation-eligible marker for Mata
 
@@ -918,7 +1161,6 @@ program define xtdpthresh, eclass sortpreserve
     local method_lab "`method'"
     if "`method'" == "fod" local method_lab "FOD (Arellano-Bover 1995)"
     if "`method'" == "fd"  local method_lab "FD (Arellano-Bond 1991)"
-    if "`method'" == "system" local method_lab "System (Blundell-Bond 1998)"
 
     di ""
     di as text "{hline 78}"
@@ -939,13 +1181,12 @@ program define xtdpthresh, eclass sortpreserve
     if `k_endog'  > 0 di as text "Endogenous:    " as res "`endog_lab'"
     if `k_predet' > 0 di as text "Predetermined: " as res "`predet_lab'"
     if `k_inst'   > 0 di as text "Extra IVs:     " as res "`inst_extra_lab'"
-    // v0.8.0 (audit R5): tier framing shown at run time, covering ALL
-    // inference outputs (analytic VCE, Hansen J, AR tests, threshold CI),
-    // not only the bootstrap.
+    // Run-time note on the theoretical status of non-FD methods (no ranking
+    // language: the choice of moments depends on the data, not a fixed tier).
     if "`method'" != "fd" & "`nowarn'" == "" {
-        di as text "Tier note: " as res "method(`method')" as text " extends the Seo-Shin FD theory."
-        di as text "Analytic VCE, Hansen J, AR diagnostics, and the threshold CI are"
-        di as text "supported by Monte Carlo evidence, not by the cited FD theorems."
+        di as text "Note: for " as res "method(`method')" as text " the analytic VCE, Hansen J, AR"
+        di as text "diagnostics, and the threshold CI rely on Monte Carlo evidence rather than"
+        di as text "on the cited first-difference theorems of Seo-Shin (2016) / Gong-Seo (2026)."
     }
     di ""
 
@@ -994,19 +1235,9 @@ program define xtdpthresh, eclass sortpreserve
     local do_grid_ci = cond("`noboot'" == "", 1, 0)
     // v0.9.2: unit resampling is far slower than wild -- say so upfront.
     if `do_grid_ci' & `flag_boot_exact' & "`nowarn'" == "" {
-        di as txt "boottype(unit): EXPERIMENTAL unit-resampling bootstrap (fixed sample W1;"
-        di as txt "per-draw recentered Omega/W2*); expect >= 50x the wild-bootstrap runtime."
-    }
-
-    // v0.7.0 advisory (B5): the wild-bootstrap theory of Gong-Seo (2026)
-    // Alg. 1 covers the transformed equation; resampling stacked transformed
-    // + level residuals jointly under method(system) is a heuristic extension.
-    if "`method'" == "system" & `do_grid_ci' & "`nowarn'" == "" {
-        di as text "Note: grid-bootstrap CI and tests under " as res "method(system)" ///
-           as text " resample stacked"
-        di as text "transformed + level residuals jointly — a heuristic extension of the"
-        di as text "Gong-Seo (2026) Algorithm 1 theory. Interpret with caution (nowarn hides this)."
-        di ""
+        di as txt "boottype(unit): VERIFICATION ONLY; not certified as exact Gong-Seo Algorithm 1."
+        di as txt "It uses unit-multiplicity resampling with fixed sample W1 and per-draw"
+        di as txt "recentered Omega/W2*; expect >= 50x the wild-bootstrap runtime."
     }
 
     // Unique per-fit token generated by Stata (independent of Mata state and
@@ -1021,7 +1252,7 @@ program define xtdpthresh, eclass sortpreserve
     // v0.8.0: legacy tdpurge pre-demeaning block removed (see td parse note).
 
     tempname b V gam obj nused gam_lo gam_hi pval_lin pval_cont
-    tempname n_raw n_trans n_level n_iv n_units
+    tempname n_raw n_trans n_iv n_units
     tempname hansen hansen_df hansen_p ar1 ar1_p ar2 ar2_p
     tempname ci_empty ci_nseg
     local eqvar `eqflag'
@@ -1030,7 +1261,6 @@ program define xtdpthresh, eclass sortpreserve
                           "`panelvar'", "`timevar'",                       ///
                           "`method'", `flag_static', `flag_kink',           ///
                           `flag_collapse', `maxlag_lo', `maxlag_hi',         ///
-                          `levmaxlag_lo', `levmaxlag_hi',                   ///
                           `grid', `gridci', `trim', `=`q_lo'', `=`q_hi'',   ///
                           `do_grid_ci', `boot', `=(100-`level')/100',       ///
                           `flag_iv_collapse', `flag_exportgmm', `flag_notest', ///
@@ -1042,6 +1272,12 @@ program define xtdpthresh, eclass sortpreserve
     // version-fragile.
     matrix `b'       = r(xdpt2_theta)
     matrix `V'       = r(xdpt2_V)
+    // v0.9.32: under kink, e(V) is the slope block of the joint variance of
+    // the slopes and gamma-hat (1), or the conditional variance when that
+    // could not be computed (0); missing for the jump model.
+    local kink_joint = r(xdpt2_kink_joint)
+    tempname V_cond
+    if "`kink_joint'" == "1" matrix `V_cond' = r(xdpt2_V_cond)
     scalar `gam'     = r(xdpt2_gamma)
     scalar `obj'     = r(xdpt2_obj)
     scalar `nused'   = r(xdpt2_nused)
@@ -1056,44 +1292,44 @@ program define xtdpthresh, eclass sortpreserve
     scalar `ci_nseg'  = r(xdpt2_ci_nseg)
     scalar `n_raw'    = r(xdpt2_n_raw)
     scalar `n_trans'  = r(xdpt2_n_trans)
-    scalar `n_level'  = r(xdpt2_n_level)
-    // v0.8.5 R14 (#2) / v0.8.6 R15 (#1): method(system) must deliver BOTH
-    // equation blocks. The user-facing gate now fires EARLY in Mata (before
-    // the grid search and bootstraps); this backstop catches internal
-    // regressions where the final stack at gamma-hat degenerates anyway.
-    if "`method'" == "system" & (`=`n_trans'' == 0 | `=`n_level'' == 0) {
-        di as err "method(system) internal error: the final stack lost an equation block"
-        di as err "(N_trans=`=`n_trans'', N_level=`=`n_level''). Please report this."
-        exit 498
-    }
     scalar `n_iv'     = r(xdpt2_n_iv)
     scalar `n_units'  = r(xdpt2_n_units)
+    local n_switch = r(xdpt2_n_switch)
+    // v0.9.35: kernel bandwidth of the jump model's joint variance
+    local gamma_bw = r(xdpt2_gamma_bw)
+    // v0.9.34 (C3): 1 if the kink refinement moved gamma-hat off the grid
+    local kink_refined = r(xdpt2_kink_refined)
+    // v0.9.29: 0 = Arellano-Bond MA(1) first-step weight as documented (or
+    // FOD's 2SLS weight); 1 = (Z'Z)^-1 substituted; 2 = identity substituted.
+    local w1_fallback = r(xdpt2_w1_fallback)
+    if missing(`w1_fallback') local w1_fallback = 0
+    // v0.9.30: instrument columns dropped as multiples of the per-period
+    // constants (see xdpt2_drop_cellconst); 0 on every design without a
+    // variable common to all units in a period.
+    local iv_common = r(xdpt2_iv_common)
+    if missing(`iv_common') local iv_common = 0
+    local iv_dep = r(xdpt2_iv_dep)
+    if missing(`iv_dep') local iv_dep = 0
+    local iv_dep_res = r(xdpt2_iv_dep_res)
+    local iv_dep_near = r(xdpt2_iv_dep_near)
+    if missing(`iv_dep_near') local iv_dep_near = 0
     local balanced_eff = r(xdpt2_balanced_eff)
     if missing(`balanced_eff') local balanced_eff = 0
-    // v0.8.7 R16 (#5): per-block unit participation
-    local nu_trans = r(xdpt2_nu_trans)
-    if missing(`nu_trans') local nu_trans = 0
-    local nu_level = r(xdpt2_nu_level)
-    if missing(`nu_level') local nu_level = 0
-    local nu_both = r(xdpt2_nu_both)
-    if missing(`nu_both') local nu_both = 0
     scalar `hansen'    = r(xdpt2_hansen)
     scalar `hansen_df' = r(xdpt2_hansen_df)
     scalar `hansen_p'  = r(xdpt2_hansen_p)
-    tempname dh dh_df dh_p dh_neg dh_cmis hfod hfod_df hfod_p gfod
-    scalar `dh'      = r(xdpt2_dh)
-    scalar `dh_df'   = r(xdpt2_dh_df)
-    scalar `dh_p'    = r(xdpt2_dh_p)
-    scalar `dh_neg'  = r(xdpt2_dh_neg)
-    scalar `dh_cmis' = r(xdpt2_dh_cluster_mismatch)
-    scalar `hfod'    = r(xdpt2_hfod)
-    scalar `hfod_df' = r(xdpt2_hfod_df)
-    scalar `hfod_p'  = r(xdpt2_hfod_p)
-    scalar `gfod'    = r(xdpt2_gfod)
     scalar `ar1'       = r(xdpt2_ar1)
     scalar `ar1_p'     = r(xdpt2_ar1_p)
     scalar `ar2'       = r(xdpt2_ar2)
     scalar `ar2_p'     = r(xdpt2_ar2_p)
+    // v0.9.35: AR with gamma-hat treated as known; 1 if the AR statistics
+    // include the estimation of gamma-hat
+    tempname ar1_cond ar2_cond
+    scalar `ar1_cond'    = r(xdpt2_ar1_cond)
+    scalar `ar2_cond'    = r(xdpt2_ar2_cond)
+    local ar_joint = r(xdpt2_ar_joint)
+    if missing(`ar_joint') local ar_joint = 0
+    local q_nvals_bw = r(xdpt2_q_nvals_bw)
     tempname ar1_b0 ar1_T1 ar1_TT ar2_b0 ar2_T1 ar2_TT
     scalar `ar1_b0' = r(xdpt2_ar1_b0)
     scalar `ar1_T1' = r(xdpt2_ar1_T1)
@@ -1118,6 +1354,7 @@ program define xtdpthresh, eclass sortpreserve
     local seed_coefficient = r(xdpt2_seed_coefficient)
     local wind_applied = r(xdpt2_wind_applied)
     if missing(`wind_applied') local wind_applied = 0
+    local same_threshold = r(xdpt2_same_threshold)
     // v0.8.0 (#2): coefficient percentile bootstrap (threshold-search aware)
     tempname bci_mat
     local bci_B = r(xdpt2_bci_B)
@@ -1159,6 +1396,49 @@ program define xtdpthresh, eclass sortpreserve
     scalar `grid2_hi' = r(xdpt2_grid2_hi)
     // v0.8.2 R11 (#2/#3): finer admission counts + CI-grid span
     local grid_struct = r(xdpt2_grid_struct)
+    local search_l1_n = r(xdpt2_search_l1_n)
+    local search_l2_n = r(xdpt2_search_l2_n)
+    local search_l3_n = r(xdpt2_search_l3_n)
+    local search_s1_level = r(xdpt2_search_s1_level)
+    local search_s2_level = r(xdpt2_search_s2_level)
+    local search_s1_n = r(xdpt2_search_s1_n)
+    local search_s2_n = r(xdpt2_search_s2_n)
+    local search_s1_same = r(xdpt2_search_s1_same)
+    local search_s2_same = r(xdpt2_search_s2_same)
+    // v0.9.31: real-valued diagnostic kept in a scalar (a local rounds it)
+    tempname search_s1_gain
+    scalar `search_s1_gain' = r(xdpt2_search_s1_gain)
+    // v0.9.31: real-valued diagnostic kept in a scalar (a local rounds it)
+    tempname search_s2_gain
+    scalar `search_s2_gain' = r(xdpt2_search_s2_gain)
+    local search_s1_conv = r(xdpt2_search_s1_conv)
+    local search_s2_conv = r(xdpt2_search_s2_conv)
+    local search_hit_max = r(xdpt2_search_hit_max)
+    local search_W2_builds = r(xdpt2_search_W2_builds)
+    // v0.9.31: real-valued diagnostic kept in a scalar (a local rounds it)
+    tempname search_g1
+    scalar `search_g1' = r(xdpt2_search_g1)
+    // v0.9.31: real-valued diagnostic kept in a scalar (a local rounds it)
+    tempname search_o1
+    scalar `search_o1' = r(xdpt2_search_o1)
+    // v0.9.31: real-valued diagnostic kept in a scalar (a local rounds it)
+    tempname search_g2_global
+    scalar `search_g2_global' = r(xdpt2_search_g2_global)
+    // v0.9.31: real-valued diagnostic kept in a scalar (a local rounds it)
+    tempname search_o2_global
+    scalar `search_o2_global' = r(xdpt2_search_o2_global)
+    local search_converged = .
+    local search_incomplete = .
+    if "`searchmode'" == "adaptive" {
+        local search_converged = (`search_s1_conv' == 1 & ///
+            `search_s2_conv' == 1 & `est_2s' == 1)
+        local search_incomplete = (`search_converged' == 0)
+        if `search_incomplete' & "`nowarn'" == "" {
+            di as text "Note: adaptive threshold search did not certify stability within its requested cap (" ///
+                as res `searchmax_effective' as text " points);"
+            di as text "see e(search_incomplete), e(search_stage1_converged), and e(search_stage2_converged)."
+        }
+    }
     local ref_it = r(xdpt2_ref_it)
     if missing(`ref_it') local ref_it = 0
     local ref_add = r(xdpt2_ref_add)
@@ -1172,6 +1452,9 @@ program define xtdpthresh, eclass sortpreserve
     local ref_inb = r(xdpt2_ref_inb)
     local ref_nrem = r(xdpt2_ref_nrem)
     local ref_comp = r(xdpt2_ref_comp)
+    // v0.9.31: real-valued diagnostic kept in a scalar (a local rounds it)
+    tempname ref_obj_gain
+    scalar `ref_obj_gain' = r(xdpt2_ref_obj_gain)
     if missing(`grid_struct') local grid_struct = 0
     local grid_adm2 = r(xdpt2_grid_adm2)
     local gci_eff = r(xdpt2_gci_eff)
@@ -1213,19 +1496,21 @@ program define xtdpthresh, eclass sortpreserve
         local _dsvars "`_dsvars' `r(varlist)'"
     }
     local _dsvars : list uniq _dsvars
-    capture quietly _datasignature `_dsvars'
-    if _rc {
+    // v0.9.29: _datasignature checksums each column on its own, so values
+    // moved between rows (or relabelled panel ids) left it unchanged and
+    // predict served stale residuals. xdpt2_rowsig2 (v0.9.33) ties every value
+    // to its (panel, time) key; e(p_dsig_type) tells predict which method to use.
+    local _dsig ""
+    capture mata: st_local("_dsig", xdpt2_rowsig2("`_dsvars'"))
+    if _rc | `"`_dsig'"' == "" {
         di as err "could not construct the predict data-integrity signature"
         di as err "cached fitted values would be unsafe; estimation results were not posted"
         exit 498
     }
-    local _dsig `"`r(datasignature)'"'
 
-    // e(sample) is the union of raw panel-time rows that contributed to an
-    // estimation equation. Under system GMM, e(N_stack) counts stacked
-    // equation rows and can exceed this raw-row union by construction;
-    // e(N) itself REMAINS the raw panel-time union -- ereturn post below
-    // uses obs(n_used_raw). (comment corrected v0.8.3 R12 #8)
+    // e(sample) marks the dated row (period t) of each transformed equation,
+    // so e(N) = e(N_stack) = the number of equations; rows that enter only
+    // as lags or as later FOD rows are not marked.
     tempvar _es_value _esample_actual
     qui gen double `_es_value' = . if `touse'
     mata: xdpt2_p_fill("`panelvar'", "`timevar'", "`_es_value'", ///
@@ -1285,12 +1570,6 @@ program define xtdpthresh, eclass sortpreserve
     else {
         local cnames "`cnames' kink_slope"
     }
-    // v0.7.0 (A3 fix): method(system) carries a level-equation constant as
-    // the LAST parameter whenever level rows exist (n_level > 0).
-    if "`method'" == "system" & `=`n_level'' > 0 {
-        local cnames "`cnames' cons_lvl"
-    }
-
     // v0.7.0 (D3 fix): de-duplicate sanitized names — e.g. L.x and a variable
     // literally named L_x both map to "L_x_b"; append "_" until unique.
     local _cn_out ""
@@ -1315,6 +1594,10 @@ program define xtdpthresh, eclass sortpreserve
     matrix rownames `b' = y1
     matrix colnames `V' = `cnames'
     matrix rownames `V' = `cnames'
+    if "`kink_joint'" == "1" {
+        matrix colnames `V_cond' = `cnames'
+        matrix rownames `V_cond' = `cnames'
+    }
 
     // === Compact final report (xthreg2-style) ===
     di as text "{hline 78}"
@@ -1326,8 +1609,9 @@ program define xtdpthresh, eclass sortpreserve
     // former.
     // v0.9.2 R18 (user): surface silent per-point draw loss
     if `do_grid_ci' & "`nowarn'" == "" & !missing(`ci_minB') & `ci_minB' < `boot' {
-        di as text "Note: some grid-bootstrap replications were skipped (singular draws);"
-        di as text "smallest per-point valid count = " as res `ci_minB' as text " of " ///
+        di as text "Note: some bootstrap draws were not valid (a statistic was not finite);"
+        di as text "the candidate thresholds concerned are unresolved. Smallest per-point"
+        di as text "valid count = " as res `ci_minB' as text " of " ///
             as res `boot' as text " (see e(gridboot_min_draws))."
     }
     // v0.9.5 R21: the old "may be understated" warning is superseded --
@@ -1355,10 +1639,10 @@ program define xtdpthresh, eclass sortpreserve
     if `do_grid_ci' & !missing(`ci_unres') & `ci_unres' > 0 {
         // v0.9.5 R21 (blocker): incomplete inversion -- no reported set.
         di as text "Threshold estimate:"
-        di as text "   γ̂ = " as res %7.4f `gam' ///
+        di as text "   γ̂ = " as res %9.0g `gam' ///
            as text "   GMM obj = " as res %7.3f `obj'
         di ""
-        di as text "   " as err "Grid-bootstrap inversion INCOMPLETE:" as text " " as res `ci_unres' ///
+        di as text "   {err}Grid-bootstrap inversion INCOMPLETE:{txt} " as res `ci_unres' ///
             as text " gamma point(s) could not be"
         di as text "   evaluated (status 4-6 in e(ci_grid)). Unevaluated is NOT rejected, so"
         di as text "   no complete bootstrap inversion set is reported: e(gamma_lo)/e(gamma_hi)/"
@@ -1371,66 +1655,68 @@ program define xtdpthresh, eclass sortpreserve
         // v0.7.0 (B3 fix): an empty acceptance set is reported, not hidden
         // behind a degenerate point CI.
         di as text "Threshold estimate:"
-        di as text "   γ̂ = " as res %7.4f `gam' ///
+        di as text "   γ̂ = " as res %9.0g `gam' ///
            as text "   GMM obj = " as res %7.3f `obj'
         di ""
-        di as text "   " as err "Warning:" as text " grid bootstrap rejected ALL candidate γ at the " ///
+        di as text "   {err}Warning:{txt} grid bootstrap rejected ALL candidate γ at the " ///
            as res "`level'%" as text " level."
         di as text "   No bootstrap interval summary is reported: e(gamma_lo)/e(gamma_hi) are missing"
         di as text "   and e(ci_empty) = 1. This usually signals weak identification of γ or"
         di as text "   an unsuitable grid; re-run with different trim()/gridci() to check."
     }
     else if `do_grid_ci' {
-        local _ci_kind = cond(`flag_boot_exact', "experimental unit-bootstrap", ///
+        local _ci_kind = cond(`flag_boot_exact', "verification-only unit-bootstrap", ///
             "approximate wild-bootstrap")
         di as text "Threshold estimate (" as res "`level'% `_ci_kind' interval summary" as text "):"
-        di as text "   γ̂ = " as res %7.4f `gam' ///
-           as text "   interval = [" as res %7.4f `gam_lo' ", " %7.4f `gam_hi' "]" ///
+        di as text "   γ̂ = " as res %9.0g `gam' ///
+           as text "   interval = [" as res %9.0g `gam_lo' ", " %9.0g `gam_hi' "]" ///
            as text "   GMM obj = " as res %7.3f `obj'
 
         // v0.7.0 (B3 fix): disconnected acceptance regions are flagged; the
         // hull is still reported for continuity with earlier versions.
-        if !missing(`=`ci_nseg'') & `=`ci_nseg'' > 1 & "`nowarn'" == "" {
+        // v0.9.29: shown even under nowarn -- it describes the result (the
+        // hull covers rejected values), it is not a cautionary warning.
+        if !missing(`=`ci_nseg'') & `=`ci_nseg'' > 1 {
             di ""
-            di as text "   " as err "Note:" as text " bootstrap acceptance region is disconnected (" ///
+            di as text "   {err}Note:{txt} bootstrap acceptance region is disconnected (" ///
                as res `=`ci_nseg'' as text " segments);"
             di as text "   the CI shown is its convex hull -- a SUMMARY that also covers"
-            di as text "   REJECTED gamma between segments. e(ci_segments) lists the accepted"
-            di as text "   segments; e(ci_grid) holds the full inversion table."
+            di as text "   rejected or inadmissible gamma between segments. e(ci_segments)"
+            di as text "   lists the accepted segments; e(ci_grid) holds the full inversion table."
         }
 
         // Display warning unless nowarn set. e(boundary_warn) flag is always
         // ereturn'd below regardless of display suppression.
         if `_bwarn' > 0 & "`nowarn'" == "" {
             di ""
-            di as text "   " as err "Warning:" as text " CI " _c
+            di as text "   {err}Warning:{txt} CI " _c
             // v0.8.2 R11 (#3): report the CI-grid admitted span -- the
             // frame the pin was detected in -- not the nominal trim bounds.
             if `_bwarn' == 3 {
                 di as text "BOTH bounds pin to the CI-grid edges [" ///
-                   as res %7.4f `=`gci_lo'' as text ", " ///
-                   as res %7.4f `=`gci_hi'' as text "]"
+                   as res %9.0g `=`gci_lo'' as text ", " ///
+                   as res %9.0g `=`gci_hi'' as text "]"
             }
             else if `_bwarn' == 1 {
                 di as text "lower bound pins to the CI-grid lower edge (" ///
-                   as res %7.4f `=`gci_lo'' as text ")"
+                   as res %9.0g `=`gci_lo'' as text ")"
             }
             else {
                 di as text "upper bound pins to the CI-grid upper edge (" ///
-                   as res %7.4f `=`gci_hi'' as text ")"
+                   as res %9.0g `=`gci_hi'' as text ")"
             }
             di as text "   Possible causes: weak identification in the affected regime,"
             di as text "   or grid edge at trim(" as res %4.2f `trim' as text ") cuts close to γ̂."
             di as text "   Re-run with a different trim to check γ̂ / CI stability."
-            di as text "   Alternatives: trim(0.10) widens the grid (default in xthreg2);"
-            di as text "   trim(0.15) is the Gong-Seo (2026) convention; trim(0.40) is the"
-            di as text "   xthenreg / Seo-Shin (2016) convention. Suppress this warning with"
-            di as text "   the " as res "nowarn" as text " option."
+            di as text "   Alternatives: a smaller trim() widens the grid; trim(0.20) with"
+            di as text "   gridtype(quantile) matches the p10-p90 grid of the Gong-Seo"
+            di as text "   application; trim(0.40) is the xthenreg default. Suppress this"
+            di as text "   warning with the " as res "nowarn" as text " option."
         }
     }
     else {
         di as text "Threshold estimate:"
-        di as text "   γ̂ = " as res %7.4f `gam' ///
+        di as text "   γ̂ = " as res %9.0g `gam' ///
            as text "   GMM obj = " as res %7.3f `obj'
     }
     di ""
@@ -1470,10 +1756,6 @@ program define xtdpthresh, eclass sortpreserve
             }
             else {
                 di as text "   Continuity (H0: kink)    p = " as res %6.4f `pval_cont'
-                if `ref_it' > 0 {
-                    di as text "      Note: the restricted kink comparison uses a finite grid;"
-                    di as text "      refine() applies only to the unrestricted jump search."
-                }
             }
         }
     }
@@ -1484,27 +1766,17 @@ program define xtdpthresh, eclass sortpreserve
     di as text "   Diagnostic Hansen J (conditional on γ̂) = " as res %6.3f `hansen' ///
        as text "  (df=" as res %2.0f `hansen_df' ///
        as text ")  p = " as res %6.4f `hansen_p'
-    if "`nowarn'" == "" {
-        di as text "   Hansen-family chi-square p-values are diagnostics: regular joint"
-        di as text "   identification of (theta, gamma) is not certified by the grid/rank gates."
+    // v0.9.29: say why J is missing instead of printing a bare ".".
+    if missing(`=`hansen'') {
+        if `est_2s' == 0 {
+            di as text "   Hansen J not available: the reported estimate is one-step GMM."
+        }
+        else {
+            di as text "   Hansen J not available: no overidentifying restrictions (df <= 0)."
+        }
     }
-    if "`method'" == "system" {
-        if `=`dh_cmis'' == 1 {
-            di as text "   Diff-Hansen (level block) omitted: the system and reduced"
-            di as text "   FOD estimators use different panel-cluster sets, so their J"
-            di as text "   criteria are not a nested C-statistic (see e(diffhansen_cluster_mismatch))."
-        }
-        else if !missing(`=`dh'') & `=`dh_neg'' == 1 {
-            di as text "   Diff-Hansen (level block) = " as res %6.3f `dh' ///
-               as text "  " as err "NEGATIVE" as text " -- diagnostic unreliable"
-            di as text "   (different estimated weight matrices; p set to missing;"
-            di as text "   see e(diffhansen_negative), e(hansen_fod))."
-        }
-        else if !missing(`=`dh'') {
-            di as text "   Diagnostic Diff-Hansen (level block, cond. on γ̂) = " as res %6.3f `dh' ///
-               as text "  (df=" as res %2.0f `dh_df' ///
-               as text ")  p = " as res %6.4f `dh_p'
-        }
+    if "`nowarn'" == "" {
+        di as text "   J is a diagnostic; its chi-square reference assumes regular identification."
     }
     di as text "   AR(1): m = " as res %6.3f `ar1' ///
        as text "  p = " as res %6.4f `ar1_p' ///
@@ -1516,56 +1788,162 @@ program define xtdpthresh, eclass sortpreserve
             di as text "   unavailable/nonpositive full Arellano-Bond variance; no simplified"
             di as text "   T1-only p-value is substituted."
         }
-        di as text "   AR p-values are conditional on the selected threshold."
+        if "`ar_joint'" == "1" {
+            di as text "   AR includes the estimation of γ̂; e(ar1_cond) and e(ar2_cond)"
+            di as text "   treat γ̂ as known."
+        }
+        else di as text "   AR p-values are conditional on the selected threshold."
     }
     di ""
-    local level_lab ""
-    if `=`n_level'' > 0 local level_lab = "  level = " + string(`=`n_level'', "%5.0f")
-    // v0.8.0 (audit R5): display counts that match e(): obs used = e(N)
-    // (raw rows in e(sample)); complete-case = e(N_raw); stacked = e(N_stack).
+    // v0.8.0 (audit R5): display counts that match e(): equations = e(N)
+    // (= e(N_stack): one row of e(sample) per transformed equation);
+    // complete-case rows = e(N_raw).
+    // v0.9.29: relabelled -- "obs used" suggested that complete-case rows
+    // outside e(sample) were unused, although they enter as t-1 (FD) or
+    // forward-mean (FOD) values.
     qui count if `_esample_actual'
     local n_used_raw = r(N)
+    // v0.9.34: the admitted count is stage 1 on the initial grid, so show it
+    // against the initial grid and list refine() points apart
+    local _grid_s1 = cond(missing(`search_s1_n'), `grid_eff', `search_s1_n')
+    local _grid_ref = `grid_eff' - `_grid_s1' - ("`kink_refined'" == "1")
     di as text "Sample: " ///
-       as text "obs used = " as res %5.0f `n_used_raw' ///
-       as text "  complete-case = " as res %5.0f `n_raw'  ///
+       as text "equations = " as res %5.0f `n_used_raw' ///
+       as text "  complete-case rows = " as res %5.0f `n_raw'  ///
        as text "  units = " as res %3.0f `n_units' ///
-       as text "  trans = " as res %5.0f `n_trans' ///
-       as res "`level_lab'" ///
        as text "  #IV = "   as res %4.0f `n_iv' ///
-       as text "  grid = " as res "`grid_adm'" as text "/" as res "`grid_eff'" ///
-       as text " (req " as res "`grid_req'" as text ")"
+       as text "  grid = " as res "`grid_adm'" as text "/" as res "`_grid_s1'" ///
+       as text " (req " as res "`grid_req'" as text ")" ///
+       as text cond(`_grid_ref' > 0, " + `_grid_ref' refine", "")
     di as text "{hline 78}"
+
+    // v0.9.30: shown even under nowarn, because the instrument set differs
+    // from the declared one (as xtabond2's "dropped due to collinearity").
+    if `iv_common' > 0 {
+        di as text "Note: " as res `iv_common' as text " instrument column(s) take one value for every unit in their"
+        di as text "      period and are linear combinations of the constant instrument"
+        di as text "      columns (one per period, or one under collapse); they add no moment"
+        di as text "      condition and were dropped (e(N_iv_common)); #IV counts the rest."
+        if `"`iv_common_vars'"' != "" {
+            di as text "      Variables common to all units in each period: " as res "`iv_common_vars'"
+        }
+    }
+    // v0.9.34: shown even under nowarn, for the same reason
+    // v0.9.35: "linear combinations" only when every dropped column is one up
+    // to rounding on Z itself (e(N_iv_dep_near) = 0)
+    if `iv_dep' > 0 & `iv_dep_near' == 0 {
+        di as text "Note: " as res `iv_dep' as text " instrument column(s) are linear combinations of other columns"
+        di as text "      (for example in a period with fewer units than instruments) and were"
+        di as text "      dropped (e(N_iv_dep)), as xtabond2's generalized inverse does."
+    }
+    else if `iv_dep' > 0 {
+        di as text "{err}Warning:{txt} " as res `iv_dep' as text " instrument column(s) dropped as numerically dependent"
+        di as text "      (e(N_iv_dep)); " as res `iv_dep_near' as text " are only nearly dependent (e(N_iv_dep_near))."
+        di as text "      Their directions are lost (largest relative residual " ///
+            as res strtrim(string(`iv_dep_res', "%9.2e")) as text ";"
+        di as text "      e(iv_dep_res)); estimates depend on how the instruments are written."
+    }
 
     // v0.7.12: post-estimation diagnostic warnings (respect nowarn).
     if "`nowarn'" == "" {
-        if `=`n_iv'' > `=`n_units'' {
-            di as err  "Warning:" as text " #instruments (" as res `=`n_iv''      ///
-               as text ") exceeds #units (" as res `=`n_units'' as text ")."       ///
-               as text " Hansen J is unreliable; use " as res "collapse"           ///
+        // v0.9.29: >= rather than >. The centered moment covariance has rank
+        // at most #units - 1, so from #instruments = #units the second-step
+        // weight is singular and the command falls back to one-step GMM.
+        if `=`n_iv'' >= `=`n_units'' {
+            di as text "{err}Warning:{txt} #instruments (" as res `=`n_iv''      ///
+               as text ") is not below #units (" as res `=`n_units'' as text ")." ///
+               as text " The second-step weight is unreliable; use " as res "collapse" ///
                as text " or a tighter " as res "maxlag()" as text "."
+        }
+        if `est_2s' == 0 {
+            di as text "{err}Warning:{txt} the two-step search could not be completed (the"
+            di as text "second-step weight is singular or ill-conditioned, or no candidate"
+            di as text "threshold gives a usable two-step fit), so the reported estimates are"
+            di as text "ONE-STEP GMM with the first-step weight (e(estimator_twostep) = 0);"
+            di as text "Hansen J is not reported."
+        }
+        if `w1_fallback' > 0 {
+            di as text "{err}Warning:{txt} the Arellano-Bond first-step weight matrix is singular or"
+            di as text "ill-conditioned; " ///
+                cond(`w1_fallback' == 1, "(Z'Z)^-1", "the identity matrix") ///
+                " was used instead (e(W1_fallback) = " `w1_fallback' ")."
         }
         if `=`n_units'' < 30 {
             di as text "Note: few cross-sectional units (" as res `=`n_units''     ///
                as text "); GMM estimates and diagnostics may be unreliable."
+        }
+        // v0.9.34: the change in the intercept is identified by the units
+        // whose regime changes within their equations (v0.9.35: only it; the
+        // slope changes also use units that stay in the upper regime)
+        if !missing(`n_switch') & `n_switch' < 10 {
+            di as text "Note: only " as res `n_switch' as text                        ///
+               " units change regime at the estimated threshold (e(N_switch));"
+            di as text "  the change in the intercept rests on them."
         }
         if `do_grid_ci' & `boot' < 999 {
             di as text "Note: " as res "boot(`boot')" as text                       ///
                " is fine for exploration; " as res "999+" as text " reduces Monte Carlo"
             di as text "error but does not certify the bootstrap design."
         }
+        // v0.9.34: with (1 - level)(B + 1) < 1 no draw can reject
+        if `do_grid_ci' & (1 - `level'/100)*(`boot' + 1) < 1 {
+            di as text "Note: " as res "boot(`boot')" as text " is too small for level(" ///
+               as res "`level'" as text "): no candidate threshold can be rejected."
+        }
         if `flag_vce_wind' & `wind_applied' == 0 {
-            di as text "Note: " as res "vce(windmeijer)" as text " requested but the estimator used the"
-            di as text "one-step fallback (no two-step weight); the cluster-robust paired"
-            di as text "sandwich is reported. See " as res "e(vce_applied)" as text "."
+            // v0.9.29: distinguish the two causes.
+            if `est_2s' == 0 {
+                di as text "Note: " as res "vce(windmeijer)" as text " requested but the estimator used the"
+                di as text "one-step fallback (no two-step weight); the cluster-robust paired"
+                di as text "sandwich is reported. See " as res "e(vce_applied)" as text "."
+            }
+            else {
+                di as text "Note: " as res "vce(windmeijer)" as text " requested but the corrected variance could"
+                di as text "not be computed or was not positive semidefinite; the cluster-robust"
+                di as text "sandwich is reported. See " as res "e(vce_applied)" as text "."
+            }
+        }
+        if `wind_applied' & "`same_threshold'" == "0" {
+            di as text "Note: the Windmeijer correction is derived for a second-step weight built"
+            di as text "at the reported threshold; here W2 was built at the stage-1 threshold"
+            di as text "(e(gamma_stage1) != e(gamma)), so the corrected SEs are approximate"
+            di as text "(e(wind_same_threshold) = 0)."
         }
         // v0.8.0 (audit R5): make the conditioning of the analytic SEs explicit.
-        di as text "Note: analytic slope SEs are CONDITIONAL on the estimated threshold"
-        di as text "(gamma-hat treated as fixed; Hansen 1999 convention) and are not continuity-robust."
-        if `do_grid_ci' {
-            di as text "Bootstrap intervals below are approximate and not certified as the exact"
-            di as text "Gong-Seo procedure; see e(ci_bootstrap_certified)."
+        // v0.9.29: the static-panel convention does not justify them here.
+        // v0.9.32: under kink the SEs include the estimation error of gamma-hat.
+        // v0.9.35: so do those of the jump model (kernel derivative).
+        if "`kink_joint'" == "1" {
+            if "`kink'" != "" {
+                di as text "Note: slope SEs include the estimation error of gamma-hat (joint variance);"
+                di as text "e(V_cond) is conditional on gamma-hat."
+            }
+            else {
+                di as text "Note: slope SEs include the estimation error of gamma-hat (joint variance;"
+                di as text "bandwidth " as res strtrim(string(`gamma_bw', "%9.4g")) ///
+                    as text ", e(gamma_bw)); e(V_cond) is conditional on gamma-hat."
+            }
+            // v0.9.35: a discrete q has no density for the kernel derivative
+            if "`kink'" == "" & !missing(`q_nvals_bw') & `q_nvals_bw' < 10 {
+                di as text "{err}Warning:{txt} q takes only " as res `q_nvals_bw' as text " distinct " cond(`q_nvals_bw' == 1, "value", "values") " within two bandwidths of gamma-hat"
+                di as text "(e(q_nvals_bw)); the joint variance and AR assume a continuous q (Seo and Shin"
+                di as text "2016, Assumption 2); e(V_cond), e(ar1_cond), and e(ar2_cond) do not."
+            }
         }
-        if `wind_applied' {
+        else {
+            di as text "Note: analytic slope SEs are CONDITIONAL on the estimated threshold"
+            di as text "(gamma-hat treated as fixed). The GMM threshold estimator converges at"
+            di as text "rate sqrt(n) or slower, so they omit a first-order source of uncertainty."
+            if "`kink_joint'" == "0" {
+                di as text "The joint variance of the slopes and gamma-hat could not be computed"
+                di as text "(e(joint_vce) = 0)."
+            }
+        }
+        if `do_grid_ci' {
+            di as text "The threshold confidence set above is approximate and not certified as"
+            di as text "the exact Gong-Seo procedure; see e(ci_bootstrap_certified)."
+        }
+        if `wind_applied' & "`kink_joint'" != "1" {
             di as text "      vce(windmeijer): Windmeijer-type correction CONDITIONAL on the"
             di as text "      selected threshold (it does not add gamma-search variability)."
         }
@@ -1596,64 +1974,37 @@ program define xtdpthresh, eclass sortpreserve
     if `do_grid_ci' & "`coefboot'" != "none" & !`bci_valid' {
         local _cbmode = cond(`est_2s' == 1 & "`coefboot'" == "twostep", "two-step", "one-step")
         if `bci_B' >= 10 & `bci_B' >= ceil(.9*`boot') {
-            di as err "Warning:" as text " successful coefficient-bootstrap replays did not yield"
+            di as text "{err}Warning:{txt} successful coefficient-bootstrap replays did not yield"
             di as text "finite interval bounds; e(b_bootci) not stored."
         }
         else if `bci_att' > 0 {
-            di as err  "Warning:" as text " coefficient bootstrap could not reach 90% valid `_cbmode'"
+            di as text "{err}Warning:{txt} coefficient bootstrap could not reach 90% valid `_cbmode'"
             di as text "draws (valid " as res `bci_B' as text " of " as res `boot' as text " requested; " ///
                 as res `bci_att' as text " attempted); e(b_bootci) not stored."
         }
         else {
-            di as err "Warning:" as text " coefficient bootstrap could not start a valid `_cbmode' replay;"
+            di as text "{err}Warning:{txt} coefficient bootstrap could not start a valid `_cbmode' replay;"
             di as text "no coefficient interval was delivered (e(b_bootci) not stored)."
-        }
-    }
-
-    // v0.8.7 R16 (#5): flag a system fit identified almost entirely off
-    // the level block -- the transformed (Arellano-Bond) moments then
-    // contribute little and the estimate leans on the Blundell-Bond
-    // stationarity assumptions.
-    // v0.9.1 R17 (#2): SYMMETRIC participation warnings -- either block
-    // can be the thin one, and low overlap is a problem of its own.
-    if "`method'" == "system" & "`nowarn'" == "" {
-        if `nu_trans' < max(5, ceil(0.1*`nu_level')) {
-            di ""
-            di as text "   " as err "Warning:" as text " system estimate is nearly LEVEL-dominated:"
-            di as text "   " as res `nu_trans' as text " unit(s) contribute transformed equations vs " ///
-                as res `nu_level' as text " level unit(s)."
-            di as text "   The fit leans on the level-block stationarity assumptions; see"
-            di as text "   e(N_units_trans)/e(N_units_level)/e(N_units_both)."
-        }
-        else if `nu_level' < max(5, ceil(0.1*`nu_trans')) {
-            di ""
-            di as text "   " as err "Warning:" as text " the LEVEL block is thin:"
-            di as text "   " as res `nu_level' as text " level unit(s) vs " as res `nu_trans' ///
-                as text " transformed unit(s). The fit is effectively FOD plus"
-            di as text "   a few level moments; the Hansen J and clustered VCE lean on very"
-            di as text "   few level clusters. Consider method(fod)."
-        }
-        if `nu_both' < max(5, ceil(0.1*min(`nu_trans', `nu_level'))) {
-            di ""
-            di as text "   " as err "Warning:" as text " only " as res `nu_both' ///
-                as text " unit(s) contribute to BOTH equation blocks;"
-            di as text "   cross-block covariance is estimated from few shared clusters."
         }
     }
 
     // v0.7.0 (A1 fix): esample() marks the estimation sample so that
     // post-estimation commands relying on e(sample) work correctly.
-    // v0.7.13 (audit R4): e(N) now counts RAW panel-time observations in the
-    // estimation sample — so e(N) == count if e(sample) always, including
-    // under method(system) where the stacked design has more equation rows
-    // than raw observations. The stacked row count moves to e(N_stack);
-    // e(N_trans)/e(N_level) give the per-equation decomposition as before.
+    // e(N) counts raw panel-time observations in the estimation sample;
+    // e(N_stack) counts transformed-equation rows used by GMM.
     ereturn post `b' `V', obs(`n_used_raw') esample(`_esample_actual') depname("`depvar'")
     ereturn scalar N_stack   = `=`nused''
     ereturn local predict    "xtdpthresh_p"
     ereturn local cmdline    `"xtdpthresh `cmdline'"'
-    ereturn local cmdversion "0.9.24"
+    ereturn local cmdversion "0.9.35"
+    ereturn local searchmode "`searchmode'"
+    ereturn scalar searchtol = `searchtol'
+    ereturn scalar searchmax = `searchmax_effective'
+    ereturn scalar searchmax_specified = `searchmax_set'
+    ereturn scalar search_max_level = `search_max_level'
     ereturn local boottype "`boottype'"
+    if `flag_boot_exact' ereturn local boottype_status "verification-only"
+    else ereturn local boottype_status "supported"
     ereturn local history "`history'"
     // v0.8.0 (audit R5): explicit bootstrap metadata so users/scripts can
     // see WHICH bootstrap produced the CI without reading the help.
@@ -1662,15 +2013,22 @@ program define xtdpthresh, eclass sortpreserve
     // boottype(unit) and invited "everything is exact" readings.
     if `do_grid_ci' {
         if `flag_boot_exact' {
-            ereturn local threshold_bootstrap   "experimental unit-multiplicity resampling (Gong-Seo Alg. 1-oriented: unrestricted-residual DGP, fixed sample W1, per-draw recentered Omega/W2*; NOT certified as Algorithm 1)"
+            ereturn local threshold_bootstrap   "verification-only unit-multiplicity resampling (Gong-Seo Alg. 1-oriented: unrestricted-residual DGP, fixed sample W1, per-draw recentered Omega/W2*; NOT certified as Algorithm 1)"
             ereturn local threshold_resampling  "panel unit (iid with replacement, multiplicity weights)"
             ereturn local threshold_recentering "explicit (sample moment at the reported theta-hat subtracted from every bootstrap moment)"
         }
         else {
-            ereturn local threshold_bootstrap   "cluster wild residual (fast, xthenreg-style; approximation of Gong-Seo Alg. 1)"
+            // v0.9.34 (C1): the criterion of the reported estimator, its
+            // weight held at the sample value; one set of Mammen weights
+            // serves every candidate (O1)
+            local _tbw = cond(`est_2s' == 1, "two-step criterion, second-step weight W2", ///
+                                             "one-step criterion, first-step weight W1")
+            ereturn local threshold_bootstrap   "cluster wild residual (`_tbw' fixed; the same draws at every candidate; approximation of Gong-Seo Alg. 1)"
             ereturn local threshold_resampling  "panel unit (multiplicative Mammen weights)"
             ereturn local threshold_recentering "implicit (E*[eta]=0 centers wild moments at the restricted fit)"
         }
+        local _ccrit = cond(`flag_boot_exact' | `est_2s' == 1, "twostep", "onestep")
+        ereturn local ci_criterion "`_ccrit'"
     }
     else {
         ereturn local threshold_bootstrap   "none"
@@ -1712,34 +2070,49 @@ program define xtdpthresh, eclass sortpreserve
     // v0.8.0 (audit R5): e(vce) reports the VCE actually delivered;
     // e(vce_requested) preserves the request (they differ only on the
     // one-step fallback where the correction is undefined). e(vcetype)
-    // makes the conditioning explicit: ALL analytic slope SEs treat the
-    // estimated threshold as fixed (Hansen 1999 convention) and are not
+    // says whether the slope SEs include the estimation error of gamma-hat
+    // (joint variance; since 0.9.35 in both models) or treat it as fixed
+    // (only when the joint variance could not be computed). Neither is
     // continuity-robust; threshold inference runs through the grid CI.
     ereturn local vce_requested "`vce'"
     ereturn local vce        = cond(`wind_applied', "windmeijer", "robust")
     ereturn scalar vce_applied = `wind_applied'
-    ereturn local vcetype    "Conditional on estimated threshold"
-    ereturn local ar_vcetype "Conditional on estimated threshold"
+    if "`kink_joint'" == "1" {
+        ereturn local vcetype "Joint with estimated threshold"
+        ereturn matrix V_cond = `V_cond'
+    }
+    else ereturn local vcetype "Conditional on estimated threshold"
+    // v0.9.35: the AR statistics include gamma-hat when e(ar_joint) = 1
+    if "`ar_joint'" == "1" ereturn local ar_vcetype "Joint with estimated threshold"
+    else ereturn local ar_vcetype "Conditional on estimated threshold"
+    // v0.9.35: e(joint_vce) for both models; e(kink_joint_vce) kept for kink
+    if "`kink_joint'" == "1" | "`kink_joint'" == "0" {
+        ereturn scalar joint_vce = `kink_joint'
+    }
+    else ereturn scalar joint_vce = .
+    if "`kink'" != "" & ("`kink_joint'" == "1" | "`kink_joint'" == "0") {
+        ereturn scalar kink_joint_vce = `kink_joint'
+    }
+    else ereturn scalar kink_joint_vce = .
+    if "`kink'" == "" & "`gamma_bw'" != "" ereturn scalar gamma_bw = `gamma_bw'
+    else ereturn scalar gamma_bw = .
+    ereturn scalar bwscale = `bwscale'
+    // v0.9.35: distinct values of q within two bandwidths of gamma-hat
+    ereturn scalar q_nvals_bw = `q_nvals_bw'
+    if "`kink'" != "" & "`kink_refined'" != "" ereturn scalar kink_refined = `kink_refined'
+    else ereturn scalar kink_refined = .
     ereturn local hansen_reference "diagnostic chi-square; regular joint threshold rank not certified"
     ereturn scalar gamma_regular_rank_certified = 0
-    // v0.9.13 R32: say what the search actually was.
-    if `ref_it' > 0 {
-        // v0.9.16 R35: three states -- exhausted alone can coexist with an
-        // unrefined final neighbourhood (false completeness otherwise).
-        if `ref_comp' == 1 {
-            ereturn local threshold_search "expand-only local support refinement COMPLETE around the reported gamma; not exhaustive over the full support"
-        }
-        else if `ref_exh' == 0 {
-            ereturn local threshold_search "expand-only batched local refinement INCOMPLETE; pooled candidates remain unevaluated (see e(refine_remaining))"
-        }
-        else {
-            ereturn local threshold_search "pooled candidates exhausted, but the reported-gamma neighbourhood remains incompletely refined (see e(refine_neigh_unevaluated))"
-        }
+    if `refine' > 0 {
+        ereturn local threshold_search "fixed global profile grid; one W2 constructed after stage 1; final support refinement under that W2"
+    }
+    else if "`kink'" != "" {
+        ereturn local threshold_search "fixed discrete profile grid; one W2 constructed after the stage-1 pass; continuous minimization between the grid neighbours of the grid argmin"
     }
     else {
-        ereturn local threshold_search "fixed discrete profile grid; not adaptive or exhaustive over support"
+        ereturn local threshold_search "fixed discrete profile grid; one W2 constructed after the stage-1 pass"
     }
-    ereturn local continuity_kink_search "finite-grid approximation; refine() applies only to the jump model"
+    ereturn local continuity_kink_search "initial grid, as for the jump alternative"
     if `do_grid_ci' & !`flag_notest' {
         ereturn local linearity_statistic "profile GMM-distance (wild bootstrap; not Seo-Shin sup-Wald)"
     }
@@ -1754,7 +2127,8 @@ program define xtdpthresh, eclass sortpreserve
         }
         else ereturn local continuity_test "nested comparison; not run"
     }
-    else ereturn local continuity_test "not run; kink comparison is not nested"
+    else if `flag_kink' ereturn local continuity_test "not run; the fitted model is the kink model"
+    else ereturn local continuity_test "not run; q is not a contemporaneous regressor, so the kink model is not nested"
     if `do_grid_ci' {
         ereturn local threshold_bootstrap_conditioning "valid fixed-B solves only; unresolved points are withdrawn under the validity rule"
     }
@@ -1824,6 +2198,19 @@ program define xtdpthresh, eclass sortpreserve
         ereturn local coefboot = cond(`est_2s' == 1 & "`coefboot'" == "twostep", "twostep", "onestep")
     }
     ereturn scalar estimator_twostep = `est_2s'
+    // v0.9.29: first-step weight actually used (0 = as documented) and, for
+    // vce(windmeijer), whether W2 was built at the reported threshold.
+    ereturn scalar W1_fallback = `w1_fallback'
+    ereturn scalar wind_same_threshold = cond(`wind_applied', `same_threshold', .)
+    // v0.9.30: instrument columns dropped as multiples of the constant
+    // instrument columns, and the variables common to all units in each period.
+    ereturn scalar N_iv_common = `iv_common'
+    ereturn scalar N_iv_dep = `iv_dep'
+    // v0.9.35: dropped columns that are not linear combinations of the kept
+    // ones (relative residual on Z above 1e-10), and the largest residual
+    ereturn scalar N_iv_dep_near = `iv_dep_near'
+    ereturn scalar iv_dep_res = `iv_dep_res'
+    ereturn local iv_common = cond(`iv_common' > 0, "`iv_common_vars'", "")
     ereturn local td_mode    = cond(`flag_td_fwl', "fwl", "")
     ereturn local panelvar   "`panelvar'"
     ereturn local timevar    "`timevar'"
@@ -1857,31 +2244,19 @@ program define xtdpthresh, eclass sortpreserve
     ereturn scalar q_hi      = `q_hi'
     ereturn scalar N_raw     = `n_raw'
     ereturn scalar N_trans   = `n_trans'
-    ereturn scalar N_level   = `n_level'
-    // v0.8.7 R16 (#5): per-block unit participation (system diagnostics)
-    ereturn scalar N_units_trans = `nu_trans'
-    ereturn scalar N_units_level = `nu_level'
-    ereturn scalar N_units_both  = `nu_both'
     ereturn scalar N_iv      = `n_iv'
     ereturn scalar N_units   = `n_units'
+    ereturn scalar N_switch  = `n_switch'
     ereturn scalar hansen    = `hansen'
     ereturn scalar hansen_df = `hansen_df'
     ereturn scalar hansen_p  = `hansen_p'
-    // v0.9.1 R17 (#6): C-statistic for the additional level moments
-    ereturn scalar diffhansen_level    = `dh'
-    ereturn scalar diffhansen_level_df = `dh_df'
-    ereturn scalar diffhansen_level_p  = `dh_p'
-    ereturn scalar diffhansen_negative = `dh_neg'
-    ereturn scalar diffhansen_cluster_mismatch = `dh_cmis'
-    // the reduced (FOD-only) side of the subtraction, for user inspection
-    ereturn scalar hansen_fod    = `hfod'
-    ereturn scalar hansen_fod_df = `hfod_df'
-    ereturn scalar hansen_fod_p  = `hfod_p'
-    ereturn scalar gamma_fod     = `gfod'
     ereturn scalar ar1       = `ar1'
     ereturn scalar ar1_p     = `ar1_p'
     ereturn scalar ar2       = `ar2'
     ereturn scalar ar2_p     = `ar2_p'
+    ereturn scalar ar_joint  = `ar_joint'
+    ereturn scalar ar1_cond  = `ar1_cond'
+    ereturn scalar ar2_cond  = `ar2_cond'
     ereturn scalar ar1_b0    = `ar1_b0'
     ereturn scalar ar1_T1    = `ar1_T1'
     ereturn scalar ar1_TT    = `ar1_TT'
@@ -1894,6 +2269,7 @@ program define xtdpthresh, eclass sortpreserve
     // v0.9.6 R22 (#5): predict-cache data signature
     ereturn local p_dsig `"`_dsig'"'
     ereturn local p_dsig_vars "`_dsvars'"
+    ereturn local p_dsig_type "rowsig2"
 
     // Signed AR pair counts: positive means the full AB (1991, eq. 8)
     // variance was used; negative means that variance was unavailable and
@@ -1912,7 +2288,7 @@ program define xtdpthresh, eclass sortpreserve
     // stack. Keep the pre-estimation xtset result separately for diagnostics.
     ereturn scalar panel_balanced = `is_balanced'
     ereturn scalar balanced       = `balanced_eff'
-    ereturn local balanced_definition "same panel-time union across contributing units; system equation-block balance is not implied"
+    ereturn local balanced_definition "same transformed-equation time support across contributing units"
     ereturn scalar flag_td   = `flag_td'
     ereturn scalar boundary_warn = `_bwarn'
     // v0.7.13 (audit): store the confidence level like standard estimation
@@ -1934,6 +2310,33 @@ program define xtdpthresh, eclass sortpreserve
     ereturn scalar grid_requested  = `grid_req'
     ereturn scalar grid_effective  = `grid_eff'
     ereturn scalar grid_admitted   = `grid_adm'
+    ereturn scalar grid_max_requested = `searchmax_effective'
+    ereturn scalar search_level1_points = `search_l1_n'
+    ereturn scalar search_level2_points = `search_l2_n'
+    ereturn scalar search_level3_points = `search_l3_n'
+    ereturn scalar search_stage1_level = `search_s1_level'
+    ereturn scalar search_stage2_level = `search_s2_level'
+    ereturn scalar search_stage1_points = `search_s1_n'
+    ereturn scalar search_stage2_points = `search_s2_n'
+    ereturn scalar search_stage1_same_split = `search_s1_same'
+    ereturn scalar search_stage2_same_split = `search_s2_same'
+    ereturn scalar search_stage1_rel_gain = `search_s1_gain'
+    ereturn scalar search_stage2_rel_gain = `search_s2_gain'
+    ereturn scalar search_stage1_converged = `search_s1_conv'
+    ereturn scalar search_stage2_converged = `search_s2_conv'
+    ereturn scalar search_converged = `search_converged'
+    // Legacy adaptive-search fields are retained for one compatibility
+    // release. They are non-applicable under the v0.9.26 fixed-grid contract.
+    ereturn scalar search_cap_exhausted = `search_hit_max'
+    ereturn scalar search_hit_max = `search_hit_max'
+    ereturn local search_hit_max_definition ///
+        "retired adaptive-search field; always 0 under the fixed-grid estimator"
+    ereturn scalar search_incomplete = `search_incomplete'
+    ereturn scalar search_W2_builds = `search_W2_builds'
+    ereturn scalar gamma_stage1 = `search_g1'
+    ereturn scalar obj_stage1 = `search_o1'
+    ereturn scalar gamma_stage2_global = `search_g2_global'
+    ereturn scalar obj_stage2_global = `search_o2_global'
     // v0.8.2 R11 (#2): structural = ok-only (sample-size/rank) admission;
     // twostep_admitted = solvable under W_n_2 (missing on one-step paths)
     ereturn scalar grid_structural = `grid_struct'
@@ -2004,6 +2407,8 @@ program define xtdpthresh, eclass sortpreserve
     ereturn scalar refine_final_in_initial_basin = `ref_inb'
     ereturn scalar refine_neigh_unevaluated = `ref_nrem'
     ereturn scalar refine_complete = `ref_comp'
+    ereturn scalar refine_obj_rel_gain = `ref_obj_gain'
+    ereturn local refine_stage = cond(`refine' > 0, "stage2_fixed_W2", "none")
     // v0.8.2 R11 (#7): grid-config reproducibility without e(cmdline) parsing
     ereturn scalar minregime_default = `minreg_def'
     ereturn scalar minregime_applied = `minreg_app'
@@ -2015,6 +2420,83 @@ program define xtdpthresh, eclass sortpreserve
     // partial result set that falsely identifies itself as a valid fit.
     ereturn local cmd "xtdpthresh"
     ereturn display, level(`level')
+end
+
+
+// v0.9.31: -tsrevar- ignores -set type-: a temporary takes the type of its
+// source variable, so an operator on a float variable (D.x, LD.x, S.x) was
+// evaluated in float precision. Each operator temporary is recomputed here in
+// double precision; for double sources the values are unchanged.
+program define _xdpt_tsdouble
+    version 15.0
+    syntax , EXPanded(string) LABels(string)
+    local _n : word count `expanded'
+    forvalues _i = 1/`_n' {
+        local _tv : word `_i' of `expanded'
+        local _ut : word `_i' of `labels'
+        if strpos(`"`_ut'"', ".") & `"`_tv'"' != `"`_ut'"' {
+            capture confirm variable `_tv', exact
+            if !_rc {
+                quietly recast double `_tv'
+                quietly replace `_tv' = `_ut'
+            }
+        }
+    }
+end
+
+
+// v0.9.29: decompose a (possibly) time-series-operated term, in the canonical
+// spelling produced by -syntax varlist(ts)- (e.g. L2.x, LD.y, S12.x, F.y),
+// into its base variable, its net lag (L minus F), and whether it contains a
+// D., S., or F. operator, i.e. the current or a future value of the base.
+// Unrecognized operator syntax is treated conservatively (hasdsf = 1).
+program define _xdpt_tsterm, rclass
+    args term
+    local dot = strpos(`"`term'"', ".")
+    if !`dot' {
+        return local base `"`term'"'
+        return scalar isop   = 0
+        return scalar netlag = 0
+        return scalar hasdsf = 0
+        exit
+    }
+    local op   = lower(substr(`"`term'"', 1, `dot' - 1))
+    local base = substr(`"`term'"', `dot' + 1, .)
+    local netlag = 0
+    local hasdsf = 0
+    local rest "`op'"
+    while "`rest'" != "" {
+        local hit ""
+        local tok ""
+        local num ""
+        if regexm("`rest'", "^([lfds])\(([0-9]+)\)") {
+            local tok = regexs(1)
+            local num = regexs(2)
+            local hit = regexs(0)
+        }
+        else if regexm("`rest'", "^([lfds])([0-9]*)") {
+            local tok = regexs(1)
+            local num = regexs(2)
+            local hit = regexs(0)
+        }
+        if "`hit'" == "" {
+            local hasdsf = 1
+            local rest ""
+            continue
+        }
+        if "`num'" == "" local num 1
+        if "`tok'" == "l" local netlag = `netlag' + `num'
+        else if "`tok'" == "f" {
+            local netlag = `netlag' - `num'
+            local hasdsf = 1
+        }
+        else local hasdsf = 1
+        local rest = substr("`rest'", strlen("`hit'") + 1, .)
+    }
+    return local base `"`base'"'
+    return scalar isop   = 1
+    return scalar netlag = `netlag'
+    return scalar hasdsf = `hasdsf'
 end
 
 
@@ -2030,10 +2512,14 @@ mata:
 mata set matastrict off
 
 // Package-level Mata scalars (xdpt_collapse, xdpt_lag_lo, xdpt_lag_hi,
-// xdpt_lev_lo, xdpt_lev_hi, xdpt_verbose) are declared "external" inside
+// xdpt_verbose) are declared "external" inside
 // each function that uses them (Mata does not allow file-scope declarations
 // at the top of a mata: block). xtdpthresh_run() assigns the values once
 // per invocation; helpers read them via "external real scalar ..." locals.
+// v0.9.30: never declare an external in a function that runs once per unit or
+// per bootstrap draw -- Mata binds externals at every call, at a cost that
+// grows with the number of live objects; read them once in the caller and
+// pass them as arguments (see xdpt2_transform_unit, xdpt2_unit_cfg).
 
 // Built-in-safe replacement for rangen(): n equally spaced points from a to b.
 // This avoids relying on version-specific Mata helpers.
@@ -2062,6 +2548,8 @@ real colvector xdpt2_rangen(real scalar a, real scalar b, real scalar n)
     for (i = 1; i <= n; i++) {
         out[i] = a + (b - a) * (i - 1) / (n - 1)
     }
+    // v0.9.34: the last point is b exactly (a + (b - a) could round below b)
+    out[n] = b
     return(out)
 }
 
@@ -2078,15 +2566,20 @@ real scalar xdpt2_objtol(real scalar a, real scalar b, real scalar rel)
 
 // Scale-equivariant inverse/admission check for symmetric normal and moment
 // matrices.  Admission is always decided after Jacobi equilibration, so rank
-// and conditioning do not depend on column units.  When both the equilibrated
-// and raw matrices pass, retain the historical raw invsym() path bit-for-bit;
-// otherwise solve the equilibrated system and map its inverse back.  A truly
-// rank-deficient matrix remains rejected by the same 1e12 relative gate.
+// and conditioning do not depend on column units.  A truly rank-deficient
+// matrix is rejected by the 1e12 relative gate.  v0.9.35 (external review,
+// R1): the inverse is always that of the equilibrated matrix, mapped back.
+// The raw path invsym(A), kept before when the raw matrix also passed, drops
+// pivots below an absolute tolerance: a matrix of tiny scale (1e-20 times a
+// matrix with condition number 3) came back as a zero "inverse" that was
+// accepted, and the estimates depended on the units of y. The result is now
+// checked -- no dropped pivot, and C * inv(C) within 10 k eps cond(C) of the
+// identity -- and ok = 0 otherwise.
 void xdpt2_syminv(real matrix A, real scalar ok, real matrix Ainv)
 {
-    real scalar cA
+    real scalar cA, tol
     real colvector d
-    real matrix C, L
+    real matrix C, L, Ci
 
     ok = 0
     Ainv = J(rows(A), cols(A), .)
@@ -2106,11 +2599,31 @@ void xdpt2_syminv(real matrix A, real scalar ok, real matrix Ainv)
     cA = cond(C)
     if (cA >= . | cA > 1e12) return
 
-    cA = cond(A)
-    if (cA < . & cA <= 1e12) Ainv = invsym(A)
-    else                     Ainv = invsym(C) :/ (d * d')
+    Ci = invsym(C)
+    if (hasmissing(Ci) | diag0cnt(Ci) > 0) return
+    tol = max((1e-8, 10 * rows(C) * epsilon(1) * cA))
+    if (max(abs(C * Ci - I(rows(C)))) > tol) return
+    Ainv = Ci :/ (d * d')
     if (hasmissing(Ainv)) return
     ok = 1
+}
+
+// v0.9.35 (external review, R2): 1 if V is finite, symmetric, and positive
+// semidefinite up to a relative tolerance (the smallest eigenvalue at least
+// -1e-10 times the largest in absolute value). Checks every direction, not
+// only the diagonal: a contrast can have negative variance although every
+// coefficient's variance is positive.
+real scalar xdpt2_psd_ok(real matrix V)
+{
+    real rowvector ev
+    real scalar mx
+    if (rows(V) == 0 | rows(V) != cols(V) | hasmissing(V)) return(0)
+    if (max(abs(V - V')) > 1e-8 * max(abs(V))) return(0)
+    ev = symeigenvalues((V + V') / 2)
+    if (hasmissing(ev)) return(0)
+    mx = max(abs(ev))
+    if (mx >= . | mx <= 0) return(0)
+    return(min(ev) >= -1e-10 * mx)
 }
 
 // Per-unit data structure (unbalanced-aware)
@@ -2139,19 +2652,28 @@ struct xdpt2_unit rowvector xdpt2_build_units(
     real matrix X_inst, real colvector q,
     real colvector pid, real colvector tid,
     real colvector eqf,
-    real scalar flag_static, real scalar min_eq)
+    real scalar flag_static)
 {
     struct xdpt2_unit rowvector U
     struct xdpt2_unit scalar u
     real colvector idx, ord, var_type
     real matrix pinfo
-    real scalar n_units, i, K, k_ex, k_en, k_pd, k_in
+    real scalar n_units, i, K, k_ex, k_en, k_pd, k_in, n_ok, k_u
 
     // The ado sorts (panel,time) before entering Mata. panelsetup() therefore
     // yields all unit runs in O(N), avoiding one full pid scan per unit.
     pinfo = panelsetup(pid, 1)
     n_units = rows(pinfo)
-    U = xdpt2_unit(0)
+    // v0.9.34 (SPEEDUP): the units that enter are counted first and the
+    // vector is allocated once. Appending (U = U, u) copied the whole vector
+    // at every unit, O(N^2): 16 of 22 seconds of a fit with N = 3000.
+    n_ok = 0
+    for (i = 1; i <= n_units; i++) {
+        idx = (pinfo[i, 1]::pinfo[i, 2])
+        if (sum(eqf[idx]) >= 2) n_ok++
+    }
+    U = xdpt2_unit(n_ok)
+    k_u = 0
 
     k_ex = cols(X_exog)
     k_en = cols(X_endog)
@@ -2169,17 +2691,11 @@ struct xdpt2_unit rowvector xdpt2_build_units(
 
     for (i = 1; i <= n_units; i++) {
         idx = (pinfo[i, 1]::pinfo[i, 2])
-        // v0.8.1 R7 (audit): the hard prerequisite for fd/fod is TWO
+        // The hard prerequisite for FD/FOD is two
         // equation-eligible rows (no FD/FOD pair can form otherwise) --
         // never a dynamic length prefilter, which would silently discard
         // short-but-valid panels and select units by panel length.
-        // v0.8.5 R14 (#1): the floor is METHOD-dependent. Under system GMM
-        // a unit with a SINGLE eligible row contributes no transformed
-        // equation but can still contribute a valid LEVEL equation (its
-        // instruments are lagged differences drawn from the history rows),
-        // so min_eq = 1 there. Whether the unit actually yields rows stays
-        // decided by xdpt2_transform_unit / xdpt2_level_unit.
-        if (sum(eqf[idx]) < min_eq) continue
+        if (sum(eqf[idx]) < 2) continue
 
         u.id = pid[idx[1]]
         u.t = tid[idx]
@@ -2219,7 +2735,8 @@ struct xdpt2_unit rowvector xdpt2_build_units(
         }
         else u.tpos = J(0, 1, 0)
 
-        U = U, u
+        k_u++
+        U[k_u] = u
     }
     return(U)
 }
@@ -2243,29 +2760,6 @@ real scalar xdpt2_tpos(real colvector tv, real scalar t)
         else hi = mid
     }
     return(lo)
-}
-
-// v0.9.12 R31: reset the Windmeijer certification exports. Called before
-// every main-model re-search under refine(): if the final re-search falls
-// back to one-step, matrices exported by an EARLIER pass would otherwise
-// linger and a certification script could read stale (coarse-pass) inputs.
-void xdpt2_clear_wind_exports()
-{
-    external real matrix xdpt_w_ZW1, xdpt_w_X1, xdpt_w_Z, xdpt_w_Om1
-    external real matrix xdpt_w_W1, xdpt_w_W2, xdpt_w_ZW2
-    external real colvector xdpt_w_uid, xdpt_w_r1, xdpt_w_gbar2
-    external real scalar xdpt_w_n
-    xdpt_w_ZW1 = J(0, 0, .)
-    xdpt_w_X1 = J(0, 0, .)
-    xdpt_w_Z = J(0, 0, .)
-    xdpt_w_Om1 = J(0, 0, .)
-    xdpt_w_W1 = J(0, 0, .)
-    xdpt_w_W2 = J(0, 0, .)
-    xdpt_w_ZW2 = J(0, 0, .)
-    xdpt_w_uid = J(0, 1, .)
-    xdpt_w_r1 = J(0, 1, .)
-    xdpt_w_gbar2 = J(0, 1, .)
-    xdpt_w_n = .
 }
 
 real scalar xdpt2_find_t(struct xdpt2_unit scalar u, real scalar target)
@@ -2304,14 +2798,14 @@ real colvector xdpt2_q_at_rows(struct xdpt2_unit rowvector units,
 // LEVEL-OBSERVATION KEY via per-unit markers. Each transformed row
 // contributes the level observations whose indicators enter it: FD rows at
 // (i,t) -> {(i,t),(i,t-1)}; FOD transformed rows -> {(i,t)} + future
-// equation-row keys in the forward mean; LEVEL rows (eqtype 2) -> {(i,t)}.
+// equation-row keys in the forward mean.
 // R9 (#4): markers replace the R8 key multiset -- that allocated ~O(N*T^2)
 // rows before uniqrows (each FOD row reserved the unit's whole history) and
 // deep-copied the unit struct once per row; this is O(N*T) memory with
 // direct field access. The resulting support SET is identical.
 real colvector xdpt2_q_support(struct xdpt2_unit rowvector units,
                                 real colvector times, real colvector uid,
-                                real colvector eqtype, string scalar method)
+                                string scalar method)
 {
     real colvector out
     real scalar r, j, jp, u_i, m, total, nu
@@ -2326,7 +2820,6 @@ real colvector xdpt2_q_support(struct xdpt2_unit rowvector units,
         j = xdpt2_find_t(units[u_i], times[r])
         if (j == 0) continue
         (*pused[u_i])[j] = 1
-        if (eqtype[r] == 2) continue          // level row: current only
         if (method == "fd") {
             jp = xdpt2_find_t(units[u_i], times[r] - 1)
             if (jp > 0) (*pused[u_i])[jp] = 1
@@ -2372,8 +2865,19 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
                            real scalar flag_static, real scalar flag_kink,
                            real scalar t_min_global, real scalar t_max_global,
                            real matrix dy_out, real matrix dW_out,
-                           real matrix Z_out, real colvector times_out)
+                           real matrix Z_out, real colvector times_out,
+                           real scalar xdpt_lag_lo, real scalar xdpt_lag_hi,
+                           real scalar xdpt_collapse, real scalar xdpt_iv_collapse,
+                           real colvector xdpt_teq)
 {
+    // v0.9.30 (SPEEDUP, bit-for-bit): the five settings below used to be
+    // declared -external- here. Mata binds externals at every call, at a cost
+    // that grows with the number of live Mata objects, and this function runs
+    // once per unit per grid point: the binding took about 90% of a point
+    // estimate and made it O(N^2) (0.48 ms per call at N = 400, 0.85 ms at
+    // N = 800, against 0.05 ms of work). xdpt2_stack_at_gamma now reads them
+    // once (xdpt2_unit_cfg) and passes the values under the same names, so
+    // the body below is unchanged.
     real scalar n, K, j, t, Tf, c, lag_max, b, base_col, block_K, n_blocks
     real scalar block_start
     real scalar y_lag_t, x_lag_t, v, lag_needed, n_iv_cols
@@ -2416,7 +2920,6 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
     // an otherwise instrumented equation. External IVs or valid exogenous
     // moments can identify an early row. The structural iv_avail filter below
     // is the single source of truth for row-level instrument availability.
-    external real scalar xdpt_lag_lo, xdpt_lag_hi
 
     if (method == "fd") {
         // v0.8.1 (R6 #1): equations form only on EQUATION rows (both t and
@@ -2499,12 +3002,14 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
     lag_lo_p = (xdpt_lag_lo > 1 ? xdpt_lag_lo : 1)
     n_lag_y = (lag_max >= lag_lo_y ? lag_max - lag_lo_y + 1 : 0)
     n_lag_p = (lag_max >= lag_lo_p ? lag_max - lag_lo_p + 1 : 0)
+    // v0.9.27: FOD lags count from t+1 (xtabond2 convention, Roodman 2009); FD unchanged.
+    real scalar fod_shift
+    fod_shift = (method == "fod")
     // Per block: constant + L.y lags + transformed exogenous moments +
     // separate endogenous/predetermined lag intervals. User IVs live in the
     // tail region below and retain their collapse semantics.
     real scalar k_exog, k_endog, k_predet, k_inst, iv_width
     real scalar core_cols, inst_cols, inst_base
-    external real scalar xdpt_collapse, xdpt_iv_collapse
     k_exog   = sum(u.var_type :== 2)
     k_endog  = sum(u.var_type :== 3)
     k_predet = sum(u.var_type :== 4)
@@ -2525,7 +3030,6 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
     // for thousands of never-observed periods (the zero columns were
     // dropped later, but the RAM was already spent). Gap-free index:
     // rank == t - block_start + 1, so results are bit-for-bit unchanged.
-    external real colvector xdpt_teq
     real scalar tq_off
     tq_off = xdpt2_tpos(xdpt_teq, block_start)
     n_blocks = rows(xdpt_teq) - tq_off + 1
@@ -2562,8 +3066,7 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
         else               base_col = (b - 1) * block_K
 
         // Col 1: constant — v0.7.13 (audit, B5): position recorded here but
-        // WRITTEN only after the zero-IV row filter below, mirroring the
-        // level equation's BUG 4a order. Writing it up-front made every
+        // WRITTEN only after the zero-IV row filter below. Writing it up-front made every
         // rowsum >= 1, so the filter was dead and rows with no data-driven
         // instrument survived on the constant alone.
         cons_pos[i] = base_col + 1
@@ -2573,7 +3076,7 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
         // maxlag() interval.
         if (!flag_static) {
             for (lag_idx = lag_lo_y; lag_idx <= lag_max; lag_idx++) {
-                pos = xdpt2_find_t(u, t - lag_idx)
+                pos = xdpt2_find_t(u, t + fod_shift - lag_idx)
                 if (pos > 0) {
                     if (u.y[pos] < .) {
                         iv_avail[i] = 1   // v0.8.1: value must exist too
@@ -2586,7 +3089,7 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
         }
 
         // Strictly exogenous x instruments itself after the chosen transform:
-        // Δx for FD and the forward-deviation of x for FOD/system.
+        // Δx for FD and the forward-deviation of x for FOD.
         // v0.7.11: pos_tm1 lookup removed -- dead since the v0.7.10
         // exog-IV change (the instrument now comes from dW_list);
         // pos_t is still needed by the user-inst block below.
@@ -2611,7 +3114,7 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
         for (vt = 1; vt <= cols(u.X); vt++) {
             if (u.var_type[vt] == 3) {
                 for (lag_idx = lag_lo_y; lag_idx <= lag_max; lag_idx++) {
-                    pos = xdpt2_find_t(u, t - lag_idx)
+                    pos = xdpt2_find_t(u, t + fod_shift - lag_idx)
                     if (pos > 0) {
                         if (u.X[pos, vt] < .) {
                             iv_avail[i] = 1   // v0.8.1: value must exist too
@@ -2624,7 +3127,7 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
             }
             else if (u.var_type[vt] == 4) {
                 for (lag_idx = lag_lo_p; lag_idx <= lag_max; lag_idx++) {
-                    pos = xdpt2_find_t(u, t - lag_idx)
+                    pos = xdpt2_find_t(u, t + fod_shift - lag_idx)
                     if (pos > 0) {
                         if (u.X[pos, vt] < .) {
                             iv_avail[i] = 1
@@ -2653,9 +3156,10 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
         }
     }
 
-    // v0.7.0 (B4): drop rows whose instrument row is entirely zero — parity
-    // with the level-equation BUG 4a fix. Such rows contribute null moments
-    // but their residuals pollute the wild-bootstrap pool and AR tests.
+    // Drop rows without a data-driven instrument. Their only moment is the
+    // period constant (valid, and kept by xtabond2); they are dropped by
+    // design so that their residuals do not enter the wild-bootstrap pool
+    // and the AR tests (documented under Instrument set in the help).
     // The filter depends only on Z, which is γ-invariant, so per-γ row counts
     // stay matched across the bootstrap caches.
     // v0.7.13 (audit, B5): the filter drops rows whose STRUCTURAL instrument
@@ -2693,268 +3197,6 @@ void xdpt2_transform_unit(struct xdpt2_unit scalar u,
 }
 
 // Helper: stack (dY, dW, Z, times, unit_id) across all units at given γ
-// Helper: build LEVEL equation for one unit (for System GMM).
-// y_it = x_it'β + (1, x_it')δ·r_it + η_i + ε_it
-// IVs (Blundell-Bond 1998): lagged differences
-//   - For L.y (endog): Δy_{i,t-1}
-//   - For exog x_k: Δx_{k,i,t}  (exog → contemporaneous diff valid)
-//   - For endog x_k: Δx_{k,i,t-1}
-// Block-diagonal across t: 1 IV per (var-type, time block).
-void xdpt2_level_unit(struct xdpt2_unit scalar u,
-                       real scalar gamma, real scalar flag_static,
-                       real scalar flag_kink,
-                       real scalar t_min_global, real scalar t_max_global,
-                       real matrix y_out, real matrix W_out,
-                       real matrix Z_out, real colvector times_out)
-{
-    real scalar n, K, j, t, b, base_col, n_blocks, iv_width, k_W_cols
-    real scalar vi, vt, pos_t, pos_tm1, pos_tm2
-    real scalar iv_per_t
-    real scalar t_min_valid
-    real colvector r, kink_var
-    real matrix W_lvl, Z_list
-    real colvector y_list, times_list
-    real matrix W_list
-
-    n = rows(u.y)
-    K = cols(u.X)
-
-    r = (u.q :> gamma)
-    if (flag_kink) {
-        kink_var = (u.q :- gamma) :* r
-        W_lvl = u.X, kink_var
-        k_W_cols = K + 1
-    }
-    else {
-        W_lvl = u.X, r, u.X :* r
-        k_W_cols = 2*K + 1
-    }
-
-    // Per-block IV count for level equation:
-    //   For L.y (dynamic): lagged differences Δy_{t-l} for l in [lev_lo, lev_hi]
-    //   For exog x:   Δx_{t-l+1} for l in [lev_lo, lev_hi]
-    //   For predet x: Δx_{t-l+1} for l in [lev_lo, lev_hi]   (weakly exog ⇒ Δx_t valid)
-    //   For endog x:  Δx_{t-l}   for l in [lev_lo, lev_hi]
-    //   For user inst: inst_t (single, no lag sweep — inst assumed exog in levels)
-    external real scalar xdpt_lev_lo, xdpt_lev_hi
-    real scalar n_lev_lags, k_inst_lev, lev_lo_eff, lev_hi_eff
-    lev_lo_eff = xdpt_lev_lo
-    lev_hi_eff = xdpt_lev_hi
-    // Never allocate lag columns deeper than the retained history span.
-    // If the requested interval starts beyond that span, the internal level
-    // block has width zero; contemporaneous user IVs may still support rows.
-    if (lev_hi_eff > t_max_global - t_min_global) ///
-        lev_hi_eff = t_max_global - t_min_global
-    if (lev_hi_eff < lev_lo_eff) n_lev_lags = 0
-    else n_lev_lags = lev_hi_eff - lev_lo_eff + 1
-    k_inst_lev = cols(u.X_inst)
-    // v0.7.0 (C1): core width EXCLUDES user IVs — they live in a tail region
-    // (collapsible independently). The level constant is a separate shared
-    // final column (see below).
-    iv_per_t = 0
-    if (!flag_static) iv_per_t = iv_per_t + n_lev_lags
-    iv_per_t = iv_per_t + sum(u.var_type :== 2) * n_lev_lags
-    iv_per_t = iv_per_t + sum(u.var_type :== 3) * n_lev_lags
-    iv_per_t = iv_per_t + sum(u.var_type :== 4) * n_lev_lags
-
-    // Start at the first retained time. Missing internal lag differences are
-    // zero cells, not a blanket row exclusion: a valid external IV can still
-    // instrument the row. iv_here below performs the definitive filter.
-    external real scalar xdpt_collapse
-    t_min_valid = t_min_global
-    // v0.9.1 R17 (#3): rank-indexed level blocks (see transform_unit).
-    external real colvector xdpt_teq
-    real scalar tq_off_l
-    tq_off_l = xdpt2_tpos(xdpt_teq, t_min_valid)
-    n_blocks = rows(xdpt_teq) - tq_off_l + 1
-    if (n_blocks < 1) n_blocks = 1
-
-    // v0.7.0 (A3): the level equation carries a constant — as a regressor
-    // (absorbing E[η]) and as the moment E[(η+ε)] = 0 — matching xtabond2.
-    // Without it, the level moments E[Δz·(η+ε)] = 0 require E[Δz] = 0, which
-    // fails for trending instruments even under Blundell-Bond mean
-    // stationarity, contaminating Hansen J and biasing level-loaded
-    // coefficients. W gains one final column of ones; Z gains one shared
-    // final constant column.
-    real scalar n_cols_Z_lev, core_cols_lev, inst_cols_lev, inst_base_lev
-    external real scalar xdpt_iv_collapse
-    if (xdpt_collapse) core_cols_lev = iv_per_t
-    else               core_cols_lev = n_blocks * iv_per_t
-    if (k_inst_lev > 0) inst_cols_lev = (xdpt_iv_collapse ? k_inst_lev : n_blocks * k_inst_lev)
-    else                inst_cols_lev = 0
-    n_cols_Z_lev = core_cols_lev + inst_cols_lev + 1   // +1 = level constant
-    // v0.7.8 (SPEEDUP, bit-for-bit): preallocate + row counter instead of
-    // growing with \ (see xdpt2_transform_unit note). Every kept row is
-    // assigned in full, so the initial fill value is never read.
-    real scalar m_lev
-    y_list     = J(n, 1, .)
-    W_list     = J(n, k_W_cols + 1, .)
-    times_list = J(n, 1, .)
-    Z_list     = J(n, n_cols_Z_lev, .)
-    m_lev = 0
-
-    for (j = 1; j <= n; j++) {
-        if (!u.eq[j]) continue   // v0.8.1: level equations on complete rows only
-        t = u.t[j]
-        if (t < t_min_valid) continue
-        b = xdpt2_tpos(xdpt_teq, t)
-        if (b > rows(xdpt_teq)) continue
-        if (xdpt_teq[b] != t) continue
-        b = b - tq_off_l + 1
-        if (b < 1 | b > n_blocks) continue
-
-        // Need t and nonmissing level equation variables
-        pos_t   = xdpt2_find_t(u, t)
-        if (pos_t == 0) continue
-        if (u.y[pos_t] >= . | u.q[pos_t] >= . | xdpt2_hasmiss(W_lvl[pos_t, .])) continue
-
-        // BUG 4a FIX: build IV row FIRST, add y/W/Z only if IV row is informative.
-        // Previously, y/W were appended unconditionally while Z could be all-zero
-        // for observations near the boundary (t-lev_lag not available). This
-        // polluted the GMM sum with zero-moment rows.
-
-        // Build IV row: block-diag or collapsed (shared cols across t)
-        real rowvector z_row
-        z_row = J(1, n_cols_Z_lev, 0)
-        // v0.7.13 (audit): structural-availability flag, mirroring the
-        // transformed equation. Set when any lag-pair or user IV exists,
-        // independent of numeric magnitude, so a genuinely zero-valued
-        // level instrument is not mistaken for an absent one.
-        real scalar iv_here
-        iv_here = 0
-        if (xdpt_collapse) base_col = 0
-        else               base_col = (b - 1) * iv_per_t
-        real scalar col_off, lev_lag, pos_a, pos_b
-        col_off = 0
-
-        // L.y IVs: Δy_{t-l} = y_{t-l} - y_{t-l-1} for l in [lev_lo, lev_hi]
-        if (!flag_static) {
-            for (lev_lag = lev_lo_eff; lev_lag <= lev_hi_eff; lev_lag++) {
-                pos_a = xdpt2_find_t(u, t - lev_lag)
-                pos_b = xdpt2_find_t(u, t - lev_lag - 1)
-                if (pos_a > 0 & pos_b > 0) {
-                    if (u.y[pos_a] < . & u.y[pos_b] < .) {
-                        iv_here = 1   // v0.8.1 R7: value must exist too
-                        z_row[base_col + col_off + (lev_lag - lev_lo_eff + 1)] ///
-                            = u.y[pos_a] - u.y[pos_b]
-                    }
-                }
-            }
-            col_off = col_off + n_lev_lags
-        }
-
-        // Exog IVs: Δx_{t-l+1} = x_{t-l+1} - x_{t-l} for l in [lev_lo, lev_hi]
-        vi = 0
-        for (vt = 1; vt <= cols(u.X); vt++) {
-            if (u.var_type[vt] == 2) {
-                for (lev_lag = lev_lo_eff; lev_lag <= lev_hi_eff; lev_lag++) {
-                    pos_a = xdpt2_find_t(u, t - lev_lag + 1)
-                    pos_b = xdpt2_find_t(u, t - lev_lag)
-                    if (pos_a > 0 & pos_b > 0) {
-                        if (u.X[pos_a, vt] < . & u.X[pos_b, vt] < .) {
-                            iv_here = 1   // v0.8.1 R7: value must exist too
-                            z_row[base_col + col_off + vi*n_lev_lags + (lev_lag - lev_lo_eff + 1)] ///
-                                = u.X[pos_a, vt] - u.X[pos_b, vt]
-                        }
-                    }
-                }
-                vi = vi + 1
-            }
-        }
-        col_off = col_off + sum(u.var_type :== 2) * n_lev_lags
-
-        // Endog IVs: Δx_{t-l} = x_{t-l} - x_{t-l-1} for l in [lev_lo, lev_hi]
-        vi = 0
-        for (vt = 1; vt <= cols(u.X); vt++) {
-            if (u.var_type[vt] == 3) {
-                for (lev_lag = lev_lo_eff; lev_lag <= lev_hi_eff; lev_lag++) {
-                    pos_a = xdpt2_find_t(u, t - lev_lag)
-                    pos_b = xdpt2_find_t(u, t - lev_lag - 1)
-                    if (pos_a > 0 & pos_b > 0) {
-                        if (u.X[pos_a, vt] < . & u.X[pos_b, vt] < .) {
-                            iv_here = 1   // v0.8.1 R7: value must exist too
-                            z_row[base_col + col_off + vi*n_lev_lags + (lev_lag - lev_lo_eff + 1)] ///
-                                = u.X[pos_a, vt] - u.X[pos_b, vt]
-                        }
-                    }
-                }
-                vi = vi + 1
-            }
-        }
-        col_off = col_off + sum(u.var_type :== 3) * n_lev_lags
-
-        // Predet IVs: Δx_{t-l+1} = x_{t-l+1} - x_{t-l}, same formula as exog
-        //   (predetermined regressors are uncorrelated with current ε, so
-        //    Δx_t can serve as an instrument in the level equation)
-        vi = 0
-        for (vt = 1; vt <= cols(u.X); vt++) {
-            if (u.var_type[vt] == 4) {
-                for (lev_lag = lev_lo_eff; lev_lag <= lev_hi_eff; lev_lag++) {
-                    pos_a = xdpt2_find_t(u, t - lev_lag + 1)
-                    pos_b = xdpt2_find_t(u, t - lev_lag)
-                    if (pos_a > 0 & pos_b > 0) {
-                        if (u.X[pos_a, vt] < . & u.X[pos_b, vt] < .) {
-                            iv_here = 1   // v0.8.1 R7: value must exist too
-                            z_row[base_col + col_off + vi*n_lev_lags + (lev_lag - lev_lo_eff + 1)] ///
-                                = u.X[pos_a, vt] - u.X[pos_b, vt]
-                        }
-                    }
-                }
-                vi = vi + 1
-            }
-        }
-        col_off = col_off + sum(u.var_type :== 4) * n_lev_lags
-
-        // User-supplied instruments (inst): value at time t, one IV per inst
-        // var, in the tail region (v0.7.0) — valid under exogeneity of user IVs.
-        if (k_inst_lev > 0) {
-            real scalar ii_lev
-            inst_base_lev = core_cols_lev + (xdpt_iv_collapse ? 0 : (b - 1) * k_inst_lev)
-            for (ii_lev = 1; ii_lev <= k_inst_lev; ii_lev++) {
-                if (u.X_inst[pos_t, ii_lev] < .) {
-                    iv_here = 1   // user IV present at time t
-                    z_row[inst_base_lev + ii_lev] = u.X_inst[pos_t, ii_lev]
-                }
-            }
-        }
-
-        // BUG 4a FIX: only append the observation if the IV row is
-        // structurally informative. v0.7.13 (audit): use the availability
-        // flag iv_here instead of sum(abs(z_row)) < 1e-12, so a level
-        // instrument whose value is genuinely 0 (or tiny-scaled) is not
-        // mistaken for absent.
-        if (!iv_here) continue
-        // v0.7.0 (A3): constant set AFTER the BUG 4a filter, so the keep/drop
-        // sample is identical to v0.6.1; the row then also carries the level
-        // constant moment.
-        z_row[n_cols_Z_lev] = 1
-
-        m_lev = m_lev + 1
-        y_list[m_lev]     = u.y[pos_t]
-        W_list[m_lev, .]  = W_lvl[pos_t, .], 1   // level-eq constant regressor
-        times_list[m_lev] = t
-        Z_list[m_lev, .]  = z_row
-    }
-
-    // Truncate to the filled rows (empty -> 0-row matrices, as before)
-    if (m_lev == 0) {
-        y_list     = J(0, 1, 0)
-        W_list     = J(0, k_W_cols + 1, 0)
-        times_list = J(0, 1, 0)
-        Z_list     = J(0, n_cols_Z_lev, 0)
-    }
-    else if (m_lev < n) {
-        y_list     = y_list[|1 \ m_lev|]
-        W_list     = W_list[|1, 1 \ m_lev, k_W_cols + 1|]
-        times_list = times_list[|1 \ m_lev|]
-        Z_list     = Z_list[|1, 1 \ m_lev, n_cols_Z_lev|]
-    }
-
-    y_out = y_list
-    W_out = W_list
-    Z_out = Z_list
-    times_out = times_list
-}
 
 // v0.7.13 (audit R4, C2): in-place cross-sectional demeaning within each
 // time cell — the FWL partialling of common-across-regime time dummies out
@@ -2976,14 +3218,306 @@ void xdpt2_demean_bytime(real matrix M, real colvector times)
     }
 }
 
+// v0.9.34: indices of the instrument columns kept when numerically
+// dependent columns are dropped. Cholesky in column order on the Gram matrix
+// scaled to a unit diagonal: column j is kept when its squared relative
+// residual after the kept earlier columns is at least 1e-13 (a relative
+// residual of 3.2e-7). A Z whose scaled Gram matrix passes the rank gate of
+// xdpt2_syminv (condition number <= 1e12, so every pivot >= 1e-12) keeps
+// every column. Exactly dependent columns -- a period with fewer units than
+// its block has columns, or period constants made collinear by the FOD
+// partialling of time effects -- are dropped; xtabond2 handles them with a
+// generalized inverse, which gives the same estimates. v0.9.35: rounding in
+// the Gram matrix is of order 1e-8 in relative residual, so this rule also
+// drops columns that are only nearly dependent (within 3.2e-7) and cannot
+// tell them apart. When xdpt_ivc_diag = 1 (the final stack at gamma-hat),
+// the relative residual of each dropped column is measured on Z itself
+// against the kept columns (Householder QR, rounding of order 1e-12 or
+// below): xdpt_ivc_dep_res is the largest, and xdpt_ivc_dep_near counts
+// those above 1e-10, which are not linear combinations of the kept columns.
+// The decision is the same with or without the flag.
+real rowvector xdpt2_indep_cols(real matrix Z)
+{
+    real matrix G, L, A, B, R1
+    real colvector d, l, g
+    real rowvector keep, mk, drp, tau, r
+    real scalar k, j, m, p, nk, nd
+    external real scalar xdpt_ivc_diag, xdpt_ivc_dep_res, xdpt_ivc_dep_near
+    if (xdpt_ivc_diag == 1) {
+        xdpt_ivc_dep_res = .
+        xdpt_ivc_dep_near = 0
+    }
+    k = cols(Z)
+    if (k < 2 | rows(Z) == 0) return(1..k)
+    G = cross(Z, Z)
+    d = sqrt(diagonal(G))
+    if (hasmissing(d) | any(d :<= 0)) return(1..k)
+    G = G :/ (d * d')
+    L = J(k, k, 0)
+    keep = J(1, 0, .)
+    m = 0
+    for (j = 1; j <= k; j++) {
+        if (m == 0) {
+            l = J(0, 1, .)
+            p = G[j, j]
+        }
+        else {
+            g = G[keep', j]
+            l = solvelower(L[|1, 1 \ m, m|], g)
+            p = G[j, j] - l' * l
+        }
+        if (p >= 1e-13) {
+            m = m + 1
+            keep = keep, j
+            if (m > 1) L[|m, 1 \ m, m - 1|] = l'
+            L[m, m] = sqrt(p)
+        }
+    }
+    nk = cols(keep)
+    nd = k - nk
+    if (xdpt_ivc_diag == 1 & nd > 0) {
+        mk = J(1, k, 1)
+        mk[keep] = J(1, nk, 0)
+        drp = selectindex(mk)
+        if (nk >= rows(Z)) r = J(1, nd, 0)
+        else {
+            A = Z[., keep]
+            A = A :/ sqrt(colsum(A :^ 2))
+            _hqrd(A, tau, R1)
+            B = Z[., drp]
+            B = hqrdmultq(A, tau, B :/ sqrt(colsum(B :^ 2)), 1)
+            r = sqrt(colsum(B[|nk + 1, 1 \ rows(Z), nd|] :^ 2))
+        }
+        xdpt_ivc_dep_res = max(r)
+        xdpt_ivc_dep_near = sum(r :> 1e-10)
+    }
+    return(keep)
+}
+
+// v0.9.28: indices of the instrument columns to keep when exact duplicates
+// are dropped (the first occurrence is kept). Two declared variables that are
+// lags of one another -- x and L.x, or L2.depvar next to the automatic
+// L.depvar -- have overlapping lag windows and generate identical (variable,
+// date) columns. A duplicate adds no moment but makes Z'Z singular, which
+// used to reject every candidate threshold. Columns are compared exactly;
+// two cheap signatures restrict the element-by-element comparisons to ties.
+// Any fit that succeeded before has no duplicate (its Z'Z was nonsingular),
+// so for it the returned index is 1..cols(Z) and nothing changes.
+real rowvector xdpt2_nodup_cols(real matrix Z)
+{
+    real scalar k, n, m, g0, i, j
+    real colvector ord, dup
+    real matrix S
+
+    k = cols(Z)
+    n = rows(Z)
+    if (k < 2 | n == 0) return(1..k)
+    S = (colsum(Z)', colsum(Z :* (1::n))', (1::k))
+    ord = order(S, (1, 2, 3))
+    dup = J(k, 1, 0)
+    m = 1
+    while (m <= k) {
+        g0 = m
+        while (m < k) {
+            if (S[ord[m + 1], 1] != S[ord[g0], 1] |
+                S[ord[m + 1], 2] != S[ord[g0], 2]) break
+            m++
+        }
+        // ord[g0..m] share both signatures and are in column order
+        for (j = g0 + 1; j <= m; j++) {
+            for (i = g0; i < j; i++) {
+                if (dup[ord[i]]) continue
+                if (Z[., ord[i]] == Z[., ord[j]]) {
+                    dup[ord[j]] = 1
+                    break
+                }
+            }
+        }
+        m++
+    }
+    return(selectindex(!dup)')
+}
+
+// v0.9.30: zero the instrument columns that are exact linear combinations of
+// the constant columns kept before them, and return how many were zeroed (the
+// all-zero drop in xdpt2_stack_at_gamma then removes them). A regressor or
+// iv() variable that takes one value for every unit in a period -- a macro
+// variable, a trend -- gives such columns: in the per-period layout its
+// column in block t is that value times block t's constant, and under
+// collapse a column that is constant over all rows repeats the constant.
+// These columns add no moment, but they made Z'Z singular, so the command
+// stopped at the rank check; xtabond2 and xthenreg discard them silently
+// through a generalized inverse, and the estimates here equal theirs.
+// Only columns that take one value within every time cell are candidates. A
+// cell with a single row cannot show that, so a column that is nonzero in
+// such a cell is never a candidate and a period observed for one unit keeps
+// its old behavior. A candidate is dropped when the constants kept so far
+// already span it: single-cell indicators span their cell, a kept column
+// that is constant over all rows spans the all-ones direction, and any other
+// kept candidate is not used to span later ones. Constancy within a cell is
+// tested exactly (units in a period share the same inputs, so their values
+// are bitwise equal). Equality ACROSS cells -- a column equal to one value in
+// every cell, i.e. a multiple of the all-ones column -- uses a relative
+// tolerance of 1e-10: a trend such as (year - 2000)/10 has first differences
+// that differ from year to year in the last bits. A column that is within
+// 1e-10 of the span has a condition number far above the 1e12 gate of
+// xdpt2_syminv, so a Z that passed the rank check before contains no column
+// this rule drops, and such fits are unchanged.
+real scalar xdpt2_drop_cellconst(real matrix Z, real colvector times)
+{
+    real scalar k, n, nc, c, j, r0, r1, n_unc, all_ind, n_drop, drop
+    real colvector ord, csize, cellid, kept, rows_nz, vbc, u_nz, uval
+    real matrix info, sub
+    real rowvector cc, mx, mn, nzc, newf, nzcount, first_cell, first_val
+    real rowvector allsame
+
+    k = cols(Z)
+    n = rows(Z)
+    if (k < 2 | n < 2) return(0)
+    ord   = order(times, 1)
+    info  = panelsetup(times[ord], 1)
+    nc    = rows(info)
+    csize = info[., 2] - info[., 1] :+ 1
+    cellid = J(n, 1, 0)
+    cc         = J(1, k, 1)
+    nzcount    = J(1, k, 0)
+    first_cell = J(1, k, 0)
+    first_val  = J(1, k, 0)
+    allsame    = J(1, k, 1)
+    for (c = 1; c <= nc; c++) {
+        r0 = info[c, 1]
+        r1 = info[c, 2]
+        cellid[ord[|r0 \ r1|]] = J(r1 - r0 + 1, 1, c)
+        sub = Z[ord[|r0 \ r1|], .]
+        if (csize[c] == 1) {
+            cc = cc :& (sub :== 0)
+            continue
+        }
+        mx = colmax(sub)
+        mn = colmin(sub)
+        cc = cc :& (mx :== mn)
+        nzc = cc :& (mx :!= 0)
+        newf = nzc :& (first_cell :== 0)
+        first_cell = first_cell + newf :* c
+        first_val  = first_val + newf :* mx
+        allsame = allsame :& (!nzc :| (abs(mx :- first_val) :<=
+                              1e-10 :* abs(first_val)))
+        nzcount = nzcount + nzc
+    }
+    if (!any(cc :& (nzcount :> 0))) return(0)
+
+    kept = J(nc, 1, 0)
+    n_unc = nc
+    all_ind = 0
+    n_drop = 0
+    for (j = 1; j <= k; j++) {
+        if (!cc[j] | nzcount[j] == 0) continue
+        if (nzcount[j] == 1) {
+            // c * (indicator of one cell)
+            c = first_cell[j]
+            drop = (kept[c] | (all_ind & n_unc == 1))
+            if (!drop) {
+                kept[c] = 1
+                n_unc--
+            }
+        }
+        else if (nzcount[j] == nc & allsame[j]) {
+            // c * (all ones)
+            drop = (n_unc == 0 | all_ind)
+            if (!drop) all_ind = 1
+        }
+        else if (n_unc == 0) {
+            drop = 1
+        }
+        else {
+            // one value per cell: spanned when it vanishes on every cell not
+            // yet spanned, or, with the all-ones direction kept, when it is
+            // one common value on all of those cells
+            rows_nz = selectindex(Z[., j] :!= 0)
+            vbc = J(nc, 1, 0)
+            vbc[cellid[rows_nz]] = Z[rows_nz, j]
+            u_nz = selectindex((vbc :!= 0) :& !kept)
+            if (rows(u_nz) == 0) drop = 1
+            else if (all_ind & rows(u_nz) == n_unc) {
+                uval = vbc[u_nz]
+                drop = all(abs(uval :- uval[1]) :<= 1e-10 * max(abs(uval)))
+            }
+            else drop = 0
+        }
+        if (drop) {
+            Z[., j] = J(n, 1, 0)
+            n_drop++
+        }
+    }
+    return(n_drop)
+}
+
+// v0.9.30: user-facing labels of the variables in -vars- that take nearly,
+// but not exactly, one value for every unit in each period (within-period
+// range at most 1e-6 of the variable's largest absolute value, and nonzero
+// in at least one period). xdpt2_drop_cellconst recognizes only exactly
+// common variables; a nearly common one (for example a macro series merged
+// with rounding differences) can leave Z ill-conditioned. Used only to
+// explain a rank failure.
+string scalar xdpt2_near_common(string scalar vars, string scalar labs,
+                                string scalar grp, string scalar touse)
+{
+    real matrix X, info
+    real colvector g, ord, x
+    real scalar j, i, r0, r1, scale, rng, exact, near
+    string rowvector lb
+    string scalar out
+
+    out = ""
+    if (vars == "") return(out)
+    lb = tokens(labs)
+    X = st_data(., vars, touse)
+    g = st_data(., grp, touse)
+    if (rows(X) < 2 | cols(lb) != cols(X)) return(out)
+    ord = order(g, 1)
+    X = X[ord, .]
+    g = g[ord]
+    info = panelsetup(g, 1)
+    for (j = 1; j <= cols(X); j++) {
+        x = X[., j]
+        scale = max(abs(x))
+        if (scale >= . | scale == 0) continue
+        exact = 1
+        near = 1
+        for (i = 1; i <= rows(info); i++) {
+            r0 = info[i, 1]
+            r1 = info[i, 2]
+            if (r1 <= r0) continue
+            rng = max(x[|r0 \ r1|]) - min(x[|r0 \ r1|])
+            if (rng >= .) continue
+            if (rng != 0) exact = 0
+            if (rng > 1e-6 * scale) {
+                near = 0
+                break
+            }
+        }
+        if (near & !exact) out = out + (out == "" ? "" : " ") + lb[j]
+    }
+    return(out)
+}
+
+// v0.9.30: the settings xdpt2_transform_unit needs, read once per stack
+// (see the note there on the cost of -external- in a hot function).
+void xdpt2_unit_cfg(real rowvector cfg, real colvector teq)
+{
+    external real scalar xdpt_lag_lo, xdpt_lag_hi, xdpt_collapse, xdpt_iv_collapse
+    external real colvector xdpt_teq
+    cfg = (xdpt_lag_lo, xdpt_lag_hi, xdpt_collapse, xdpt_iv_collapse)
+    teq = xdpt_teq
+}
+
 void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
                            real scalar gamma, string scalar method,
                            real scalar flag_static, real scalar flag_kink,
                            real scalar t_min, real scalar t_max,
                            real matrix dY_out, real matrix dW_out,
                            real matrix Z_out, real colvector times_out,
-                           real colvector unit_id_out,
-                           real colvector eqtype_out)
+                           real colvector unit_id_out)
 {
     real scalar i, K, n_units, n_rows_i, k_W_cols
     real colvector dy_i, time_i
@@ -3004,10 +3538,6 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
     // Row values and row order are IDENTICAL to the append version, so the
     // stacks -- and everything downstream -- are bit-for-bit unchanged.
 
-    // For system, use FOD under the hood for transformed equation
-    string scalar trans_method
-    trans_method = (method == "system" ? "fod" : method)
-
     pointer() rowvector pY_s, pW_s, pZ_s, pT_s
     real colvector nr_s
     real scalar n_tot_s, r0_s, n_iv_s
@@ -3019,12 +3549,17 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
     nr_s = J(n_units, 1, 0)
     n_tot_s = 0
     n_iv_s = 0   // set from the first unit with rows, like the old code
+    // v0.9.30: settings for xdpt2_transform_unit, read once per stack.
+    real rowvector _ucfg
+    real colvector _uteq
+    xdpt2_unit_cfg(_ucfg, _uteq)
 
     for (i = 1; i <= n_units; i++) {
-        xdpt2_transform_unit(units[i], gamma, trans_method,
+        xdpt2_transform_unit(units[i], gamma, method,
                               flag_static, flag_kink,
                               t_min, t_max,
-                              dy_i, dW_i, Z_i, time_i)
+                              dy_i, dW_i, Z_i, time_i,
+                              _ucfg[1], _ucfg[2], _ucfg[3], _ucfg[4], _uteq)
         n_rows_i = rows(dy_i)
         if (n_rows_i == 0) continue
         nr_s[i] = n_rows_i
@@ -3043,7 +3578,6 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
         Z_out = J(0, 0, 0)
         times_out = J(0, 1, 0)
         unit_id_out = J(0, 1, 0)
-        eqtype_out = J(0, 1, 0)
     }
     else {
         dY_out      = J(n_tot_s, 1, .)
@@ -3066,9 +3600,71 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
             pZ_s[i] = NULL
             pT_s[i] = NULL
         }
-        // v0.8.1 R8 (#4): tag transformed-equation rows (level rows, when
-        // method(system) appends them below, are tagged 2).
-        eqtype_out = J(n_tot_s, 1, 1)
+    }
+
+    // v0.9.30: instrument columns spanned by the per-period constants (a
+    // regressor or iv() variable common to all units in a period) are zeroed
+    // here and removed by the all-zero drop below. Z is gamma-invariant, so
+    // the same columns go at every grid point; xdpt_ivc_drop keeps the count
+    // of the last call for the output note. Placed before the td partialling,
+    // which only acts column by column, so no other column is affected.
+    // The mask is computed once per distinct Z: Z does not depend on gamma,
+    // so later stacks of the same run reuse it under an exact bitwise guard
+    // (the reference copy is kept only while Z has at most 2e7 cells).
+    external real scalar xdpt_ivc_drop
+    external real matrix xdpt_ivc_Zref
+    external real rowvector xdpt_ivc_mask
+    external real colvector xdpt_ivc_tref
+    real scalar _ivc_hit, _ivc_j
+    real matrix _ivc_Z0
+    xdpt_ivc_drop = 0
+    if (rows(Z_out) > 1 & cols(Z_out) > 1) {
+        _ivc_hit = 0
+        if (rows(xdpt_ivc_Zref) == rows(Z_out) &
+            cols(xdpt_ivc_Zref) == cols(Z_out) &
+            rows(xdpt_ivc_tref) == rows(times_out)) {
+            _ivc_hit = (xdpt_ivc_tref == times_out)
+            if (_ivc_hit) _ivc_hit = (xdpt_ivc_Zref == Z_out)
+        }
+        if (_ivc_hit) {
+            for (_ivc_j = 1; _ivc_j <= cols(Z_out); _ivc_j++) {
+                if (xdpt_ivc_mask[_ivc_j]) {
+                    Z_out[., _ivc_j] = J(rows(Z_out), 1, 0)
+                    xdpt_ivc_drop = xdpt_ivc_drop + 1
+                }
+            }
+        }
+        else {
+            if (rows(Z_out) * cols(Z_out) <= 2e7) _ivc_Z0 = Z_out
+            xdpt_ivc_drop = xdpt2_drop_cellconst(Z_out, times_out)
+            if (rows(Z_out) * cols(Z_out) <= 2e7) {
+                xdpt_ivc_Zref = _ivc_Z0
+                xdpt_ivc_tref = times_out
+                xdpt_ivc_mask = (colsum(abs(_ivc_Z0)) :> 0) :& (colsum(abs(Z_out)) :== 0)
+            }
+            else {
+                xdpt_ivc_Zref = J(0, 0, .)
+                xdpt_ivc_tref = J(0, 1, .)
+                xdpt_ivc_mask = J(1, 0, .)
+            }
+        }
+    }
+
+    // v0.9.33 (F4): when the cache builder asks for it (xdpt_tpl_rec = 1),
+    // record the stacked rows before the time-effect partialling, dW at that
+    // point, and the gamma-invariant pieces of the partialling, so that
+    // xdpt2_tpl_dW can rebuild dW at another gamma without restacking.
+    external real scalar xdpt_tpl_rec, xdpt_tpl_td
+    external real colvector xdpt_tpl_upre, xdpt_tpl_tpre, xdpt_tpl_keep
+    external real matrix xdpt_tpl_dWpre, xdpt_tpl_D, xdpt_tpl_DtD
+    if (xdpt_tpl_rec == 1) {
+        xdpt_tpl_upre  = unit_id_out
+        xdpt_tpl_tpre  = times_out
+        xdpt_tpl_dWpre = dW_out
+        xdpt_tpl_td    = 0
+        xdpt_tpl_keep  = J(0, 1, .)
+        xdpt_tpl_D     = J(0, 0, .)
+        xdpt_tpl_DtD   = J(0, 0, .)
     }
 
     // v0.7.13 (audit R4, C2): FWL time-dummy partialling — demean dY, dW(γ),
@@ -3076,14 +3672,20 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
     // instrument columns that are constant within every time cell (which
     // demean to numerical dust) can be snapped to exact zero — RELATIVE to
     // their pre-demeaning scale, so the test is scale-free — and dropped.
-    // method(system) never reaches here with the flag set (blocked in the
-    // ado layer: the level constant would be collinear with the dummies).
     external real scalar xdpt_td_fwl
+    // v0.9.31: base regressor columns (the first K of dW, which do not depend
+    // on gamma) that the time-effect partialling removes: a regressor of the
+    // form a_i + g_t (firm age = year - founding year) survives the unit-level
+    // and the period-level constancy checks, but FD/FOD removes a_i and td
+    // removes g_t. Recorded here, reported by xtdpthresh_run (error 498).
+    external real rowvector xdpt_td_gone
+    xdpt_td_gone = J(1, 0, .)
     if (xdpt_td_fwl == 1 & rows(Z_out) > 0) {
-        real rowvector _preZ
+        real rowvector _preZ, _preW
         real scalar _cj
         _preZ = colsum(abs(Z_out))
-        if (trans_method == "fd") {
+        _preW = colsum(abs(dW_out))
+        if (method == "fd") {
             // FD: the transformed time effect (delta-lambda_t) is common to
             // every unit at each t, so within-time demeaning is EXACT.
             xdpt2_demean_bytime(dY_out,    times_out)
@@ -3102,6 +3704,10 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
                 _idx2 = selectindex(times_out :== _ut2[_ti2])
                 if (rows(_idx2) == 1) _keepr[_idx2] = 0
             }
+            if (xdpt_tpl_rec == 1) {
+                xdpt_tpl_td   = 1
+                xdpt_tpl_keep = selectindex(_keepr)
+            }
             if (sum(_keepr) < rows(times_out)) {
                 _idx2 = selectindex(_keepr)
                 dY_out      = dY_out[_idx2]
@@ -3109,7 +3715,6 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
                 Z_out       = Z_out[_idx2, .]
                 times_out   = times_out[_idx2]
                 unit_id_out = unit_id_out[_idx2]
-                eqtype_out  = eqtype_out[_idx2]
             }
         }
         else {
@@ -3184,13 +3789,18 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
                 real colvector _Hd, _keepr2
                 _Hd = rowsum((_D * _DtD) :* _D)
                 _keepr2 = selectindex((1 :- _Hd) :> 1e-10)
+                if (xdpt_tpl_rec == 1) {
+                    xdpt_tpl_td   = 2
+                    xdpt_tpl_D    = _D
+                    xdpt_tpl_DtD  = _DtD
+                    xdpt_tpl_keep = _keepr2
+                }
                 if (rows(_keepr2) < rows(dY_out)) {
                     dY_out      = dY_out[_keepr2, .]
                     dW_out      = dW_out[_keepr2, .]
                     Z_out       = Z_out[_keepr2, .]
                     times_out   = times_out[_keepr2]
                     unit_id_out = unit_id_out[_keepr2]
-                    eqtype_out  = eqtype_out[_keepr2]
                 }
             }
         }
@@ -3199,6 +3809,13 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
                 if (colsum(abs(Z_out[., _cj])) < 1e-10 * _preZ[_cj]) {
                     Z_out[., _cj] = J(rows(Z_out), 1, 0)
                 }
+            }
+        }
+        real rowvector _postW
+        _postW = colsum(abs(dW_out))
+        for (_cj = 1; _cj <= K & _cj <= cols(dW_out); _cj++) {
+            if (_preW[_cj] > 0 & _postW[_cj] <= 1e-10 * _preW[_cj]) {
+                xdpt_td_gone = xdpt_td_gone, _cj
             }
         }
     }
@@ -3217,111 +3834,32 @@ void xdpt2_stack_at_gamma(struct xdpt2_unit rowvector units,
         }
     }
 
-    if (method != "system") return
-
-    // === System GMM: also add LEVEL equation rows ===
-    real colvector y_l, time_l
-    real matrix W_l, Z_l
-    real matrix Y_lev_all, W_lev_all, Z_lev_all
-    real colvector times_lev_all, uid_lev_all
-
-    // v0.7.8 (SPEEDUP, bit-for-bit): same two-pass stacking as the FOD/FD
-    // section above. v0.7.0.1 hotfix note preserved: level W carries the
-    // constant column (A3), so the stack is k_W_cols + 1 wide.
-    pointer() rowvector pY_l, pW_l, pZ_l, pT_l
-    real colvector nr_l
-    real scalar n_tot_l, r0_l, n_iv_l
-
-    pY_l = J(1, n_units, NULL)
-    pW_l = J(1, n_units, NULL)
-    pZ_l = J(1, n_units, NULL)
-    pT_l = J(1, n_units, NULL)
-    nr_l = J(n_units, 1, 0)
-    n_tot_l = 0
-    n_iv_l = 0
-
-    for (i = 1; i <= n_units; i++) {
-        xdpt2_level_unit(units[i], gamma, flag_static, flag_kink,
-                          t_min, t_max,
-                          y_l, W_l, Z_l, time_l)
-        n_rows_i = rows(y_l)
-        if (n_rows_i == 0) continue
-        nr_l[i] = n_rows_i
-        if (n_iv_l == 0) n_iv_l = cols(Z_l)
-        pY_l[i] = &(y_l[., .])
-        pW_l[i] = &(W_l[., .])
-        pZ_l[i] = &(Z_l[., .])
-        pT_l[i] = &(time_l[., .])
-        n_tot_l = n_tot_l + n_rows_i
+    // v0.9.28: drop exact duplicate instrument columns (first kept). Z does
+    // not depend on gamma, so the same columns are dropped at every grid
+    // point. When no column is duplicated, Z_out is left untouched.
+    if (rows(Z_out) > 0 & cols(Z_out) > 1) {
+        real rowvector keep_nd
+        keep_nd = xdpt2_nodup_cols(Z_out)
+        if (length(keep_nd) < cols(Z_out)) Z_out = Z_out[., keep_nd]
     }
 
-    if (n_tot_l == 0) {
-        Y_lev_all = J(0, 1, 0)
-        W_lev_all = J(0, k_W_cols + 1, 0)
-        Z_lev_all = J(0, 0, 0)
-        times_lev_all = J(0, 1, 0)
-        uid_lev_all = J(0, 1, 0)
-    }
-    else {
-        Y_lev_all     = J(n_tot_l, 1, .)
-        W_lev_all     = J(n_tot_l, k_W_cols + 1, .)
-        Z_lev_all     = J(n_tot_l, n_iv_l, .)
-        times_lev_all = J(n_tot_l, 1, .)
-        uid_lev_all   = J(n_tot_l, 1, .)
-        r0_l = 1
-        for (i = 1; i <= n_units; i++) {
-            if (nr_l[i] == 0) continue
-            Y_lev_all[|r0_l \ r0_l + nr_l[i] - 1|]                    = *pY_l[i]
-            W_lev_all[|r0_l, 1 \ r0_l + nr_l[i] - 1, k_W_cols + 1|]   = *pW_l[i]
-            Z_lev_all[|r0_l, 1 \ r0_l + nr_l[i] - 1, n_iv_l|]         = *pZ_l[i]
-            times_lev_all[|r0_l \ r0_l + nr_l[i] - 1|]                = *pT_l[i]
-            uid_lev_all[|r0_l \ r0_l + nr_l[i] - 1|]                  = J(nr_l[i], 1, i)
-            r0_l = r0_l + nr_l[i]
-            pY_l[i] = NULL
-            pW_l[i] = NULL
-            pZ_l[i] = NULL
-            pT_l[i] = NULL
+    // v0.9.34: drop instrument columns that are linear combinations of
+    // earlier ones (xdpt2_indep_cols); xdpt_ivc_dep counts them for the
+    // output note. Z does not depend on gamma, so the same columns go at
+    // every grid point, and a Z that passes the rank gate is untouched.
+    external real scalar xdpt_ivc_dep
+    xdpt_ivc_dep = 0
+    if (rows(Z_out) > 0 & cols(Z_out) > 1) {
+        real rowvector keep_dep
+        keep_dep = xdpt2_indep_cols(Z_out)
+        if (length(keep_dep) < cols(Z_out)) {
+            xdpt_ivc_dep = cols(Z_out) - length(keep_dep)
+            Z_out = Z_out[., keep_dep]
         }
     }
 
-    // Drop all-zero columns of level Z
-    if (rows(Z_lev_all) > 0) {
-        real rowvector col_sum_l, keep_idx_l
-        col_sum_l = colsum(abs(Z_lev_all))
-        keep_idx_l = selectindex(col_sum_l :> 0)   // v0.7.13: exact-zero only (see transformed)
-        if (length(keep_idx_l) > 0 & length(keep_idx_l) < cols(Z_lev_all)) {
-            Z_lev_all = Z_lev_all[., keep_idx_l]
-        }
-    }
-
-    if (rows(Y_lev_all) == 0) return
-
-    // v0.7.0 (A3): level-equation constant column for the stacked W — zero in
-    // transformed rows (FD/FOD of a constant is zero), one in level rows
-    // (already present in W_lev_all). Level-row availability is γ-invariant,
-    // so parameter dimensions are consistent across the γ grid.
-    dW_out = dW_out, J(rows(dY_out), 1, 0)
-
-    // === Stack FOD + level into combined system ===
-    // Z_combined: block-diagonal. FOD moments on top-left, level on bottom-right.
-    real scalar n_fod, n_lev, k_fod, k_lev
-    n_fod = rows(dY_out)
-    n_lev = rows(Y_lev_all)
-    k_fod = cols(Z_out)
-    k_lev = cols(Z_lev_all)
-
-    real matrix Z_comb
-    Z_comb = J(n_fod + n_lev, k_fod + k_lev, 0)
-    if (n_fod > 0 & k_fod > 0) Z_comb[|1, 1 \ n_fod, k_fod|] = Z_out
-    if (n_lev > 0 & k_lev > 0) Z_comb[|n_fod+1, k_fod+1 \ n_fod+n_lev, k_fod+k_lev|] = Z_lev_all
-
-    dY_out = dY_out \ Y_lev_all
-    dW_out = dW_out \ W_lev_all
-    Z_out = Z_comb
-    times_out = times_out \ times_lev_all
-    unit_id_out = unit_id_out \ uid_lev_all
-    eqtype_out = eqtype_out \ J(n_lev, 1, 2)   // v0.8.1 R8 (#4)
 }
+
 
 // Helper: build MA(1)-aware first-stage weight matrix for FD GMM.
 // Based on xthenreg's GMM_W_n_con (Seo-Shin 2016).
@@ -3380,8 +3918,15 @@ real matrix xdpt2_build_W_ma1(real matrix Z, real colvector times,
         // v0.7.0 (D6): fallback chain. invsym() on a singular W2 would
         // silently zero out rows/columns; use the identity weight (valid,
         // merely inefficient) when even Z'Z is ill-conditioned.
+        // v0.9.29: record the fallback (1 = (Z'Z)^-1, 2 = identity) so that
+        // it is reported in e(W1_fallback) instead of passing silently.
+        external real scalar xdpt_w1_fallback
         xdpt2_syminv(W2, inv_ok, W_mat)
-        if (inv_ok) return(W_mat)
+        if (inv_ok) {
+            if (xdpt_w1_fallback < 1) xdpt_w1_fallback = 1
+            return(W_mat)
+        }
+        xdpt_w1_fallback = 2
         return(I(k_iv))
     }
     return(W_mat)
@@ -3464,9 +4009,8 @@ void xdpt2_solve_gmm_1step_pre(real colvector Y, real matrix W_reg,
 // v0.7.8 (SPEEDUP): per-unit sum of moment rows, run-based.
 // Replaces the row-by-row accumulation loop (one interpreted iteration plus
 // two row-vector extract/store copies PER ROW) with one colsum() per
-// contiguous same-unit run. The stack is unit-contiguous by construction
-// (FD/FOD: one run per unit; system: one FOD run + one level run per unit,
-// runs appearing in the same global order the old loop visited them), and
+// contiguous same-unit run. The FD/FOD stack is unit-contiguous by
+// construction (one run per contributing unit), and
 // run subtotals are added into g_per_unit in that same order. colsum()
 // accumulates top-down in double precision (Mata keeps quad accumulation in
 // the separate quadcolsum()), so the result is expected bit-for-bit
@@ -3481,6 +4025,9 @@ real matrix xdpt2_gsum_by_unit(real matrix Ze, real colvector unit_id,
 
     n_rows = rows(Ze)
     k = cols(Ze)
+    // v0.9.35 (external review, R3): colsum() below skips missing values; a
+    // missing input (an overflow) makes every sum missing instead
+    if (hasmissing(Ze)) return(J(n_units, k, .))
     g_per_unit = J(n_units, k, 0)
     if (n_rows == 0) return(g_per_unit)
     if (n_rows == 1) {
@@ -3516,6 +4063,18 @@ real matrix xdpt2_gsum_by_unit(real matrix Ze, real colvector unit_id,
 real matrix xdpt2_build_cluster_omega(real matrix Z, real colvector r,
                                         real colvector unit_id)
 {
+    external real scalar xdpt_center
+    return(xdpt2_build_cluster_omega_c(Z, r, unit_id, xdpt_center))
+}
+
+// v0.9.30: the same computation with the centering flag as an argument, so
+// that a per-draw caller (the coefficient bootstrap) does not bind the
+// -external- at every call (see xdpt2_transform_unit). Bit-for-bit the body
+// of the former xdpt2_build_cluster_omega.
+real matrix xdpt2_build_cluster_omega_c(real matrix Z, real colvector r,
+                                          real colvector unit_id,
+                                          real scalar xdpt_center)
+{
     real scalar n_rows, n_units
     real matrix Ze, g_per_unit, Omega
 
@@ -3529,7 +4088,6 @@ real matrix xdpt2_build_cluster_omega(real matrix Z, real colvector r,
     // (Seo-Shin 2016 eq. 11 / xthenreg convention), expressed consistently
     // with this function's per-n_rows scaling: with s = sum_i g_i,
     // sum_i (g_i - s/n_u)(g_i - s/n_u)' = sum_i g_i g_i' - s s'/n_u.
-    external real scalar xdpt_center
     if (xdpt_center == 1) {
         real rowvector s_c
         real scalar n_contrib
@@ -3565,6 +4123,266 @@ real matrix xdpt2_gmm_sandwich(real matrix ZW, real matrix A,
     return(Vout)
 }
 
+// v0.9.33 (F4, SPEEDUP): rebuild dW at a new gamma without restacking. Of
+// the stacked system only dW depends on gamma, and within dW only the regime
+// columns: the row selection (missing values, instrument availability), dY,
+// Z, the base columns of dW and the pieces of the time-effect partialling do
+// not. xdpt2_tpl_build takes them from one full xdpt2_stack_at_gamma call
+// (which records the rows before the partialling) and finds the level rows
+// behind every stacked row. xdpt2_tpl_dW then forms the regime columns with
+// the arithmetic of xdpt2_transform_unit -- FD: W(t) - W(t-1); FOD:
+// c*(W(t) - mean of the later equation rows), the mean as a quad-precision
+// sum over those rows, in increasing order, divided by their number, which
+// is how mean() computes it (quadcross) -- and applies the recorded
+// partialling. v0.9.34: the sums run forward, as in mean(); 0.9.33 summed
+// them in reverse order, which differs in the last bit when a unit's values
+// span more than about 2^35 and cancel exactly. xdpt2_build_gamma_cache
+// compares the result with a full stack at its second gamma and restacks at
+// every gamma if any bit differs.
+struct xdpt2_stack_tpl {
+    real scalar    ok
+    real scalar    fd, kink, td, K
+    real colvector qlev        // q at the level rows of all units, stacked
+    real matrix    Xlev        // X at the level rows
+    real colvector J, JP       // level rows of t and (FD) t-1, per stacked row
+    real colvector c, Tf, iF   // FOD: scale, number of later rows, row of F
+    real colvector EQF         // FOD: level rows of each unit's equation
+                               // rows, in increasing order, units stacked
+    real matrix    RU          // FOD: (first, last) row of each unit in EQF
+    real matrix    FG          // FOD: units grouped by their number v >= 2
+                               // of equation rows: (v, first, last) in FP
+    real colvector FP          // FOD: positions in EQF, by group, unit blocks
+    real matrix    dXpre       // base columns of dW before the partialling
+    real colvector tpre, keep  // partialling: times, rows kept after it
+    real matrix    D, DtD      // FOD partialling: dummies and inverse
+    real colvector dY, times, uid
+    real matrix    Z
+}
+
+struct xdpt2_stack_tpl scalar xdpt2_tpl_build(
+    struct xdpt2_unit rowvector units,
+    string scalar method,
+    real scalar flag_kink,
+    real colvector dY, real matrix Z,
+    real colvector times, real colvector uid)
+{
+    struct xdpt2_stack_tpl scalar tp
+    external real scalar xdpt_tpl_td
+    external real colvector xdpt_tpl_upre, xdpt_tpl_tpre, xdpt_tpl_keep
+    external real matrix xdpt_tpl_dWpre, xdpt_tpl_D, xdpt_tpl_DtD
+    real scalar nu, n, i, r, u, j, jp, m, ne, a, gi, v, nuv, p0
+    real colvector nlev, off, ei, neq, qpos, vv, uu
+
+    tp.ok = 0
+    nu = length(units)
+    n = rows(xdpt_tpl_upre)
+    if (nu == 0 | n == 0) return(tp)
+    tp.K = cols(units[1].X)
+    tp.fd = (method == "fd")
+    tp.kink = flag_kink
+    // v0.9.35 (external review, R4): K = 0 -- a static model without base
+    // regressors, whose only regime term is the intercept (or the hinge
+    // under kink) -- is allowed; the joint variance and the AR statistics
+    // with gamma-hat use this template
+    if (rows(xdpt_tpl_tpre) != n | rows(xdpt_tpl_dWpre) != n) return(tp)
+    if (cols(xdpt_tpl_dWpre) != (flag_kink ? tp.K + 1 : 2 * tp.K + 1)) return(tp)
+
+    // level data of all units, stacked in unit order
+    nlev = J(nu, 1, 0)
+    for (i = 1; i <= nu; i++) nlev[i] = rows(units[i].q)
+    off = J(nu, 1, 0)
+    for (i = 2; i <= nu; i++) off[i] = off[i - 1] + nlev[i - 1]
+    tp.qlev = J(sum(nlev), 1, .)
+    tp.Xlev = J(sum(nlev), tp.K, .)
+    for (i = 1; i <= nu; i++) {
+        if (nlev[i] == 0) continue
+        if (rows(units[i].X) != nlev[i] | cols(units[i].X) != tp.K) return(tp)
+        tp.qlev[|off[i] + 1 \ off[i] + nlev[i]|] = units[i].q
+        if (tp.K > 0) {
+            tp.Xlev[|off[i] + 1, 1 \ off[i] + nlev[i], tp.K|] = units[i].X
+        }
+    }
+
+    // FOD: every unit's equation rows, in order, stacked (for later sums)
+    if (!tp.fd) {
+        neq = J(nu, 1, 0)
+        for (i = 1; i <= nu; i++) neq[i] = sum(units[i].eq :!= 0)
+        tp.RU = J(nu, 2, 0)
+        tp.EQF = J(sum(neq), 1, .)
+        a = 0
+        for (i = 1; i <= nu; i++) {
+            ne = neq[i]
+            tp.RU[i, .] = (a + 1, a + ne)
+            if (ne > 0) {
+                ei = selectindex(units[i].eq)
+                if (rows(ei) != ne) return(tp)
+                tp.EQF[|a + 1 \ a + ne|] = off[i] :+ ei
+            }
+            a = a + ne
+        }
+        // units with the same number v >= 2 of equation rows form a group;
+        // FP lists the EQF positions of its units, one block of v per unit
+        vv = select(neq, neq :>= 2)
+        if (rows(vv) > 0) vv = uniqrows(vv)
+        tp.FG = J(rows(vv), 3, .)
+        tp.FP = J(0, 1, .)
+        p0 = 0
+        for (gi = 1; gi <= rows(vv); gi++) {
+            v = vv[gi]
+            uu = selectindex(neq :== v)
+            nuv = rows(uu)
+            tp.FP = tp.FP \ vec(J(v, 1, 1) * tp.RU[uu, 1]' :+
+                                (0::v - 1) * J(1, nuv, 1))
+            tp.FG[gi, .] = (v, p0 + 1, p0 + v * nuv)
+            p0 = p0 + v * nuv
+        }
+        tp.c  = J(n, 1, .)
+        tp.Tf = J(n, 1, .)
+        tp.iF = J(n, 1, .)
+    }
+
+    // the level rows behind every stacked row
+    tp.J = J(n, 1, .)
+    if (tp.fd) tp.JP = J(n, 1, .)
+    for (r = 1; r <= n; r++) {
+        u = xdpt_tpl_upre[r]
+        if (u < 1 | u > nu | u != trunc(u)) return(tp)
+        j = xdpt2_find_t(units[u], xdpt_tpl_tpre[r])
+        if (j == 0) return(tp)
+        tp.J[r] = off[u] + j
+        if (tp.fd) {
+            jp = xdpt2_find_t(units[u], xdpt_tpl_tpre[r] - 1)
+            if (jp == 0) return(tp)
+            tp.JP[r] = off[u] + jp
+        }
+        else {
+            // position m of row j among the unit's equation rows; the later
+            // equation rows are those after it
+            ne = tp.RU[u, 2] - tp.RU[u, 1] + 1
+            if (ne < 2) return(tp)
+            qpos = selectindex(tp.EQF[|tp.RU[u, 1] \ tp.RU[u, 2]|] :== off[u] + j)
+            if (rows(qpos) != 1) return(tp)
+            m = qpos[1]
+            tp.Tf[r] = ne - m
+            if (tp.Tf[r] < 1) return(tp)
+            tp.c[r]  = sqrt(tp.Tf[r] / (tp.Tf[r] + 1))
+            tp.iF[r] = tp.RU[u, 1] - 1 + m
+        }
+    }
+
+    if (tp.K > 0) tp.dXpre = xdpt_tpl_dWpre[., 1..tp.K]
+    else          tp.dXpre = J(n, 0, .)
+    tp.td    = xdpt_tpl_td
+    tp.tpre  = xdpt_tpl_tpre
+    tp.keep  = xdpt_tpl_keep
+    tp.D     = xdpt_tpl_D
+    tp.DtD   = xdpt_tpl_DtD
+    if (tp.td != 0 & tp.td != 1 & tp.td != 2) return(tp)
+    tp.dY    = dY
+    tp.Z     = Z
+    tp.times = times
+    tp.uid   = uid
+    tp.ok    = 1
+    return(tp)
+}
+
+real matrix xdpt2_tpl_dW(struct xdpt2_stack_tpl scalar tp, real scalar gamma)
+{
+    real colvector r, ix
+    real matrix Wreg, dreg, dW, F, WE, X, S
+    real scalar i, j, v
+    r = (tp.qlev :> gamma)
+    if (tp.kink) Wreg = (tp.qlev :- gamma) :* r
+    else         Wreg = r, tp.Xlev :* r
+    if (tp.fd) {
+        dreg = Wreg[tp.J, .] - Wreg[tp.JP, .]
+    }
+    else {
+        // row m of a unit's block of F: the sum of its equation rows after
+        // row m, accumulated forward in quad precision (quadcross, the sum
+        // mean() forms; the zero terms of S leave the sums unchanged). The
+        // units of a group (same v) are summed by one quadcross over their
+        // v x (units) blocks: every element is the same forward quad sum.
+        WE = Wreg[tp.EQF, .]
+        F = J(rows(tp.EQF), cols(Wreg), .)
+        for (i = 1; i <= rows(tp.FG); i++) {
+            v  = tp.FG[i, 1]
+            ix = tp.FP[|tp.FG[i, 2] \ tp.FG[i, 3]|]
+            S  = lowertriangle(J(v, v, 1), 0)
+            for (j = 1; j <= cols(Wreg); j++) {
+                X = colshape(WE[ix, j], v)'
+                F[ix, j] = vec(quadcross(S, X))
+            }
+        }
+        dreg = tp.c :* (Wreg[tp.J, .] - F[tp.iF, .] :/ tp.Tf)
+    }
+    dW = tp.dXpre, dreg
+    if (tp.td == 1) {
+        xdpt2_demean_bytime(dW, tp.tpre)
+        dW = dW[tp.keep, .]
+    }
+    else if (tp.td == 2) {
+        dW = dW - tp.D * (tp.DtD * (tp.D' * dW))
+        dW = dW[tp.keep, .]
+    }
+    return(dW)
+}
+
+// v0.9.34: number of units whose regime 1(q > gamma) changes within their
+// transformed equations -- under FD between t-1 and t, under FOD between t
+// and a later equation period. Only these units identify the regime terms
+// (the regime moments and the clusters of their weight); rows are the final
+// stack at gamma (uid, times).
+real scalar xdpt2_n_switch(struct xdpt2_unit rowvector units,
+                           real scalar gamma, string scalar method,
+                           real colvector uid, real colvector times)
+{
+    real scalar r, u, j, jp, k
+    real colvector sw, ei
+    sw = J(length(units), 1, 0)
+    for (r = 1; r <= rows(uid); r++) {
+        u = uid[r]
+        if (u < 1 | u > length(units)) continue
+        if (sw[u]) continue
+        j = xdpt2_find_t(units[u], times[r])
+        if (j == 0) continue
+        if (method == "fd") {
+            jp = xdpt2_find_t(units[u], times[r] - 1)
+            if (jp == 0) continue
+            if ((units[u].q[j] > gamma) != (units[u].q[jp] > gamma)) sw[u] = 1
+        }
+        else {
+            ei = selectindex(units[u].eq)
+            for (k = 1; k <= rows(ei); k++) {
+                if (ei[k] <= j) continue
+                if ((units[u].q[ei[k]] > gamma) != (units[u].q[j] > gamma)) {
+                    sw[u] = 1
+                    break
+                }
+            }
+        }
+    }
+    return(sum(sw))
+}
+
+// v0.9.34: release the template records of xdpt2_stack_at_gamma (under
+// FOD + td they include an n x T matrix); called at the start and the end
+// of every run.
+void xdpt2_tpl_release()
+{
+    external real scalar xdpt_tpl_rec, xdpt_tpl_td
+    external real colvector xdpt_tpl_upre, xdpt_tpl_tpre, xdpt_tpl_keep
+    external real matrix xdpt_tpl_dWpre, xdpt_tpl_D, xdpt_tpl_DtD
+    xdpt_tpl_rec   = 0
+    xdpt_tpl_td    = 0
+    xdpt_tpl_upre  = J(0, 1, .)
+    xdpt_tpl_tpre  = J(0, 1, .)
+    xdpt_tpl_keep  = J(0, 1, .)
+    xdpt_tpl_dWpre = J(0, 0, .)
+    xdpt_tpl_D     = J(0, 0, .)
+    xdpt_tpl_DtD   = J(0, 0, .)
+}
+
 // Per-gamma cache: avoid repeated xdpt2_stack_at_gamma calls.
 // Used by both main grid search and bootstrap loops.
 struct xdpt2_gamma_cache {
@@ -3594,6 +4412,10 @@ struct xdpt2_gamma_cache {
     // and stage 2). Set for every ok entry.
     real matrix    ZW         // Z'dW/n  (k_iv x k_W)
     real colvector ZY         // Z'dY/n  (k_iv x 1)
+    // v0.9.34 (C1): the fixed-W2 solve of the confidence set, filled by
+    // xdpt2_cache_w2 when the reported estimator is two-step
+    real matrix    C_g2       // invsym(ZW' W2 ZW) ZW' W2
+    real scalar    fast2_ok   // 1 if C_g2 valid
 }
 
 struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache(
@@ -3607,30 +4429,114 @@ struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache(
     real colvector q_supp,
     real scalar min_user)
 {
+    struct xdpt2_stack_tpl scalar tpl
+    real scalar tpl_state
+    tpl_state = 0
+    return(xdpt2_build_gamma_cache_t(units, gamma_grid, method, flag_static,
+                                     flag_kink, t_min, t_max, q_supp,
+                                     min_user, tpl, tpl_state))
+}
+
+// v0.9.34: the template and its state are passed in and out, so that later
+// builds of the same model (the refinements, the confidence-set grid) use the
+// template of the main build and do not restack. With refc (the main cache),
+// its first admitted entry is the reference of the exact reuse guards below,
+// so its Z, W1 and ZY are shared instead of rebuilt.
+struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache_t(
+    struct xdpt2_unit rowvector units,
+    real colvector gamma_grid,
+    string scalar method,
+    real scalar flag_static,
+    real scalar flag_kink,
+    real scalar t_min,
+    real scalar t_max,
+    real colvector q_supp,
+    real scalar min_user,
+    struct xdpt2_stack_tpl scalar tpl,
+    real scalar tpl_state,
+    | struct xdpt2_gamma_cache rowvector refc)
+{
     real scalar g, G, n_rows
     struct xdpt2_gamma_cache rowvector cache
     real colvector dY_cur, times_cur, uid_cur
     real matrix dW_cur, Z_cur, ZZ, ZZ_inv, W_first
     real matrix ZW_cur, A_cur, Ainv_cur
-    real scalar ref_g, reuse_w, reuse_y, reuse_tu, inv_ok
+    real scalar reuse_w, reuse_y, reuse_tu, inv_ok
+    // reference of the reuse guards; the comparisons of the template pieces
+    // (the same objects at every template-built entry) are made once
+    pointer(real matrix) scalar R_pZ, R_pW1
+    real colvector R_dY, R_ZY, R_times, R_uid
+    real scalar have_R, R_ext, k, from_tpl, tc_known, tc_tu, tc_w, tc_y
     real colvector ZY_cur
     real scalar min_reg
     external real scalar xdpt_trim_rate
+    external real scalar xdpt_minreg_def
+    // v0.9.33 (F4): tpl_state 0 = no template yet; 1 = template taken from
+    // the first stack; 2 = its dW matched a second full stack bit for bit,
+    // so dW is rebuilt by xdpt2_tpl_dW; -1 = full stack at every gamma.
+    external real scalar xdpt_tpl_rec
+    real matrix dW_chk
 
     G = rows(gamma_grid)
     cache = xdpt2_gamma_cache(1, G)
-    ref_g = 0
+    have_R = 0
+    R_ext = 0
+    tc_known = 0
+    if (args() == 12) {
+        for (k = 1; k <= cols(refc); k++) {
+            if (!refc[k].ok) continue
+            R_pZ    = refc[k].pZ
+            R_pW1   = refc[k].pW1
+            R_dY    = refc[k].dY
+            R_ZY    = refc[k].ZY
+            R_times = refc[k].times
+            R_uid   = refc[k].uid
+            have_R  = 1
+            R_ext   = 1
+            break
+        }
+    }
 
     for (g = 1; g <= G; g++) {
         cache[g].ok = 0
         cache[g].fast_ok = 0
         cache[g].gamma = gamma_grid[g]
 
-        real colvector eqty_cur
-        xdpt2_stack_at_gamma(units, gamma_grid[g], method,
-                              flag_static, flag_kink, t_min, t_max,
-                              dY_cur, dW_cur, Z_cur, times_cur, uid_cur,
-                              eqty_cur)
+        from_tpl = (tpl_state == 2)
+        if (tpl_state == 2) {
+            dY_cur    = tpl.dY
+            dW_cur    = xdpt2_tpl_dW(tpl, gamma_grid[g])
+            Z_cur     = tpl.Z
+            times_cur = tpl.times
+            uid_cur   = tpl.uid
+        }
+        else {
+            xdpt_tpl_rec = (tpl_state == 0)
+            xdpt2_stack_at_gamma(units, gamma_grid[g], method,
+                                  flag_static, flag_kink, t_min, t_max,
+                                  dY_cur, dW_cur, Z_cur, times_cur, uid_cur)
+            xdpt_tpl_rec = 0
+            if (tpl_state == 0) {
+                tpl = xdpt2_tpl_build(units, method, flag_kink, dY_cur,
+                                      Z_cur, times_cur, uid_cur)
+                tpl_state = (tpl.ok ? 1 : -1)
+            }
+            else if (tpl_state == 1) {
+                tpl_state = -1
+                if (rows(dY_cur) == rows(tpl.dY) &
+                    rows(times_cur) == rows(tpl.times) &
+                    rows(uid_cur) == rows(tpl.uid) &
+                    rows(Z_cur) == rows(tpl.Z) & cols(Z_cur) == cols(tpl.Z)) {
+                    dW_chk = xdpt2_tpl_dW(tpl, gamma_grid[g])
+                    if (rows(dW_chk) == rows(dW_cur) &
+                        cols(dW_chk) == cols(dW_cur)) {
+                        if (dW_chk == dW_cur & dY_cur == tpl.dY &
+                            Z_cur == tpl.Z & times_cur == tpl.times &
+                            uid_cur == tpl.uid) tpl_state = 2
+                    }
+                }
+            }
+        }
 
         if (rows(dY_cur) == 0) continue
         n_rows = rows(dY_cur)
@@ -3638,18 +4544,6 @@ struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache(
         // k_W+1 moments, the linear coefficients can fit every fixed gamma
         // exactly and the threshold is not identified.
         if (cols(Z_cur) < cols(dW_cur) + 1) continue
-        // v0.7.11 (SPEEDUP, no result change): q at the stacked rows
-        // depends only on (units, times, uid) -- all gamma-invariant -- yet
-        // was rebuilt per gamma by an interpreted per-row loop and stored in
-        // a struct member nothing ever read. Reuse the reference entry's
-        // vector under an EXACT bitwise times/uid guard (same mechanism as
-        // the v0.7.9 weight reuse); the reused pieces are deterministic, so
-        // the reused vector is bitwise identical to a fresh rebuild.
-        reuse_tu = 0
-        if (ref_g > 0) {
-            reuse_tu = (times_cur == cache[ref_g].times &
-                        uid_cur   == cache[ref_g].uid)
-        }
         // v0.8.2 R9 (#2): the guard is a TRIMMING rule on the deduplicated
         // effective support (passed as an argument, R9 #7), NOT a parameter-
         // count rule. The old cols(dW)+1 per-side floor demanded 2K+2
@@ -3666,7 +4560,10 @@ struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache(
         // v0.8.2 R10 (#3): minregime() is a FLOOR (max with the default
         // trim rule), not an override -- an option named "minimum" must
         // strengthen the safeguard, never weaken it below the default.
-        min_reg = ceil(xdpt_trim_rate * n_supp / 2)
+        // v0.9.34: the default floor set by xtdpthresh_run (the smaller
+        // trimmed tail); the old rule if it is not set
+        min_reg = xdpt_minreg_def
+        if (min_reg >= .) min_reg = ceil(xdpt_trim_rate * n_supp / 2)
         if (min_reg < 2) min_reg = 2
         if (min_user > 0 & min_user > min_reg) min_reg = min_user
         if (sum(q_supp :<= gamma_grid[g]) < min_reg | ///
@@ -3683,19 +4580,34 @@ struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache(
         // fresh path also stops computing a dead invsym(ZZ) under
         // method(fd) (it was computed, then discarded for the MA(1)
         // weight) -- a pure dead-value elimination.
-        // v0.7.11: reuse_tu above already certified times/uid bitwise;
-        // only the Z comparison remains. The conjunction value is identical.
+        // v0.9.34: times/uid, then Z, then dY; for template-built entries
+        // the three results are those of the first such entry.
+        reuse_tu = 0
         reuse_w = 0
         reuse_y = 0
-        if (reuse_tu) {
-            reuse_w = (Z_cur == *cache[ref_g].pZ)
-            if (reuse_w) reuse_y = (dY_cur == cache[ref_g].dY)
+        if (from_tpl & tc_known) {
+            reuse_tu = tc_tu
+            reuse_w  = tc_w
+            reuse_y  = tc_y
+        }
+        else if (have_R) {
+            reuse_tu = (times_cur == R_times & uid_cur == R_uid)
+            if (reuse_tu) {
+                reuse_w = (Z_cur == *R_pZ)
+                if (reuse_w) reuse_y = (dY_cur == R_dY)
+            }
+            if (from_tpl) {
+                tc_known = 1
+                tc_tu = reuse_tu
+                tc_w  = reuse_w
+                tc_y  = reuse_y
+            }
         }
         if (reuse_w) {
             // v0.7.13 (C5): share the reference entry's heap objects — a
             // pointer copy, not a data copy (this is the memory fix).
-            cache[g].pZ  = cache[ref_g].pZ
-            cache[g].pW1 = cache[ref_g].pW1
+            cache[g].pZ  = R_pZ
+            cache[g].pW1 = R_pW1
         }
         else {
             ZZ = Z_cur' * Z_cur / n_rows
@@ -3717,7 +4629,7 @@ struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache(
         // v0.7.9 (C): ZY = Z'dY/n, reused from the reference entry under
         // the exact guard above (both Z and dY bitwise equal), computed by
         // the identical expression otherwise.
-        if (reuse_y) ZY_cur = cache[ref_g].ZY
+        if (reuse_y) ZY_cur = R_ZY
         else         ZY_cur = Z_cur' * dY_cur / n_rows
 
         cache[g].dY      = dY_cur
@@ -3727,8 +4639,18 @@ struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache(
         cache[g].n_rows  = n_rows
         cache[g].ok      = 1
         cache[g].ZY      = ZY_cur
-        if (ref_g == 0) {
-            ref_g = g   // first admitted entry = bitwise reference
+        if (!have_R | (R_ext & !reuse_w)) {
+            // first admitted entry = bitwise reference (also when the
+            // entries do not match the reference of refc)
+            R_pZ    = cache[g].pZ
+            R_pW1   = cache[g].pW1
+            R_dY    = dY_cur
+            R_ZY    = ZY_cur
+            R_times = times_cur
+            R_uid   = uid_cur
+            have_R  = 1
+            R_ext   = 0
+            tc_known = 0
         }
 
         // Precompute C_g for fast bootstrap (1-step GMM with fixed W_first)
@@ -3779,29 +4701,100 @@ void xdpt2_fast_gmm_boot(real colvector Y_boot,
     ok = 1
 }
 
-// v0.7.6: batched twin of xdpt2_fast_gmm_boot — IDENTICAL objective formula,
-// evaluated for all B bootstrap columns of Y_mat (n_rows x B) at once. The
-// GMM objective n*g'Wf g is a quadratic form in g = Z'r/n, so column b of the
-// result equals the scalar fast solve on Y_mat[,b] to machine precision.
-// Returns the 1 x B row vector of objectives. Caller guarantees gc.fast_ok==1
-// and rows(Y_mat)==gc.n_rows.
-real rowvector xdpt2_fast_obj_batch_raw(real matrix Y_mat, real matrix Z,
-                                         real matrix dW, real matrix C_g,
-                                         real matrix W_first, real scalar n_rows)
+// v0.9.31 (SPEEDUP): one-step objectives of the bootstrap samples
+// Y* = F + E for the cache entries idx (in that order), one row per entry.
+// F (n x 1) is the fit that generates every draw and E the reweighted
+// residuals, E[., b] = R :* ETA[ud, b]: ud gives the cluster of each row and
+// ETA (clusters x B) the cluster weights. The moment vector is linear in Y*,
+// g(Y*) = g(F) + g(E), where
+//   g(F) = Z'(F - dW theta_F)/n, theta_F = C Z'F/n   (from residuals, as before)
+//   g(E) = Z'E/n - (Z'dW/n)(C Z'E/n)                  (from cross products)
+// with Z'E/n and Z'F/n formed once per shared Z and Z'dW/n = ZW taken from the
+// cache entry, next to the dW and C it belongs to. g(F) is O(n k) per entry
+// and g(E) O(k^2 B), instead of O(n k B) for the n-row residual matrix and
+// its second product. Forming g(F) from residuals matters: in a pure
+// cross-product form, g(Y*) = Z'Y*/n - ZW theta, the fitted component of Y*
+// cancels against ZW theta and that form is 10-50 times less accurate. Against
+// a 40-digit reference computed from the same double inputs, the split is as
+// accurate as the residual form (largest error about 1e-13 of the objective
+// scale in both; _dev_0931 audit). Rows equal the residual form to rounding.
+// v0.9.33 (SPEEDUP): all rows of a cluster share one weight, so
+// Z'E/n = S'ETA/n, where S sums z_i*r_i within each cluster; E itself is
+// never formed. The residuals of F at the entries of a block that shares Z
+// are stacked as columns and multiplied by Z' at once, instead of one
+// matrix-vector product per entry; a block holds at most 4e6 elements. The
+// arithmetic is the same (the residual form for g(F)); only the order of
+// summation changes, so rows equal the 0.9.32 values to rounding.
+// v0.9.34 (C1): with the optional W2, every entry is solved and weighted with
+// the fixed second-step weight (C_g2, W2) instead of its first-step pair.
+real matrix xdpt2_fast_obj_split_list(real colvector F, real colvector R,
+                                      real colvector ud, real matrix ETA,
+                                      struct xdpt2_gamma_cache rowvector cache,
+                                      real colvector idx, | real matrix W2)
 {
-    real matrix ZY, Theta, R, G, WG
-    ZY    = Z' * Y_mat / n_rows            // n_iv x B
-    Theta = C_g * ZY                       // k_W x B
-    R     = Y_mat - dW * Theta             // n_rows x B
-    G     = Z' * R / n_rows                // n_iv x B
-    WG    = W_first * G                    // n_iv x B
-    return(n_rows :* colsum(G :* WG))      // 1 x B
-}
-real rowvector xdpt2_fast_obj_batch(real matrix Y_mat,
-                                     struct xdpt2_gamma_cache scalar gc)
-{
-    return(xdpt2_fast_obj_batch_raw(Y_mat, *gc.pZ, gc.dW, gc.C_g,
-                                     *gc.pW1, gc.n_rows))
+    real matrix OUT, ZE, GE, G, WG, RF, GF, P
+    real rowvector bad
+    real colvector ZF
+    real scalar j, j0, j1, e, n_ref, m, nb, w2m
+    pointer(real matrix) scalar pZ_ref
+    w2m = 0
+    if (args() == 7) w2m = (rows(W2) > 0)
+    m = rows(idx)
+    OUT = J(m, cols(ETA), .)
+    pZ_ref = NULL
+    n_ref = .
+    nb = 1
+    j0 = 1
+    while (j0 <= m) {
+        e = idx[j0]
+        if (cache[e].pZ != pZ_ref | cache[e].n_rows != n_ref) {
+            pZ_ref = cache[e].pZ
+            n_ref  = cache[e].n_rows
+            ZE     = xdpt2_gsum_by_unit((*pZ_ref) :* R, ud, rows(ETA))' * ETA / n_ref
+            ZF     = (*pZ_ref)' * F / n_ref
+            nb     = max((1, floor(4e6 / n_ref)))
+        }
+        // block j0..j1: consecutive entries on this Z, at most nb of them
+        j1 = j0
+        while (j1 < m & j1 - j0 + 1 < nb) {
+            e = idx[j1 + 1]
+            if (cache[e].pZ != pZ_ref | cache[e].n_rows != n_ref) break
+            j1++
+        }
+        RF = J(n_ref, j1 - j0 + 1, .)
+        for (j = j0; j <= j1; j++) {
+            e = idx[j]
+            if (w2m) RF[., j - j0 + 1] = F - cache[e].dW * (cache[e].C_g2 * ZF)
+            else     RF[., j - j0 + 1] = F - cache[e].dW * (cache[e].C_g * ZF)
+        }
+        GF = (*pZ_ref)' * RF / n_ref
+        for (j = j0; j <= j1; j++) {
+            e = idx[j]
+            if (w2m) {
+                GE = ZE - cache[e].ZW * (cache[e].C_g2 * ZE)
+                G  = GF[., j - j0 + 1] :+ GE
+                WG = W2 * G
+            }
+            else {
+                GE = ZE - cache[e].ZW * (cache[e].C_g * ZE)
+                G  = GF[., j - j0 + 1] :+ GE
+                WG = (*cache[e].pW1) * G
+            }
+            // v0.9.35 (external review, R3): colsum() skips missing values,
+            // so a draw whose terms overflowed (or whose weight is missing)
+            // had a partial sum -- zero when the other terms were zero --
+            // that passed as a valid objective; it is now missing, as in the
+            // scalar path (xdpt2_fast_gmm_boot)
+            P = G :* WG
+            OUT[j, .] = n_ref :* colsum(P)
+            if (hasmissing(P)) {
+                bad = selectindex(colmissing(P) :> 0)
+                OUT[j, bad] = J(1, cols(bad), .)
+            }
+        }
+        j0 = j1 + 1
+    }
+    return(OUT)
 }
 
 // Dense draw indices for the clusters that actually contribute rows. This
@@ -3892,14 +4885,42 @@ real scalar xdpt2_quantile(real colvector x, real scalar p)
     return((1 - g) * xs[j] + g * xs[j + 1])
 }
 
+// v0.9.32: critical value of the grid-bootstrap test, an order statistic of
+// the valid bootstrap statistics; the type-7 interpolated quantile used up to
+// 0.9.31 was liberal by about 0.9/(n+1).
+// v0.9.34: the ceil(p*(n+1))-th order statistic (was ceil(p*n), Gong and Seo
+// 2026, eq. 7). "Accept iff D <= crit" is then exactly the add-one rule of the
+// linearity and continuity tests, reject iff (1 + #{D* >= D})/(1 + n) <=
+// 1 - p, whose size is at most 1 - p for every n under exchangeability. The
+// old rank was one lower when (1-p)*(n+1) is not an integer, a liberal test
+// (size 5.9% at n = 100, 9.5% at n = 20). The two agree when (1-p)*(n+1) is an
+// integer (n = 299, 499, 999 at p = .95). If the rank exceeds n, no draw can
+// reject and maxdouble() is returned (every candidate is accepted). The
+// product is compared with a tolerance so that representation error cannot
+// move the rank up by one.
+real scalar xdpt2_crit_orderstat(real colvector x, real scalar p)
+{
+    real colvector xs
+    real scalar n, k
+
+    xs = select(x, x :< .)
+    n = rows(xs)
+    if (n == 0) return(.)
+    xs = sort(xs, 1)
+    k = ceil(p * (n + 1) - 1e-9)
+    if (k < 1) k = 1
+    if (k > n) return(maxdouble())
+    return(xs[k])
+}
+
 // 2-stage grid search (xthenreg-style):
-//   Stage 1: grid search with W_first (MA(1) for FD, ZZ_inv for FOD/system)
+//   Stage 1: grid search with W_first (MA(1) for FD, ZZ_inv for FOD)
 //   Stage 2: compute W_n_2 from Stage-1 residuals, grid search again with W_n_2 fixed
 // v0.7.0 (A4): the 2-stage fixed-weight path now applies to ALL methods.
-// Previously FOD/system called 2-step solve_gmm per grid point, re-estimating
+// Previously FOD called 2-step solve_gmm per grid point, re-estimating
 // Ω(γ) at every γ — objective values were then not comparable across the grid
 // and the argmin could be distorted. W_first (MA(1) for FD; Z'Z-inverse for
-// FOD/system) is γ-invariant because Z does not depend on γ, so Stage 1 is a
+// FOD) is γ-invariant because Z does not depend on γ, so Stage 1 is a
 // proper fixed-weight search; Stage 2 fixes the cluster Ω from the Stage-1
 // optimum across the whole grid, exactly as xthenreg does.
 // v0.7.0 (D1): the per-γ cache is built once by the caller and passed in.
@@ -3908,6 +4929,16 @@ real scalar xdpt2_quantile(real colvector x, real scalar p)
 //   V_c = V2 + D V2 + V2 D' + D V1r D'
 // where V2 = (G'W2 G)^{-1}/n (efficient-form two-step variance), V1r is the
 // robust sandwich of the STAGE-1 estimator, and column j of D is
+// [v0.9.35 (external review, R2): that form holds when the stage-1 and
+// stage-2 Jacobians are equal. They differ when gamma-hat_1 != gamma-hat_2
+// and, in the joint variance, through the derivative columns built at the two
+// sets of estimates; its cross terms then used V2 in place of the cross
+// covariance L1 Omega1 L2'/n and could give negative variances. The
+// correction is now the variance of the linearized two-step estimator,
+//   V_c = (L2 + D L1) Omega1 (L2 + D L1)' / n,
+//   L1 = (G1'W1 G1)^{-1} G1'W1,  L2 = (G2'W2 G2)^{-1} G2'W2,
+// which equals the form above when G1 = G2 (W2 = Omega1^{-1}) and is
+// positive semidefinite by construction.]
 //   D_j = -B2 G'W2 [dOmega/dtheta_j] W2 gbar2,   B2 = (G'W2 G)^{-1},
 // with the Omega derivative evaluated at the stage-1 residuals that BUILT
 // W2 (linear model: dOmega/dtheta_j = -(Hj'Gm + Gm'Hj)/n, Hj/Gm the per-unit
@@ -3925,16 +4956,16 @@ real matrix xdpt2_windmeijer(real matrix ZW1, real matrix X1, real matrix Z,
                               real scalar n_rows)
 {
     real scalar k, j, n_u, inv_ok
-    real matrix B2, B2inv, V2, V1r, Gm, Hj, dOm, Dmat, Vc
+    real matrix B2, B2inv, B1, B1inv, Gm, Hj, dOm, Dmat, Vc, M
     k = cols(ZW2)
-    if (cols(X1) != k) return(J(0,0,.))
+    if (cols(X1) != k | cols(ZW1) != k) return(J(0,0,.))
     B2 = ZW2' * W2 * ZW2
     xdpt2_syminv(B2, inv_ok, B2inv)
     if (!inv_ok) return(J(0,0,.))
     B2 = B2inv
-    V2 = B2 / n_rows
-    V1r = xdpt2_gmm_sandwich(ZW1, W1, Omega1, n_rows)
-    if (rows(V1r) == 0) return(J(0,0,.))
+    B1 = ZW1' * W1 * ZW1
+    xdpt2_syminv(B1, inv_ok, B1inv)
+    if (!inv_ok) return(J(0,0,.))
     n_u = max(uid)
     Gm = xdpt2_gsum_by_unit(Z :* r1, uid, n_u)
     // v0.8.2 R11 (#5): the derivative of Omega must match the Omega
@@ -3960,365 +4991,1419 @@ real matrix xdpt2_windmeijer(real matrix ZW1, real matrix X1, real matrix Z,
         }
         Dmat[., j] = -B2 * (ZW2' * (W2 * (dOm * (W2 * gbar2))))
     }
-    Vc = V2 + Dmat * V2 + V2 * Dmat' + Dmat * V1r * Dmat'
+    // v0.9.35 (R2): the variance of the linearized two-step estimator
+    M = B2 * ZW2' * W2 + Dmat * (B1inv * ZW1' * W1)
+    Vc = M * Omega1 * M' / n_rows
     Vc = (Vc + Vc') / 2
     if (hasmissing(Vc)) return(J(0,0,.))
     return(Vc)
 }
 
-// v0.9.16 R35: coarse-anchor base for the CURRENT estimator state. The
-// re-searches inside refine() rebuild W2 (and can flip between the
-// two-step and one-step paths), so the set of coarse points that count
-// as valid evaluations of the FINAL criterion changes across iterations
-// -- a base frozen at the initial state mis-brackets migrated optima and
-// produces false completeness. Only the first n_coarse entries of the
-// grid/cache are coarse anchors; refined points never become anchors.
-real colvector xdpt2_ref_base_current(real colvector gamma_grid,
-                                      struct xdpt2_gamma_cache rowvector cache,
-                                      real scalar n_coarse,
-                                      real scalar best_twostep,
-                                      real matrix best_A,
-                                      real scalar best_gamma,
-                                      real scalar n_anchor)
+// v0.9.32: joint variance of (theta, gamma) in the kink model. The kink term
+// delta_k*(q - gamma)*1(q > gamma) is continuous in gamma, with derivative
+// -delta_k*1(q > gamma), so (theta, gamma) is estimated as in a regular GMM
+// problem whose Jacobian has one more column, Z'x_g/n, where
+// x_g = -delta_k*T(1(q > gamma-hat)); the continuity-restricted estimator is
+// asymptotically normal (Gong and Seo 2026, sec. 1 and 3). The slope
+// variance is the theta block of the joint variance, computed by the same
+// sandwich and Windmeijer code as the linear parameters, applied to the
+// design augmented by x_g. T(1(q > gamma)) is column K+1 of the jump design
+// at the same gamma: the same transformation, rows, and td partialling as the
+// regressors. The jump model is untouched.
+//
+// x_g aligned with the rows of the kink design (dY_ref, times_ref, uid_ref);
+// J(0,1,.) if the jump design does not have the same rows.
+real colvector xdpt2_kink_xg(struct xdpt2_unit rowvector units,
+                             real scalar gamma, string scalar method,
+                             real scalar flag_static, real scalar t_min,
+                             real scalar t_max, real scalar delta_k,
+                             real colvector dY_ref, real colvector times_ref,
+                             real colvector uid_ref)
 {
-    real colvector base
-    real scalar j, ok_ref, obj_ref
-    real colvector theta_ref
-    real matrix V_ref
-    base = J(0, 1, .)
-    n_anchor = 0
-    for (j = 1; j <= n_coarse; j++) {
-        if (!cache[j].ok) continue
-        if (rows(cache[j].dY) < 20) continue
-        if (best_twostep == 1) {
-            if (cols(*cache[j].pZ) != cols(best_A)) continue
-            xdpt2_solve_gmm_1step_pre(cache[j].dY, cache[j].dW,
-                                       *cache[j].pZ, cache[j].ZW,
-                                       cache[j].ZY, best_A,
-                                       ok_ref, theta_ref, obj_ref, V_ref)
-        }
-        else {
-            xdpt2_solve_gmm_1step_pre(cache[j].dY, cache[j].dW,
-                                       *cache[j].pZ, cache[j].ZW,
-                                       cache[j].ZY, *cache[j].pW1,
-                                       ok_ref, theta_ref, obj_ref, V_ref)
-        }
-        if (!ok_ref) continue
-        base = base \ gamma_grid[j]
+    real colvector dY_j, times_j, uid_j
+    real matrix dW_j, Z_j
+    real scalar K, drop_save
+    real rowvector gone_save
+    external real scalar xdpt_ivc_drop
+    external real rowvector xdpt_td_gone
+
+    if (delta_k >= . | gamma >= .) return(J(0, 1, .))
+    // The stacker resets these run-level diagnostics. The jump design has
+    // the same Z and base columns, but the kink run's values are restored.
+    drop_save = xdpt_ivc_drop
+    gone_save = xdpt_td_gone
+    xdpt2_stack_at_gamma(units, gamma, method, flag_static, 0, t_min, t_max,
+                          dY_j, dW_j, Z_j, times_j, uid_j)
+    xdpt_ivc_drop = drop_save
+    xdpt_td_gone = gone_save
+    K = cols(units[1].X)
+    if (rows(dY_j) != rows(dY_ref) | cols(dW_j) < K + 1) return(J(0, 1, .))
+    if (rows(dY_j) == 0) return(J(0, 1, .))
+    if (any(times_j :!= times_ref) | any(uid_j :!= uid_ref)) return(J(0, 1, .))
+    if (any(dY_j :!= dY_ref)) return(J(0, 1, .))
+    return(-delta_k :* dW_j[., K + 1])
+}
+
+// v0.9.35: the transformation of a template applied to any level columns:
+// FD or FOD with the arithmetic of xdpt2_tpl_dW, then the td partialling.
+real matrix xdpt2_tpl_trans(struct xdpt2_stack_tpl scalar tp, real matrix Wlev)
+{
+    real colvector ix
+    real matrix dreg, F, WE, X, S
+    real scalar i, j, v
+    if (tp.fd) {
+        dreg = Wlev[tp.J, .] - Wlev[tp.JP, .]
     }
-    n_anchor = rows(base)
-    return(sort(uniqrows(base \ best_gamma), 1))
+    else {
+        WE = Wlev[tp.EQF, .]
+        F = J(rows(tp.EQF), cols(Wlev), .)
+        for (i = 1; i <= rows(tp.FG); i++) {
+            v  = tp.FG[i, 1]
+            ix = tp.FP[|tp.FG[i, 2] \ tp.FG[i, 3]|]
+            S  = lowertriangle(J(v, v, 1), 0)
+            for (j = 1; j <= cols(Wlev); j++) {
+                X = colshape(WE[ix, j], v)'
+                F[ix, j] = vec(quadcross(S, X))
+            }
+        }
+        dreg = tp.c :* (Wlev[tp.J, .] - F[tp.iF, .] :/ tp.Tf)
+    }
+    if (tp.td == 1) {
+        xdpt2_demean_bytime(dreg, tp.tpre)
+        dreg = dreg[tp.keep, .]
+    }
+    else if (tp.td == 2) {
+        dreg = dreg - tp.D * (tp.DtD * (tp.D' * dreg))
+        dreg = dreg[tp.keep, .]
+    }
+    return(dreg)
+}
+
+// v0.9.35: joint variance of (theta, gamma) in the jump model. The sample
+// moments are step functions of gamma, but their expectation is smooth:
+// d/dgamma E[z 1(q > gamma) w] = -E[z w f(gamma | .)]. As in Seo and Shin
+// (2016, sec. 3) and xthenreg (Seo, Kim, and Kim 2019), the derivative column
+// is x_g = -T(phi_h(q - gamma-hat) * (1, x')delta-hat), phi_h(u) = phi(u/h)/h
+// the Gaussian kernel, h = bwscale * 1.06 * s_q * n^(-1/5) with s_q the
+// standard deviation of q over the panel rows and n the number of units (the
+// form of xthenreg's bandwidth rule, with its default multiplier 1.5).
+// T is applied by a template (the transformation,
+// rows and td partialling of the regressors): the main build's template when
+// it was verified and has the rows of the reference design, else one recorded
+// at gamma-hat. It must reproduce the regime columns of the reference design
+// dW_ref; otherwise, or if the rows differ, J(0,1,.) (the conditional
+// variance is then kept). The slope block is invariant to the scale of x_g.
+// the column from a template tp whose rows are those of the reference design
+real colvector xdpt2_jump_xg_tp(struct xdpt2_stack_tpl scalar tp,
+                                real scalar gamma, real colvector theta,
+                                real scalar K, real matrix dW_ref,
+                                real colvector uid_ref)
+{
+    real colvector qv, w, delta
+    real matrix Wreg, dchk, dreg
+    real scalar h, nu, scale
+    external real scalar xdpt_bwscale, xdpt_gamma_bw
+
+    // the template reproduces the regime columns of the design at gamma-hat
+    if (cols(dW_ref) != 2 * K + 1) return(J(0, 1, .))
+    Wreg = (tp.qlev :> gamma)
+    Wreg = Wreg, tp.Xlev :* Wreg
+    dchk = xdpt2_tpl_trans(tp, Wreg)
+    dreg = dW_ref[|1, K + 1 \ rows(dW_ref), 2 * K + 1|]
+    if (rows(dchk) != rows(dreg) | cols(dchk) != cols(dreg)) return(J(0, 1, .))
+    scale = max((1, max(abs(dreg))))
+    if (max(abs(dchk - dreg)) > 1e-9 * scale) return(J(0, 1, .))
+    // bandwidth rule of xthenreg, with multiplier bwscale (its default h_0 is 1.5)
+    qv = select(tp.qlev, tp.qlev :< .)
+    nu = rows(uniqrows(uid_ref))
+    if (rows(qv) < 2 | nu < 1) return(J(0, 1, .))
+    h = xdpt_bwscale * 1.06 * sqrt(variance(qv)) * nu^(-0.2)
+    if (h >= . | h <= 0) return(J(0, 1, .))
+    xdpt_gamma_bw = h
+    delta = theta[|K + 1 \ 2 * K + 1|]
+    w = normalden((tp.qlev :- gamma) :/ h) :/ h :*
+        ((J(rows(tp.qlev), 1, 1), tp.Xlev) * delta)
+    return(-xdpt2_tpl_trans(tp, w))
+}
+
+real colvector xdpt2_jump_xg(struct xdpt2_unit rowvector units,
+                             real scalar gamma, real colvector theta,
+                             string scalar method, real scalar flag_static,
+                             real scalar t_min, real scalar t_max,
+                             real colvector dY_ref, real matrix dW_ref,
+                             real colvector times_ref, real colvector uid_ref,
+                             struct xdpt2_stack_tpl scalar tpl_in,
+                             real scalar tpl_in_st)
+{
+    struct xdpt2_stack_tpl scalar tp
+    real colvector dY_j, times_j, uid_j
+    real matrix dW_j, Z_j
+    real scalar K, drop_save, dep_save
+    real rowvector gone_save
+    external real scalar xdpt_ivc_drop, xdpt_ivc_dep, xdpt_tpl_rec
+    external real rowvector xdpt_td_gone
+
+    K = cols(units[1].X)
+    if (gamma >= . | rows(theta) != 2 * K + 1) return(J(0, 1, .))
+    if (hasmissing(theta) | rows(dY_ref) == 0) return(J(0, 1, .))
+    // the main build's template: gamma-invariant and checked bit for bit
+    if (tpl_in_st == 2) {
+        if (rows(tpl_in.dY) == rows(dY_ref)) {
+            if (tpl_in.dY == dY_ref & tpl_in.times == times_ref &
+                tpl_in.uid == uid_ref) {
+                return(xdpt2_jump_xg_tp(tpl_in, gamma, theta, K, dW_ref,
+                                        uid_ref))
+            }
+        }
+    }
+    // otherwise a template recorded at gamma-hat; the stacker resets these
+    // run-level diagnostics, which are restored
+    drop_save = xdpt_ivc_drop
+    dep_save = xdpt_ivc_dep
+    gone_save = xdpt_td_gone
+    xdpt_tpl_rec = 1
+    xdpt2_stack_at_gamma(units, gamma, method, flag_static, 0, t_min, t_max,
+                          dY_j, dW_j, Z_j, times_j, uid_j)
+    xdpt_tpl_rec = 0
+    tp = xdpt2_tpl_build(units, method, 0, dY_j, Z_j, times_j, uid_j)
+    xdpt_ivc_drop = drop_save
+    xdpt_ivc_dep = dep_save
+    xdpt_td_gone = gone_save
+    if (!tp.ok) return(J(0, 1, .))
+    if (rows(dY_j) != rows(dY_ref) | cols(dW_j) != 2 * K + 1) return(J(0, 1, .))
+    if (any(times_j :!= times_ref) | any(uid_j :!= uid_ref)) return(J(0, 1, .))
+    if (any(dY_j :!= dY_ref)) return(J(0, 1, .))
+    return(xdpt2_jump_xg_tp(tp, gamma, theta, K, dW_j, uid_ref))
+}
+
+// v0.9.35: number of distinct values of q (the level rows of all units, as
+// for the bandwidth) within two bandwidths of gamma. Few values mean a
+// discrete q, for which the kernel derivative of the jump model's joint
+// variance has no density to estimate (Seo and Shin 2016, Assumption 2).
+real scalar xdpt2_q_nvals(struct xdpt2_unit rowvector units, real scalar gamma,
+                          real scalar h)
+{
+    real colvector qv
+    real scalar i, n, a
+
+    if (gamma >= . | h >= . | h <= 0) return(.)
+    n = 0
+    for (i = 1; i <= length(units); i++) n = n + rows(units[i].q)
+    if (n == 0) return(.)
+    qv = J(n, 1, .)
+    a = 0
+    for (i = 1; i <= length(units); i++) {
+        if (rows(units[i].q) == 0) continue
+        qv[|a + 1 \ a + rows(units[i].q)|] = units[i].q
+        a = a + rows(units[i].q)
+    }
+    qv = select(qv, (qv :< .) :& (abs(qv :- gamma) :<= 2 * h))
+    if (rows(qv) == 0) return(0)
+    return(rows(uniqrows(qv)))
+}
+
+// v0.9.35: derivative in gamma of the residuals of a stack built with the
+// template tp (the estimation stack, or under FOD the FD stack of the AR
+// test): the column of the joint variance, x_g = -T(phi_h(q - gamma)
+// (1, x')delta) in the jump model (bandwidth h, as used there) and
+// x_g = -delta_k T(1(q > gamma)) under kink. The template must reproduce the
+// regime columns of dW_ref; otherwise J(0,1,.).
+real colvector xdpt2_ar_xg(struct xdpt2_stack_tpl scalar tp, real scalar gamma,
+                           real colvector theta, real scalar K,
+                           real scalar flag_kink, real matrix dW_ref,
+                           real scalar h)
+{
+    real colvector ind, w, delta, xg
+    real matrix Wreg, dchk, dreg
+    real scalar scale
+
+    if (!tp.ok | gamma >= . | hasmissing(theta)) return(J(0, 1, .))
+    ind = (tp.qlev :> gamma)
+    if (flag_kink) {
+        if (cols(dW_ref) != K + 1 | rows(theta) != K + 1) return(J(0, 1, .))
+        Wreg = (tp.qlev :- gamma) :* ind
+        dreg = dW_ref[., K + 1]
+    }
+    else {
+        if (cols(dW_ref) != 2 * K + 1 | rows(theta) != 2 * K + 1) return(J(0, 1, .))
+        Wreg = ind, tp.Xlev :* ind
+        dreg = dW_ref[|1, K + 1 \ rows(dW_ref), 2 * K + 1|]
+    }
+    dchk = xdpt2_tpl_trans(tp, Wreg)
+    if (rows(dchk) != rows(dreg) | cols(dchk) != cols(dreg)) return(J(0, 1, .))
+    scale = max((1, max(abs(dreg))))
+    if (max(abs(dchk - dreg)) > 1e-9 * scale) return(J(0, 1, .))
+    if (flag_kink) {
+        xg = -theta[K + 1] :* xdpt2_tpl_trans(tp, ind)
+    }
+    else {
+        if (h >= . | h <= 0) return(J(0, 1, .))
+        delta = theta[|K + 1 \ 2 * K + 1|]
+        w = normalden((tp.qlev :- gamma) :/ h) :/ h :*
+            ((J(rows(tp.qlev), 1, 1), tp.Xlev) * delta)
+        xg = -xdpt2_tpl_trans(tp, w)
+    }
+    if (hasmissing(xg)) return(J(0, 1, .))
+    return(xg)
+}
+
+// Theta block of the joint sandwich variance (estimator with weight A).
+// v0.9.35: the full matrix, gamma included, is kept in xdpt_V_joint_full for
+// the AR statistics.
+real matrix xdpt2_kink_joint_V(real matrix ZW, real colvector xg,
+                                real matrix Z, real matrix A,
+                                real matrix Omega, real scalar n_rows)
+{
+    real matrix Va
+    real scalar k
+    external real matrix xdpt_V_joint_full
+
+    xdpt_V_joint_full = J(0, 0, .)
+    if (rows(xg) == 0 | rows(xg) != rows(Z)) return(J(0, 0, .))
+    k = cols(ZW)
+    Va = xdpt2_gmm_sandwich((ZW, (Z' * xg) / n_rows), A, Omega, n_rows)
+    if (rows(Va) == 0) return(J(0, 0, .))
+    xdpt_V_joint_full = Va
+    return(Va[|1, 1 \ k, k|])
+}
+
+// Theta block of the joint Windmeijer-corrected variance: xdpt2_windmeijer
+// applied to the stage-1 and stage-2 designs augmented by their x_g.
+real matrix xdpt2_kink_joint_wind(real matrix ZW1, real matrix X1,
+                                   real colvector xg1, real matrix Z,
+                                   real colvector uid, real colvector r1,
+                                   real matrix Omega1, real matrix W1,
+                                   real matrix W2, real matrix ZW2,
+                                   real colvector xg2, real colvector gbar2,
+                                   real scalar n_rows)
+{
+    real matrix Va
+    real scalar k
+    external real matrix xdpt_V_joint_full
+
+    xdpt_V_joint_full = J(0, 0, .)
+    if (rows(xg1) == 0 | rows(xg2) == 0) return(J(0, 0, .))
+    if (rows(xg1) != rows(Z) | rows(xg2) != rows(Z)) return(J(0, 0, .))
+    k = cols(ZW2)
+    Va = xdpt2_windmeijer((ZW1, (Z' * xg1) / n_rows), (X1, xg1), Z, uid, r1,
+                          Omega1, W1, W2, (ZW2, (Z' * xg2) / n_rows), gbar2,
+                          n_rows)
+    if (rows(Va) == 0) return(J(0, 0, .))
+    xdpt_V_joint_full = Va
+    return(Va[|1, 1 \ k, k|])
+}
+
+// Replace the conditional variance V by the joint theta block V_joint when it
+// is available; the conditional V is kept (e(V_cond)) and gives the AR
+// statistics that treat gamma-hat as known.
+void xdpt2_kink_apply_joint(real matrix V, real matrix V_joint)
+{
+    external real matrix xdpt_V_cond_ar, xdpt_V_joint_full
+    external real scalar xdpt_kink_joint
+
+    xdpt_V_cond_ar = V
+    if (rows(V_joint) == rows(V) & cols(V_joint) == cols(V) &
+        !hasmissing(V_joint)) {
+        V = V_joint
+        xdpt_kink_joint = 1
+    }
+    else {
+        xdpt_kink_joint = 0
+        xdpt_V_joint_full = J(0, 0, .)
+    }
+}
+
+// v0.9.25: nested-grid search helpers. The search engine below is the only
+// point-estimation engine for searchmode(adaptive) and searchmode(fixed).
+// Midpoint insertion gives g -> 2g-1 -> 4g-3 (100 -> 199 -> 397).
+real colvector xdpt2_nested_midpoints(real colvector gamma_grid)
+{
+    real colvector g, left, right, mid, keep
+    g = sort(uniqrows(gamma_grid), 1)
+    if (rows(g) < 2) return(J(0, 1, .))
+    left  = g[|1 \ rows(g)-1|]
+    right = g[|2 \ rows(g)|]
+    mid = left :+ (right :- left) :/ 2
+    keep = (mid :> left) :& (mid :< right)
+    if (sum(keep) == 0) return(J(0, 1, .))
+    return(select(mid, keep))
 }
 
 
-void xdpt2_grid_search(struct xdpt2_unit rowvector units,
-                        real colvector gamma_grid,
-                        struct xdpt2_gamma_cache rowvector cache,
-                        string scalar method, real scalar flag_static,
-                        real scalar flag_kink, real scalar t_min, real scalar t_max,
-                         real scalar best_gamma, real scalar best_obj,
-                         real colvector best_theta, real matrix best_V,
-                         real matrix best_V_influence,
-                         real matrix best_A, real scalar best_twostep,
-                         real scalar n_adm2, real scalar gamma_adm2_lo,
-                         real scalar gamma_adm2_hi,
-                         real colvector gamma_admitted)
+// Append only never-before-seen candidates and build only their cache
+// entries. Exact guards then rewire gamma-invariant Z/W1 pointers to an
+// existing entry, avoiding retained duplicate copies of those large matrices.
+// This is shared by global midpoint escalation and final local refinement.
+void xdpt2_append_candidates(
+    struct xdpt2_unit rowvector units,
+    real colvector candidates,
+    string scalar method,
+    real scalar flag_static,
+    real scalar flag_kink,
+    real scalar t_min,
+    real scalar t_max,
+    real colvector q_supp,
+    real scalar min_user,
+    real colvector gamma_grid,
+    struct xdpt2_gamma_cache rowvector cache,
+    real scalar first_new,
+    real scalar last_new,
+    struct xdpt2_stack_tpl scalar tpl,
+    real scalar tpl_st)
 {
-    real scalar gl, ok, obj_cur, best_obj_1, best_gamma_1, inv_ok
-    real scalar n_rows, k_W
-    real matrix dY_cur, dW_cur, Z_cur, V_cur, W_first, ZZ_inv, ZZ
-    real matrix Omega, W_n_2, best_V_1
-    real colvector times_cur, theta_cur, uid_cur, best_theta_1, r_1
-    real matrix dY_1, dW_1, Z_1
-    real colvector times_1, uid_1
+    real colvector new_g, keep
+    struct xdpt2_gamma_cache rowvector cache_new
+    real scalar j, ref, same_tu, same_z, same_y
 
-    // v0.8.2 R11 (#2): count of grid points solvable under the two-step
-    // weight W_n_2. Missing unless stage 2 runs (one-step-only paths).
-    // v0.8.3 R12 (#4): plus the span of that stage-2 search space -- a
-    // reported two-step gamma-hat is selected over THESE points, which can
-    // extend beyond the full fixed-W1 stage-1 solve span.
-    n_adm2 = .
-    gamma_adm2_lo = .
-    gamma_adm2_hi = .
+    first_new = 0
+    last_new = 0
+    new_g = candidates
+    if (rows(new_g) > 0) new_g = select(new_g, new_g :< .)
+    if (rows(new_g) == 0) return
+    new_g = uniqrows(sort(new_g, 1))
+    keep = J(rows(new_g), 1, 1)
+    for (j = 1; j <= rows(new_g); j++) {
+        if (sum(gamma_grid :== new_g[j]) > 0) keep[j] = 0
+    }
+    if (sum(keep) == 0) return
+    new_g = select(new_g, keep)
+    if (rows(new_g) == 0) return
 
-    // Initialize outputs to safe values.
-    // v0.7.0 (A3): parameter count read off the first valid cache entry — it
-    // covers the system level-constant column; formula fallback if none ok.
-    best_gamma = .
-    best_obj = .
-    k_W = .
-    real scalar _g0
-    for (_g0 = 1; _g0 <= cols(cache); _g0++) {
-        if (cache[_g0].ok) {
-            k_W = cols(cache[_g0].dW)
+    cache_new = xdpt2_build_gamma_cache_t(units, new_g, method,
+                                          flag_static, flag_kink,
+                                          t_min, t_max, q_supp, min_user,
+                                          tpl, tpl_st, cache)
+
+    ref = 0
+    for (j = 1; j <= cols(cache); j++) {
+        if (cache[j].ok) {
+            ref = j
             break
         }
     }
-    // v0.7.13 hygiene note: this fallback width omits the system
-    // level-constant column (actual stacked width is k_W_cols + 1 when level
-    // rows exist). The path is dead in practice — it is reachable only when
-    // NO cache entry is ok, in which case stage 1 finds nothing and the run
-    // aborts upstream; only zero-filled placeholder dimensions are affected.
-    if (k_W == .) k_W = (flag_kink ? cols(units[1].X) + 1 : 2 * cols(units[1].X) + 1)
+    if (ref > 0) {
+        for (j = 1; j <= cols(cache_new); j++) {
+            if (!cache_new[j].ok) continue
+            // already shared by the build (v0.9.34)
+            if (cache_new[j].pZ == cache[ref].pZ &
+                cache_new[j].pW1 == cache[ref].pW1) continue
+            same_tu = 0
+            if (rows(cache_new[j].times) == rows(cache[ref].times) &
+                rows(cache_new[j].uid)   == rows(cache[ref].uid)) {
+                same_tu = (cache_new[j].times == cache[ref].times &
+                           cache_new[j].uid   == cache[ref].uid)
+            }
+            if (!same_tu) continue
+            same_z = 0
+            if (rows(*cache_new[j].pZ) == rows(*cache[ref].pZ) &
+                cols(*cache_new[j].pZ) == cols(*cache[ref].pZ)) {
+                same_z = (*cache_new[j].pZ == *cache[ref].pZ)
+            }
+            if (!same_z) continue
+            cache_new[j].pZ  = cache[ref].pZ
+            cache_new[j].pW1 = cache[ref].pW1
+            same_y = 0
+            if (rows(cache_new[j].dY) == rows(cache[ref].dY)) {
+                same_y = (cache_new[j].dY == cache[ref].dY)
+            }
+            if (same_y) cache_new[j].ZY = cache[ref].ZY
+        }
+    }
+
+    first_new = rows(gamma_grid) + 1
+    gamma_grid = gamma_grid \ new_g
+    cache = cache, cache_new
+    last_new = rows(gamma_grid)
+}
+
+
+// Append the next globally nested level: g -> 2g-1 -> 4g-3.
+void xdpt2_append_nested_level(
+    struct xdpt2_unit rowvector units,
+    string scalar method,
+    real scalar flag_static,
+    real scalar flag_kink,
+    real scalar t_min,
+    real scalar t_max,
+    real colvector q_supp,
+    real scalar min_user,
+    real colvector gamma_grid,
+    struct xdpt2_gamma_cache rowvector cache,
+    real scalar first_new,
+    real scalar last_new,
+    struct xdpt2_stack_tpl scalar tpl,
+    real scalar tpl_st)
+{
+    real colvector new_g
+    new_g = xdpt2_nested_midpoints(gamma_grid)
+    xdpt2_append_candidates(units, new_g, method, flag_static, flag_kink,
+                             t_min, t_max, q_supp, min_user,
+                             gamma_grid, cache, first_new, last_new,
+                             tpl, tpl_st)
+}
+
+
+// Evaluate one never-before-profiled cache slice and update a running argmin.
+// Stage 1 uses each entry's shared W1; stage 2 uses one common fixed W2.
+void xdpt2_profile_update(
+    real colvector gamma_grid,
+    struct xdpt2_gamma_cache rowvector cache,
+    real scalar first,
+    real scalar last,
+    real scalar fixed_weight,
+    real matrix A_fixed,
+    real scalar best_idx,
+    real scalar best_obj,
+    real scalar best_gamma,
+    real colvector best_theta,
+    real matrix best_V,
+    real scalar obj_hi,
+    real scalar n_adm,
+    real colvector gamma_admitted)
+{
+    real scalar gl, lo, hi, ok, obj_cur, tol
+    real colvector theta_cur
+    real matrix V_cur
+
+    lo = max((1, first))
+    hi = min((rows(gamma_grid), last))
+    if (hi < lo) return
+
+    for (gl = lo; gl <= hi; gl++) {
+        if (!cache[gl].ok) continue
+        if (rows(cache[gl].dY) < 20) continue
+        if (fixed_weight) {
+            if (rows(A_fixed) != cols(*cache[gl].pZ) |
+                cols(A_fixed) != cols(*cache[gl].pZ)) continue
+            xdpt2_solve_gmm_1step_pre(cache[gl].dY, cache[gl].dW,
+                                       *cache[gl].pZ, cache[gl].ZW,
+                                       cache[gl].ZY, A_fixed,
+                                       ok, theta_cur, obj_cur, V_cur)
+        }
+        else {
+            xdpt2_solve_gmm_1step_pre(cache[gl].dY, cache[gl].dW,
+                                       *cache[gl].pZ, cache[gl].ZW,
+                                       cache[gl].ZY, *cache[gl].pW1,
+                                       ok, theta_cur, obj_cur, V_cur)
+        }
+        if (!ok) continue
+
+        n_adm = n_adm + 1
+        gamma_admitted = gamma_admitted \ gamma_grid[gl]
+        if (obj_hi >= . | obj_cur > obj_hi) obj_hi = obj_cur
+
+        if (best_idx == 0) {
+            best_idx = gl
+            best_obj = obj_cur
+            best_gamma = gamma_grid[gl]
+            best_theta = theta_cur
+            best_V = V_cur
+        }
+        else {
+            tol = xdpt2_objtol(obj_cur, best_obj, 1e-12)
+            if (obj_cur < best_obj - tol |
+                (abs(obj_cur - best_obj) <= tol &
+                 gamma_grid[gl] < best_gamma)) {
+                best_idx = gl
+                best_obj = obj_cur
+                best_gamma = gamma_grid[gl]
+                best_theta = theta_cur
+                best_V = V_cur
+            }
+        }
+    }
+}
+
+
+real scalar xdpt2_profile_is_flat(real scalar best_obj,
+                                   real scalar obj_hi,
+                                   real scalar n_adm)
+{
+    real scalar scale
+    if (best_obj >= . | obj_hi >= . | n_adm < 2) return(1)
+    scale = max((abs(best_obj), abs(obj_hi)))
+    if (scale == 0) return(1)
+    return(abs(obj_hi - best_obj) <= 1e-12 * scale)
+}
+
+
+// Stop only when the realized regime split is unchanged and the relative
+// objective improvement is negligible.
+void xdpt2_profile_stability(
+    real scalar previous_idx,
+    real scalar current_idx,
+    real scalar previous_obj,
+    real scalar current_obj,
+    real colvector gamma_grid,
+    real colvector q_split_supp,
+    real scalar search_tol,
+    real scalar same_split,
+    real scalar rel_gain,
+    real scalar converged)
+{
+    real scalar scale, nleft_old, nleft_new
+    same_split = 0
+    rel_gain = .
+    converged = 0
+    if (previous_idx <= 0 | current_idx <= 0 |
+        previous_obj >= . | current_obj >= .) return
+
+    if (rows(q_split_supp) > 0) {
+        nleft_old = sum(q_split_supp :<= gamma_grid[previous_idx])
+        nleft_new = sum(q_split_supp :<= gamma_grid[current_idx])
+        same_split = (nleft_old == nleft_new)
+    }
+    else same_split = (gamma_grid[previous_idx] == gamma_grid[current_idx])
+
+    scale = max((abs(previous_obj), abs(current_obj)))
+    if (scale == 0) rel_gain = 0
+    else {
+        rel_gain = (previous_obj - current_obj) / scale
+        if (rel_gain < 0) rel_gain = 0
+    }
+    converged = (same_split & rel_gain <= search_tol)
+}
+
+
+// v0.9.34 (C3): kink only. The kink regressor (q - gamma)1(q > gamma), and
+// with it the criterion, is continuous in gamma, and the joint variance of
+// (theta, gamma) presumes the exact minimizer; the grid argmin can be half a
+// grid step away from it. The criterion of the reported estimator (the fixed
+// W2, or each entry's W1 when fixed_weight = 0) is minimized between the
+// admitted neighbours of the grid argmin: 40 equally spaced points, then
+// rounds of 10 spanning the previous spacing on either side of the best point
+// so far, until the spacing is below 1e-6 of the bracket. Only the best point
+// is added to the estimation grid, and only if it improves on the grid argmin
+// (the rule of xdpt2_profile_update); the admitted-grid counts are unchanged.
+void xdpt2_kink_refine(struct xdpt2_unit rowvector units,
+                       string scalar method,
+                       real scalar flag_static,
+                       real scalar t_min,
+                       real scalar t_max,
+                       real colvector q_supp,
+                       real scalar min_user,
+                       real colvector anchors,
+                       real scalar fixed_weight,
+                       real matrix A_fixed,
+                       real colvector gamma_grid,
+                       struct xdpt2_gamma_cache rowvector cache,
+                       real scalar best_idx,
+                       real scalar best_obj,
+                       real scalar best_gamma,
+                       real colvector best_theta,
+                       real matrix best_V,
+                       struct xdpt2_stack_tpl scalar tpl,
+                       real scalar tpl_state)
+{
+    external real scalar xdpt_kref
+    real colvector a, tg, t_theta, t_adm
+    real scalar j, pos, lo, hi, L, U, sp, m, r, tol, tl, have
+    real scalar r_obj, r_gam, t_idx, t_obj, t_gam, t_hi, t_n
+    real scalar d_hi, d_n
+    real colvector d_adm
+    real matrix t_V
+    struct xdpt2_gamma_cache rowvector tc
+    struct xdpt2_gamma_cache scalar keep
+
+    xdpt_kref = 0
+    if (best_idx == 0 | best_gamma >= . | rows(anchors) == 0) return
+    a = select(anchors, anchors :< .)
+    if (rows(a) == 0) return
+    a = uniqrows(a)
+    pos = 0
+    for (j = 1; j <= rows(a); j++) {
+        if (a[j] == best_gamma) pos = j
+    }
+    if (pos == 0) return
+    lo = (pos > 1 ? a[pos - 1] : min(gamma_grid))
+    hi = (pos < rows(a) ? a[pos + 1] : max(gamma_grid))
+    if (!(hi > lo)) return
+
+    tol = 1e-6 * (hi - lo)
+    r_obj = best_obj
+    r_gam = best_gamma
+    have = 0
+    L = lo
+    U = hi
+    m = 40
+    for (r = 1; r <= 8; r++) {
+        sp = (U - L) / (m + 1)
+        tg = L :+ sp :* (1::m)
+        tc = xdpt2_build_gamma_cache_t(units, tg, method, flag_static, 1,
+                                        t_min, t_max, q_supp, min_user,
+                                        tpl, tpl_state, cache)
+        t_idx = 0
+        t_obj = .
+        t_gam = .
+        t_theta = J(0, 1, .)
+        t_V = J(0, 0, .)
+        t_hi = .
+        t_n = 0
+        t_adm = J(0, 1, .)
+        xdpt2_profile_update(tg, tc, 1, rows(tg), fixed_weight, A_fixed,
+                              t_idx, t_obj, t_gam, t_theta, t_V, t_hi, t_n,
+                              t_adm)
+        if (t_idx > 0) {
+            tl = xdpt2_objtol(t_obj, r_obj, 1e-12)
+            if (t_obj < r_obj - tl |
+                (abs(t_obj - r_obj) <= tl & t_gam < r_gam)) {
+                r_obj = t_obj
+                r_gam = t_gam
+                keep = tc[t_idx]
+                have = 1
+            }
+        }
+        if (sp <= tol) break
+        L = max((lo, r_gam - sp))
+        U = min((hi, r_gam + sp))
+        m = 10
+    }
+    if (!have) return
+
+    // Share Z and W1 with the grid argmin's entry when bitwise equal, as
+    // xdpt2_append_candidates does.
+    if (keep.n_rows == cache[best_idx].n_rows) {
+        if (keep.times == cache[best_idx].times &
+            keep.uid == cache[best_idx].uid &
+            rows(*keep.pZ) == rows(*cache[best_idx].pZ) &
+            cols(*keep.pZ) == cols(*cache[best_idx].pZ)) {
+            if (*keep.pZ == *cache[best_idx].pZ) {
+                keep.pZ  = cache[best_idx].pZ
+                keep.pW1 = cache[best_idx].pW1
+            }
+        }
+    }
+    gamma_grid = gamma_grid \ r_gam
+    cache = cache, keep
+    j = rows(gamma_grid)
+    d_hi = .
+    d_n = 0
+    d_adm = J(0, 1, .)
+    xdpt2_profile_update(gamma_grid, cache, j, j, fixed_weight, A_fixed,
+                          best_idx, best_obj, best_gamma, best_theta, best_V,
+                          d_hi, d_n, d_adm)
+    xdpt_kref = (best_idx == j)
+}
+
+
+// Unified point-estimation search. Adaptive mode profiles nested levels under
+// one W1, constructs W2 once, then profiles nested levels under that fixed W2.
+// Fixed mode runs one level through the same engine (used by calibration B6).
+void xdpt2_grid_search(
+    struct xdpt2_unit rowvector units,
+    real colvector gamma_grid,
+    struct xdpt2_gamma_cache rowvector cache,
+    string scalar method,
+    real scalar flag_static,
+    real scalar flag_kink,
+    real scalar t_min,
+    real scalar t_max,
+    real colvector q_supp,
+    real colvector q_split_supp,
+    real scalar min_user,
+    string scalar search_mode,
+    real scalar search_tol,
+    real scalar search_max_level,
+    real scalar n_refine,
+    real scalar best_gamma,
+    real scalar best_obj,
+    real colvector best_theta,
+    real matrix best_V,
+    real matrix best_V_influence,
+    real matrix best_A,
+    real scalar best_twostep,
+    real scalar n_adm2,
+    real scalar gamma_adm2_lo,
+    real scalar gamma_adm2_hi,
+    real colvector gamma_admitted,
+    real scalar level1_points,
+    real scalar level2_points,
+    real scalar level3_points,
+    real scalar stage1_level,
+    real scalar stage2_level,
+    real scalar stage1_points,
+    real scalar stage2_points,
+    real scalar stage1_same_split,
+    real scalar stage2_same_split,
+    real scalar stage1_rel_gain,
+    real scalar stage2_rel_gain,
+    real scalar stage1_converged,
+    real scalar stage2_converged,
+    real scalar search_hit_max,
+    real scalar W2_builds,
+    real scalar stage1_gamma,
+    real scalar stage1_obj,
+    real scalar stage2_global_gamma,
+    real scalar stage2_global_obj,
+    real scalar ref_it,
+    real scalar ref_added,
+    real scalar ref_pool_n,
+    real scalar ref_remaining,
+    real scalar ref_exhausted,
+    real scalar ref_alo,
+    real scalar ref_ahi,
+    real scalar ref_in_basin,
+    real scalar ref_neigh_rem,
+    real scalar ref_complete,
+    real scalar ref_obj_gain,
+    struct xdpt2_stack_tpl scalar tpl_main,
+    real scalar tpl_main_st)
+{
+    real scalar gl, k_W, first_new, last_new, n1, n2, n3
+    real scalar best_idx_1, best_obj_1, best_gamma_1, obj_hi1, n_prof1
+    real scalar best_idx_2, best_obj_2, best_gamma_2, obj_hi2, n_prof2
+    real scalar prev_idx, prev_obj, inv_ok
+    real colvector best_theta_1, best_theta_2, r_1
+    real matrix best_V_1, best_V_2, Omega, W_n_2
+    real colvector gamma_adm2
+
+    best_gamma = .
+    best_obj = .
+    best_A = J(0, 0, .)
+    best_twostep = 0
+    n_adm2 = .
+    gamma_adm2_lo = .
+    gamma_adm2_hi = .
+    gamma_admitted = J(0, 1, .)
+
+    level1_points = rows(gamma_grid)
+    level2_points = .
+    level3_points = .
+    stage1_level = .
+    stage2_level = .
+    stage1_points = .
+    stage2_points = .
+    stage1_same_split = .
+    stage2_same_split = .
+    stage1_rel_gain = .
+    stage2_rel_gain = .
+    stage1_converged = .
+    stage2_converged = .
+    search_hit_max = 0
+    W2_builds = 0
+    stage1_gamma = .
+    stage1_obj = .
+    stage2_global_gamma = .
+    stage2_global_obj = .
+    ref_it = 0
+    ref_added = 0
+    ref_pool_n = 0
+    ref_remaining = 0
+    ref_exhausted = (n_refine > 0 ? 0 : 1)
+    ref_alo = .
+    ref_ahi = .
+    ref_in_basin = .
+    ref_neigh_rem = (n_refine > 0 ? . : 0)
+    ref_complete = (n_refine > 0 ? . : 1)
+    ref_obj_gain = (n_refine > 0 ? . : 0)
+
+    k_W = .
+    for (gl = 1; gl <= cols(cache); gl++) {
+        if (cache[gl].ok) {
+            k_W = cols(cache[gl].dW)
+            break
+        }
+    }
+    if (k_W == .) {
+        k_W = (flag_kink ? cols(units[1].X) + 1 :
+                            2 * cols(units[1].X) + 1)
+    }
     best_theta = J(k_W, 1, 0)
     best_V = J(k_W, k_W, 0)
     best_V_influence = best_V
-    // v0.7.2: best_A = moment weight actually paired with the reported θ̂/V̂,
-    // exported for the full Arellano-Bond AR test (its Term 2 needs the
-    // estimator's influence function (G'AG)^{-1}G'A).
-    best_A = J(0, 0, 0)
-    best_twostep = 0
-    gamma_admitted = J(0, 1, .)
 
-    // ==== Unified 2-stage grid search for ALL methods (v0.7.0, A4) ====
-
-    // ======== STAGE 1: grid search with cached W_first ========
+    n1 = rows(gamma_grid)
+    n2 = n1
+    n3 = .
+    first_new = 0
+    last_new = 0
+    best_idx_1 = 0
     best_obj_1 = .
     best_gamma_1 = .
     best_theta_1 = J(k_W, 1, 0)
     best_V_1 = J(k_W, k_W, 0)
-    real scalar n_prof1, obj_hi1, prof_scale
-    n_prof1 = 0
     obj_hi1 = .
+    n_prof1 = 0
 
-    for (gl = 1; gl <= rows(gamma_grid); gl++) {
-        if (!cache[gl].ok) continue
-        if (rows(cache[gl].dY) < 20) continue
-        // v0.7.9 (C): precomputed-cross-products solver, bitwise identical
-        xdpt2_solve_gmm_1step_pre(cache[gl].dY, cache[gl].dW, *cache[gl].pZ,
-                                   cache[gl].ZW, cache[gl].ZY,
-                                   *cache[gl].pW1,
-                                   ok, theta_cur, obj_cur, V_cur)
-        if (!ok) continue
-        gamma_admitted = gamma_admitted \ gamma_grid[gl]
-        n_prof1 = n_prof1 + 1
-        if (obj_hi1 >= . | obj_cur > obj_hi1) obj_hi1 = obj_cur
-        // v0.9.12 R31: deterministic tie-break (smaller gamma) -- after
-        // refine() appends the iteration order is arbitrary, and exact
-        // objective ties (identical designs) would otherwise resolve by
-        // insertion order.
-        if (best_obj_1 >= .) {
-            best_obj_1 = obj_cur
-            best_gamma_1 = gamma_grid[gl]
-            best_theta_1 = theta_cur
-            best_V_1 = V_cur
+    // Stage 1: fixed W1.
+    xdpt2_profile_update(gamma_grid, cache, 1, n1, 0, J(0,0,.),
+                          best_idx_1, best_obj_1, best_gamma_1,
+                          best_theta_1, best_V_1, obj_hi1, n_prof1,
+                          gamma_admitted)
+
+    if (search_mode == "adaptive") {
+        prev_idx = best_idx_1
+        prev_obj = best_obj_1
+        xdpt2_append_nested_level(units, method, flag_static, flag_kink,
+                                   t_min, t_max, q_supp, min_user,
+                                   gamma_grid, cache, first_new, last_new,
+                                   tpl_main, tpl_main_st)
+        if (first_new > 0) {
+            n2 = last_new
+            xdpt2_profile_update(gamma_grid, cache, first_new, last_new,
+                                  0, J(0,0,.), best_idx_1, best_obj_1,
+                                  best_gamma_1, best_theta_1, best_V_1,
+                                  obj_hi1, n_prof1, gamma_admitted)
         }
-        else {
-            real scalar tol1
-            tol1 = xdpt2_objtol(obj_cur, best_obj_1, 1e-12)
-            if (obj_cur < best_obj_1 - tol1 |
-                (abs(obj_cur - best_obj_1) <= tol1 & gamma_grid[gl] < best_gamma_1)) {
-                best_obj_1 = obj_cur
-                best_gamma_1 = gamma_grid[gl]
-                best_theta_1 = theta_cur
-                best_V_1 = V_cur
+        level2_points = n2
+        stage1_level = 2
+        stage1_points = n2
+        xdpt2_profile_stability(prev_idx, best_idx_1, prev_obj, best_obj_1,
+                                 gamma_grid, q_split_supp, search_tol,
+                                 stage1_same_split, stage1_rel_gain,
+                                 stage1_converged)
+
+        // This flag means CAP EXHAUSTED WITHOUT STABILITY, not merely that
+        // the current level happens to equal the configured cap.
+        if (search_max_level == 2 & !stage1_converged) search_hit_max = 1
+
+        if (!stage1_converged & search_max_level >= 3) {
+            prev_idx = best_idx_1
+            prev_obj = best_obj_1
+            xdpt2_append_nested_level(units, method, flag_static, flag_kink,
+                                       t_min, t_max, q_supp, min_user,
+                                       gamma_grid, cache, first_new, last_new,
+                                       tpl_main, tpl_main_st)
+            if (first_new > 0) {
+                n3 = last_new
+                xdpt2_profile_update(gamma_grid, cache, first_new, last_new,
+                                      0, J(0,0,.), best_idx_1, best_obj_1,
+                                      best_gamma_1, best_theta_1, best_V_1,
+                                      obj_hi1, n_prof1, gamma_admitted)
             }
+            else n3 = n2
+            level3_points = n3
+            stage1_level = 3
+            stage1_points = n3
+            xdpt2_profile_stability(prev_idx, best_idx_1, prev_obj,
+                                     best_obj_1, gamma_grid, q_split_supp,
+                                     search_tol, stage1_same_split,
+                                     stage1_rel_gain, stage1_converged)
+            if (!stage1_converged) search_hit_max = 1
         }
     }
-
-    if (best_gamma_1 == . | n_prof1 < 2) return  // no searchable profile
-    prof_scale = max((abs(best_obj_1), abs(obj_hi1)))
-    if (abs(obj_hi1 - best_obj_1) <= 1e-12 * prof_scale) {
-        // A numerically flat profiled criterion does not identify gamma;
-        // choosing the first grid point would be an arbitrary tie-break.
-        return
+    else {
+        stage1_level = 1
+        stage1_points = n1
     }
 
-    // ======== STAGE 2: compute W_n_2 from stage-1 residuals ========
-    // Find cache index for best_gamma_1
-    real scalar idx_1
-    idx_1 = 0
-    for (gl = 1; gl <= rows(gamma_grid); gl++) {
-        if (gamma_grid[gl] == best_gamma_1) {
-            idx_1 = gl
-            gl = rows(gamma_grid) + 1
-        }
-    }
-    if (idx_1 == 0 | !cache[idx_1].ok) {
-        errprintf("xtdpthresh: stage-1 gamma was not found in its estimation cache\n")
-        exit(498)
-    }
-    r_1 = cache[idx_1].dY - cache[idx_1].dW * best_theta_1
-    Omega = xdpt2_build_cluster_omega(*cache[idx_1].pZ, r_1, cache[idx_1].uid)
+    if (best_idx_1 == 0 |
+        xdpt2_profile_is_flat(best_obj_1, obj_hi1, n_prof1)) return
+
+    stage1_gamma = best_gamma_1
+    stage1_obj = best_obj_1
+
+    // W2 is constructed exactly once after stage 1 has stopped.
+    r_1 = cache[best_idx_1].dY -
+          cache[best_idx_1].dW * best_theta_1
+    Omega = xdpt2_build_cluster_omega(*cache[best_idx_1].pZ, r_1,
+                                       cache[best_idx_1].uid)
+    W2_builds = 1
     xdpt2_syminv(Omega, inv_ok, W_n_2)
     if (!inv_ok) {
+        // v0.9.34 (C3): kink -- the one-step criterion is minimized between
+        // the grid neighbours; Omega is then taken at the reported estimate.
+        if (flag_kink) {
+            xdpt2_kink_refine(units, method, flag_static, t_min, t_max,
+                               q_supp, min_user, gamma_admitted, 0,
+                               J(0, 0, .), gamma_grid, cache, best_idx_1,
+                               best_obj_1, best_gamma_1, best_theta_1,
+                               best_V_1, tpl_main, tpl_main_st)
+            r_1 = cache[best_idx_1].dY -
+                  cache[best_idx_1].dW * best_theta_1
+            Omega = xdpt2_build_cluster_omega(*cache[best_idx_1].pZ, r_1,
+                                               cache[best_idx_1].uid)
+        }
         best_gamma = best_gamma_1
         best_obj = best_obj_1
         best_theta = best_theta_1
-        real matrix V_stage1_cr
-        V_stage1_cr = xdpt2_gmm_sandwich(cache[idx_1].ZW,
-                                          *cache[idx_1].pW1, Omega,
-                                          cache[idx_1].n_rows)
-        if (rows(V_stage1_cr) > 0) best_V = V_stage1_cr
-        else {
+        best_A = *cache[best_idx_1].pW1
+        best_V = xdpt2_gmm_sandwich(cache[best_idx_1].ZW, best_A, Omega,
+                                     cache[best_idx_1].n_rows)
+        if (rows(best_V) == 0) {
             errprintf("xtdpthresh: cluster-robust variance failed on the one-step fallback\n")
             exit(498)
         }
         best_V_influence = best_V
-        best_A = *cache[idx_1].pW1
+        // v0.9.32: kink model, joint (theta, gamma) variance; v0.9.35: the
+        // jump model too, with the kernel derivative column.
+        if (flag_kink) {
+            xdpt2_kink_apply_joint(best_V,
+                xdpt2_kink_joint_V(cache[best_idx_1].ZW,
+                    xdpt2_kink_xg(units, best_gamma_1, method, flag_static,
+                                  t_min, t_max,
+                                  best_theta_1[rows(best_theta_1)],
+                                  cache[best_idx_1].dY,
+                                  cache[best_idx_1].times,
+                                  cache[best_idx_1].uid),
+                    *cache[best_idx_1].pZ, best_A, Omega,
+                    cache[best_idx_1].n_rows))
+        }
+        else {
+            xdpt2_kink_apply_joint(best_V,
+                xdpt2_kink_joint_V(cache[best_idx_1].ZW,
+                    xdpt2_jump_xg(units, best_gamma_1, best_theta_1, method,
+                                  flag_static, t_min, t_max,
+                                  cache[best_idx_1].dY, cache[best_idx_1].dW,
+                                  cache[best_idx_1].times,
+                                  cache[best_idx_1].uid, tpl_main,
+                                  tpl_main_st),
+                    *cache[best_idx_1].pZ, best_A, Omega,
+                    cache[best_idx_1].n_rows))
+        }
+        stage2_level = 0
+        stage2_points = 0
+        stage2_same_split = 0
+        stage2_rel_gain = 0
+        stage2_converged = 0
+        if (n_refine > 0) {
+            ref_exhausted = 0
+            ref_complete = 0
+        }
         return
     }
-    // ======== STAGE 2 GRID: solve with W_n_2 fixed (cached) ========
-    real scalar best_obj_2, best_gamma_2
-    real colvector best_theta_2
-    real matrix best_V_2
+
+    // Stage 2: one fixed W2.
+    best_idx_2 = 0
     best_obj_2 = .
     best_gamma_2 = .
     best_theta_2 = J(k_W, 1, 0)
     best_V_2 = J(k_W, k_W, 0)
-    real scalar obj_hi2
     obj_hi2 = .
-    n_adm2 = 0
-    gamma_adm2_lo = .
-    gamma_adm2_hi = .
+    n_prof2 = 0
+    gamma_adm2 = J(0, 1, .)
 
-    for (gl = 1; gl <= rows(gamma_grid); gl++) {
-        if (!cache[gl].ok) continue
-        if (rows(cache[gl].dY) < 20) continue
-        if (cols(*cache[gl].pZ) != cols(W_n_2)) continue
-        // v0.7.9 (C): precomputed-cross-products solver, bitwise identical
-        xdpt2_solve_gmm_1step_pre(cache[gl].dY, cache[gl].dW, *cache[gl].pZ,
-                                   cache[gl].ZW, cache[gl].ZY, W_n_2,
-                                   ok, theta_cur, obj_cur, V_cur)
-        if (!ok) continue
-        n_adm2 = n_adm2 + 1
-        if (obj_hi2 >= . | obj_cur > obj_hi2) obj_hi2 = obj_cur
-        // v0.9.11 R30: refine() appends to gamma_grid, so iteration order
-        // is no longer ascending -- track the span order-free.
-        if (gamma_adm2_lo == . | gamma_grid[gl] < gamma_adm2_lo) {
-            gamma_adm2_lo = gamma_grid[gl]
-        }
-        if (gamma_adm2_hi == . | gamma_grid[gl] > gamma_adm2_hi) {
-            gamma_adm2_hi = gamma_grid[gl]
-        }
-        // v0.9.12 R31: deterministic tie-break (see stage 1).
-        if (best_obj_2 >= .) {
-            best_obj_2 = obj_cur
-            best_gamma_2 = gamma_grid[gl]
-            best_theta_2 = theta_cur
-            best_V_2 = V_cur
-        }
-        else {
-            real scalar tol2
-            tol2 = xdpt2_objtol(obj_cur, best_obj_2, 1e-12)
-            if (obj_cur < best_obj_2 - tol2 |
-                (abs(obj_cur - best_obj_2) <= tol2 & gamma_grid[gl] < best_gamma_2)) {
-                best_obj_2 = obj_cur
-                best_gamma_2 = gamma_grid[gl]
-                best_theta_2 = theta_cur
-                best_V_2 = V_cur
+    xdpt2_profile_update(gamma_grid, cache, 1, n1, 1, W_n_2,
+                          best_idx_2, best_obj_2, best_gamma_2,
+                          best_theta_2, best_V_2, obj_hi2, n_prof2,
+                          gamma_adm2)
+
+    if (search_mode == "adaptive") {
+        prev_idx = best_idx_2
+        prev_obj = best_obj_2
+        xdpt2_profile_update(gamma_grid, cache, n1 + 1, n2, 1, W_n_2,
+                              best_idx_2, best_obj_2, best_gamma_2,
+                              best_theta_2, best_V_2, obj_hi2, n_prof2,
+                              gamma_adm2)
+        stage2_level = 2
+        stage2_points = n2
+        xdpt2_profile_stability(prev_idx, best_idx_2, prev_obj, best_obj_2,
+                                 gamma_grid, q_split_supp, search_tol,
+                                 stage2_same_split, stage2_rel_gain,
+                                 stage2_converged)
+
+        // Stage 2 may need a denser grid than stage 1 because its basin can
+        // differ. It may not stop on a grid coarser than the one that selected
+        // the residuals used to construct W2. This also guarantees that every
+        // cached point retained for inference was evaluated under fixed W2.
+        if (search_max_level == 2 & !stage2_converged) search_hit_max = 1
+
+        if (search_max_level >= 3 &
+            (!stage2_converged | stage1_level == 3)) {
+            if (n3 >= .) {
+                xdpt2_append_nested_level(units, method, flag_static,
+                                           flag_kink, t_min, t_max, q_supp,
+                                           min_user, gamma_grid, cache,
+                                           first_new, last_new,
+                                           tpl_main, tpl_main_st)
+                if (first_new > 0) n3 = last_new
+                else n3 = n2
+                level3_points = n3
             }
+            prev_idx = best_idx_2
+            prev_obj = best_obj_2
+            xdpt2_profile_update(gamma_grid, cache, n2 + 1, n3, 1, W_n_2,
+                                  best_idx_2, best_obj_2, best_gamma_2,
+                                  best_theta_2, best_V_2, obj_hi2, n_prof2,
+                                  gamma_adm2)
+            stage2_level = 3
+            stage2_points = n3
+            xdpt2_profile_stability(prev_idx, best_idx_2, prev_obj,
+                                     best_obj_2, gamma_grid, q_split_supp,
+                                     search_tol, stage2_same_split,
+                                     stage2_rel_gain, stage2_converged)
+            if (!stage2_converged) search_hit_max = 1
         }
     }
-
-    if (best_gamma_2 < . & n_adm2 >= 2) {
-        prof_scale = max((abs(best_obj_2), abs(obj_hi2)))
-        if (abs(obj_hi2 - best_obj_2) <= 1e-12 * prof_scale) best_gamma_2 = .
+    else {
+        stage2_level = 1
+        stage2_points = n1
     }
-    else best_gamma_2 = .
 
-    if (best_gamma_2 == .) {
-        // Stage 2 failed, so the reported estimator remains the stage-1
-        // fixed-W_first estimator. Keep that actual weight and use its full
-        // cluster sandwich rather than attaching W_n_2 to an unrelated theta.
+    n_adm2 = n_prof2
+    if (rows(gamma_adm2) > 0) {
+        gamma_adm2_lo = min(gamma_adm2)
+        gamma_adm2_hi = max(gamma_adm2)
+    }
+    if (best_idx_2 == 0 |
+        xdpt2_profile_is_flat(best_obj_2, obj_hi2, n_prof2)) {
+        // v0.9.34 (C3): as above for the one-step fallback
+        if (flag_kink) {
+            xdpt2_kink_refine(units, method, flag_static, t_min, t_max,
+                               q_supp, min_user, gamma_admitted, 0,
+                               J(0, 0, .), gamma_grid, cache, best_idx_1,
+                               best_obj_1, best_gamma_1, best_theta_1,
+                               best_V_1, tpl_main, tpl_main_st)
+            r_1 = cache[best_idx_1].dY -
+                  cache[best_idx_1].dW * best_theta_1
+            Omega = xdpt2_build_cluster_omega(*cache[best_idx_1].pZ, r_1,
+                                               cache[best_idx_1].uid)
+        }
         best_gamma = best_gamma_1
         best_obj = best_obj_1
         best_theta = best_theta_1
-        real matrix V_1_cr
-        // v0.7.9 (C): reuse the stored cross product (bitwise identical value)
-        best_A = *cache[idx_1].pW1
-        V_1_cr = xdpt2_gmm_sandwich(cache[idx_1].ZW, best_A, Omega,
-                                     cache[idx_1].n_rows)
-        if (rows(V_1_cr) > 0) best_V = V_1_cr
-        else {
+        best_A = *cache[best_idx_1].pW1
+        best_V = xdpt2_gmm_sandwich(cache[best_idx_1].ZW, best_A, Omega,
+                                     cache[best_idx_1].n_rows)
+        if (rows(best_V) == 0) {
             errprintf("xtdpthresh: cluster-robust variance failed on the one-step fallback\n")
             exit(498)
         }
         best_V_influence = best_V
-    }
-    else {
-        best_gamma = best_gamma_2
-        best_obj = best_obj_2
-        best_theta = best_theta_2
-        best_A = W_n_2
-        best_twostep = 1
-        // BUG 2 FIX: recompute V with cluster-robust Omega at best_gamma_2
-        // instead of using 1-step V from xdpt2_solve_gmm_1step. This matches
-        // FOD/system path which returns cluster-robust V via xdpt2_solve_gmm.
-        real scalar idx_2
-        real colvector r_2_final
-        real matrix Omega_2, best_V_cr
-        idx_2 = 0
-        for (gl = 1; gl <= rows(gamma_grid); gl++) {
-            if (gamma_grid[gl] == best_gamma_2) {
-                idx_2 = gl
-                gl = rows(gamma_grid) + 1
-            }
+        // v0.9.32: kink model, joint (theta, gamma) variance; v0.9.35: the
+        // jump model too, with the kernel derivative column.
+        if (flag_kink) {
+            xdpt2_kink_apply_joint(best_V,
+                xdpt2_kink_joint_V(cache[best_idx_1].ZW,
+                    xdpt2_kink_xg(units, best_gamma_1, method, flag_static,
+                                  t_min, t_max,
+                                  best_theta_1[rows(best_theta_1)],
+                                  cache[best_idx_1].dY,
+                                  cache[best_idx_1].times,
+                                  cache[best_idx_1].uid),
+                    *cache[best_idx_1].pZ, best_A, Omega,
+                    cache[best_idx_1].n_rows))
         }
-        if (idx_2 > 0 & cache[idx_2].ok) {
-            r_2_final = cache[idx_2].dY - cache[idx_2].dW * best_theta_2
-            Omega_2 = xdpt2_build_cluster_omega(*cache[idx_2].pZ, r_2_final,
-                                                 cache[idx_2].uid)
-            best_V_cr = xdpt2_gmm_sandwich(cache[idx_2].ZW, best_A, Omega_2,
-                                            cache[idx_2].n_rows)
-            if (rows(best_V_cr) > 0) best_V = best_V_cr
+        else {
+            xdpt2_kink_apply_joint(best_V,
+                xdpt2_kink_joint_V(cache[best_idx_1].ZW,
+                    xdpt2_jump_xg(units, best_gamma_1, best_theta_1, method,
+                                  flag_static, t_min, t_max,
+                                  cache[best_idx_1].dY, cache[best_idx_1].dW,
+                                  cache[best_idx_1].times,
+                                  cache[best_idx_1].uid, tpl_main,
+                                  tpl_main_st),
+                    *cache[best_idx_1].pZ, best_A, Omega,
+                    cache[best_idx_1].n_rows))
+        }
+        stage2_converged = 0
+        if (n_refine > 0) {
+            ref_exhausted = 0
+            ref_complete = 0
+        }
+        return
+    }
+
+    // Save the GLOBAL stage-2 solution before any local support search.
+    // Every candidate below is evaluated under this same W2; W2 is never
+    // reconstructed after the stage-1 residuals have selected it.
+    stage2_global_gamma = best_gamma_2
+    stage2_global_obj = best_obj_2
+    if (W2_builds != 1) {
+        errprintf("xtdpthresh: internal two-step error: W2 was not constructed exactly once\n")
+        exit(498)
+    }
+
+    // Final jump-only local refinement.  The pool is fixed once from the
+    // two adjacent W2-admitted GLOBAL anchors around the stage-2 argmin.
+    // Up to 30 never-before-evaluated transformed-support points are added
+    // per iteration.  Cache and objective values only expand; no previous
+    // point is recomputed and the common W2 remains fixed.
+    if (n_refine > 0) {
+        real scalar ref_pos, ref_j, ref_first, ref_last
+        real scalar ref_grid_lo0, ref_grid_hi0, ref_scale, ref_tol
+        real scalar ref_final_pos, ref_nlo, ref_nhi
+        real colvector ref_supp, ref_anchors, ref_pool, ref_cand
+        real colvector ref_keep, ref_ix, ref_anchors_final
+
+        ref_grid_lo0 = min(gamma_grid)
+        ref_grid_hi0 = max(gamma_grid)
+        ref_supp = q_split_supp
+        if (rows(ref_supp) > 0) {
+            ref_supp = select(ref_supp, ref_supp :< .)
+            if (rows(ref_supp) > 0) ref_supp = uniqrows(sort(ref_supp, 1))
+        }
+        ref_anchors = gamma_adm2
+        if (rows(ref_anchors) > 0) {
+            ref_anchors = uniqrows(sort(ref_anchors, 1))
+        }
+
+        ref_pos = 0
+        for (ref_j = 1; ref_j <= rows(ref_anchors); ref_j++) {
+            if (ref_anchors[ref_j] == best_gamma_2) ref_pos = ref_j
+        }
+
+        if (rows(ref_supp) == 0 | rows(ref_anchors) < 2 | ref_pos == 0) {
+            ref_remaining = .
+            ref_exhausted = 0
+            ref_complete = 0
+        }
+        else {
+            ref_alo = (ref_pos > 1 ? ref_anchors[ref_pos - 1] : ref_grid_lo0)
+            ref_ahi = (ref_pos < rows(ref_anchors) ?
+                       ref_anchors[ref_pos + 1] : ref_grid_hi0)
+            ref_pool = select(ref_supp,
+                              (ref_supp :> ref_alo) :& (ref_supp :< ref_ahi))
+            if (rows(ref_pool) > 0) {
+                ref_pool = uniqrows(sort(ref_pool, 1))
+                ref_keep = J(rows(ref_pool), 1, 1)
+                for (ref_j = 1; ref_j <= rows(ref_pool); ref_j++) {
+                    if (sum(gamma_grid :== ref_pool[ref_j]) > 0) {
+                        ref_keep[ref_j] = 0
+                    }
+                }
+                if (sum(ref_keep) > 0) ref_pool = select(ref_pool, ref_keep)
+                else ref_pool = J(0, 1, .)
+            }
+            ref_pool_n = rows(ref_pool)
+
+            while (ref_it < n_refine) {
+                ref_cand = ref_pool
+                if (rows(ref_cand) > 0) {
+                    ref_keep = J(rows(ref_cand), 1, 1)
+                    for (ref_j = 1; ref_j <= rows(ref_cand); ref_j++) {
+                        if (sum(gamma_grid :== ref_cand[ref_j]) > 0) {
+                            ref_keep[ref_j] = 0
+                        }
+                    }
+                    if (sum(ref_keep) > 0) ref_cand = select(ref_cand, ref_keep)
+                    else ref_cand = J(0, 1, .)
+                }
+                if (rows(ref_cand) == 0) break
+
+                if (rows(ref_cand) > 30) {
+                    // Endpoint-inclusive, deterministic coverage of the
+                    // currently remaining pool; at most 30 additions/round.
+                    ref_ix = floor((0::29) :*
+                             ((rows(ref_cand) - 1) / 29)) :+ 1
+                    ref_ix = uniqrows(ref_ix)
+                    ref_cand = ref_cand[ref_ix]
+                }
+
+                xdpt2_append_candidates(units, ref_cand, method,
+                                         flag_static, flag_kink,
+                                         t_min, t_max, q_supp, min_user,
+                                         gamma_grid, cache,
+                                         ref_first, ref_last,
+                                         tpl_main, tpl_main_st)
+                if (ref_first == 0) break
+                ref_added = ref_added + ref_last - ref_first + 1
+                ref_it = ref_it + 1
+                xdpt2_profile_update(gamma_grid, cache, ref_first, ref_last,
+                                      1, W_n_2, best_idx_2, best_obj_2,
+                                      best_gamma_2, best_theta_2, best_V_2,
+                                      obj_hi2, n_prof2, gamma_adm2)
+            }
+
+            ref_remaining = 0
+            for (ref_j = 1; ref_j <= rows(ref_pool); ref_j++) {
+                if (sum(gamma_grid :== ref_pool[ref_j]) == 0) {
+                    ref_remaining = ref_remaining + 1
+                }
+            }
+            ref_exhausted = (ref_remaining == 0)
+            ref_in_basin = (best_gamma_2 >= ref_alo & best_gamma_2 <= ref_ahi)
+
+            // A stricter local diagnostic: count transformed-support values
+            // still unevaluated between the nearest W2-admitted points around
+            // the final argmin.  Failed but attempted candidates count as
+            // evaluated, matching the historical refine() contract.
+            ref_anchors_final = gamma_adm2
+            if (rows(ref_anchors_final) > 0) {
+                ref_anchors_final = uniqrows(sort(ref_anchors_final, 1))
+            }
+            ref_final_pos = 0
+            for (ref_j = 1; ref_j <= rows(ref_anchors_final); ref_j++) {
+                if (ref_anchors_final[ref_j] == best_gamma_2) {
+                    ref_final_pos = ref_j
+                }
+            }
+            if (rows(ref_anchors_final) < 2 | ref_final_pos == 0) {
+                ref_neigh_rem = .
+                ref_complete = 0
+            }
             else {
-                errprintf("xtdpthresh: cluster-robust variance failed at the final two-step estimate\n")
+                ref_nlo = (ref_final_pos > 1 ?
+                           ref_anchors_final[ref_final_pos - 1] : ref_grid_lo0)
+                ref_nhi = (ref_final_pos < rows(ref_anchors_final) ?
+                           ref_anchors_final[ref_final_pos + 1] : ref_grid_hi0)
+                ref_neigh_rem = 0
+                for (ref_j = 1; ref_j <= rows(ref_supp); ref_j++) {
+                    if (ref_supp[ref_j] <= ref_nlo |
+                        ref_supp[ref_j] >= ref_nhi) continue
+                    if (sum(gamma_grid :== ref_supp[ref_j]) == 0) {
+                        ref_neigh_rem = ref_neigh_rem + 1
+                    }
+                }
+                ref_complete = (ref_exhausted & ref_neigh_rem == 0)
+            }
+
+            ref_scale = max((abs(stage2_global_obj), abs(best_obj_2)))
+            if (ref_scale == 0) ref_obj_gain = 0
+            else ref_obj_gain = (stage2_global_obj - best_obj_2) / ref_scale
+            if (ref_obj_gain < 0) ref_obj_gain = 0
+
+            // Expanding a candidate set under one fixed objective cannot make
+            // its minimum worse. Treat any violation as an internal error.
+            ref_tol = xdpt2_objtol(best_obj_2, stage2_global_obj, 1e-10)
+            if (best_obj_2 > stage2_global_obj + ref_tol) {
+                errprintf("xtdpthresh: internal refinement error: fixed-W2 objective increased\n")
                 exit(498)
             }
-            // AR influence terms must stay paired with the uncorrected
-            // sandwich and A. A reporting-only Windmeijer replacement of V
-            // without the matching covariance term would be incoherent.
-            best_V_influence = best_V
+        }
+    }
 
-            // v0.7.13 (audit R4, C1): opt-in Windmeijer (2005) correction.
-            // Computed ONCE here at the final two-step estimate; the grid
-            // search and the bootstrap (one-step) are untouched, so the
-            // option has no runtime cost beyond a few matrix products.
-            external real scalar xdpt_vce_wind, xdpt_wind_applied
-            if (xdpt_vce_wind == 1) {
-                real colvector gbar2
-                real matrix V_wind
-                gbar2 = cache[idx_2].ZY - cache[idx_2].ZW * best_theta_2
-                // v0.9.9 R26: expose the EXACT correction inputs under
-                // exportgmm so the certification script can recompute the
-                // correction independently (fresh analytic + finite
-                // differences) and compare component by component.
-                external real scalar xdpt_expg
-                if (xdpt_expg == 1) {
-                    external real matrix xdpt_w_ZW1, xdpt_w_X1, xdpt_w_Z, xdpt_w_Om1
-                    external real matrix xdpt_w_W1, xdpt_w_W2, xdpt_w_ZW2
-                    external real colvector xdpt_w_uid, xdpt_w_r1, xdpt_w_gbar2
-                    external real scalar xdpt_w_n
-                    xdpt_w_ZW1 = cache[idx_1].ZW
-                    xdpt_w_X1 = cache[idx_1].dW
-                    xdpt_w_Z = *cache[idx_1].pZ
-                    xdpt_w_Om1 = Omega
-                    xdpt_w_W1 = *cache[idx_1].pW1
-                    xdpt_w_W2 = W_n_2
-                    xdpt_w_ZW2 = cache[idx_2].ZW
-                    xdpt_w_uid = cache[idx_1].uid
-                    xdpt_w_r1 = r_1
-                    xdpt_w_gbar2 = gbar2
-                    xdpt_w_n = cache[idx_2].n_rows
-                }
-                V_wind = xdpt2_windmeijer(cache[idx_1].ZW, cache[idx_1].dW,
-                                           *cache[idx_1].pZ, cache[idx_1].uid,
-                                           r_1, Omega, *cache[idx_1].pW1,
-                                           W_n_2, cache[idx_2].ZW, gbar2,
-                                           cache[idx_2].n_rows)
-                if (rows(V_wind) > 0) {
-                    best_V = V_wind
-                    xdpt_wind_applied = 1
+    // v0.9.34 (C3): kink -- the fixed-W2 profile is minimized between the
+    // grid neighbours of the grid argmin (refine() is jump-only).
+    if (flag_kink) {
+        xdpt2_kink_refine(units, method, flag_static, t_min, t_max, q_supp,
+                           min_user, gamma_adm2, 1, W_n_2, gamma_grid, cache,
+                           best_idx_2, best_obj_2, best_gamma_2,
+                           best_theta_2, best_V_2, tpl_main, tpl_main_st)
+    }
+
+    // Refresh the two-step admission diagnostics after local candidates.
+    n_adm2 = n_prof2
+    if (rows(gamma_adm2) > 0) {
+        gamma_adm2_lo = min(gamma_adm2)
+        gamma_adm2_hi = max(gamma_adm2)
+    }
+
+    // Final two-step fit and conditional cluster-robust VCE.
+    best_gamma = best_gamma_2
+    best_obj = best_obj_2
+    best_theta = best_theta_2
+    best_A = W_n_2
+    best_twostep = 1
+
+    real colvector r_2_final
+    real matrix Omega_2, best_V_cr
+    r_2_final = cache[best_idx_2].dY -
+                cache[best_idx_2].dW * best_theta_2
+    Omega_2 = xdpt2_build_cluster_omega(*cache[best_idx_2].pZ, r_2_final,
+                                         cache[best_idx_2].uid)
+    best_V_cr = xdpt2_gmm_sandwich(cache[best_idx_2].ZW, best_A, Omega_2,
+                                    cache[best_idx_2].n_rows)
+    if (rows(best_V_cr) == 0) {
+        errprintf("xtdpthresh: cluster-robust variance failed at the final two-step estimate\n")
+        exit(498)
+    }
+    best_V = best_V_cr
+    best_V_influence = best_V
+
+    // Reporting-only Windmeijer correction; W2 is not rebuilt.
+    external real scalar xdpt_vce_wind, xdpt_wind_applied
+    if (xdpt_vce_wind == 1) {
+        real colvector gbar2
+        real matrix V_wind
+        gbar2 = cache[best_idx_2].ZY -
+                cache[best_idx_2].ZW * best_theta_2
+        external real scalar xdpt_expg
+        if (xdpt_expg == 1) {
+            external real matrix xdpt_w_ZW1, xdpt_w_X1, xdpt_w_Z, xdpt_w_Om1
+            external real matrix xdpt_w_W1, xdpt_w_W2, xdpt_w_ZW2
+            external real colvector xdpt_w_uid, xdpt_w_r1, xdpt_w_gbar2
+            external real scalar xdpt_w_n
+            xdpt_w_ZW1 = cache[best_idx_1].ZW
+            xdpt_w_X1 = cache[best_idx_1].dW
+            xdpt_w_Z = *cache[best_idx_1].pZ
+            xdpt_w_Om1 = Omega
+            xdpt_w_W1 = *cache[best_idx_1].pW1
+            xdpt_w_W2 = W_n_2
+            xdpt_w_ZW2 = cache[best_idx_2].ZW
+            xdpt_w_uid = cache[best_idx_1].uid
+            xdpt_w_r1 = r_1
+            xdpt_w_gbar2 = gbar2
+            xdpt_w_n = cache[best_idx_2].n_rows
+        }
+        V_wind = xdpt2_windmeijer(cache[best_idx_1].ZW,
+                                   cache[best_idx_1].dW,
+                                   *cache[best_idx_1].pZ,
+                                   cache[best_idx_1].uid, r_1, Omega,
+                                   *cache[best_idx_1].pW1, W_n_2,
+                                   cache[best_idx_2].ZW, gbar2,
+                                   cache[best_idx_2].n_rows)
+        // v0.9.35 (R2): only a positive semidefinite corrected variance
+        if (rows(V_wind) > 0) {
+            if (xdpt2_psd_ok(V_wind)) {
+                best_V = V_wind
+                xdpt_wind_applied = 1
+            }
+        }
+    }
+
+    // v0.9.32: kink model, joint (theta, gamma) variance of the reported type
+    // (robust sandwich, or Windmeijer-corrected when that correction was
+    // applied above). v0.9.35: the jump model too (xdpt2_jump_xg).
+    if (1) {
+        real colvector xg_2, xg_1, gbar2_k
+        real matrix V_joint
+        external real matrix xdpt_V_joint_full
+        if (flag_kink) {
+            xg_2 = xdpt2_kink_xg(units, best_gamma_2, method, flag_static,
+                                 t_min, t_max, best_theta_2[rows(best_theta_2)],
+                                 cache[best_idx_2].dY, cache[best_idx_2].times,
+                                 cache[best_idx_2].uid)
+        }
+        else {
+            xg_2 = xdpt2_jump_xg(units, best_gamma_2, best_theta_2, method,
+                                 flag_static, t_min, t_max,
+                                 cache[best_idx_2].dY, cache[best_idx_2].dW,
+                                 cache[best_idx_2].times,
+                                 cache[best_idx_2].uid, tpl_main, tpl_main_st)
+        }
+        if (xdpt_wind_applied == 1) {
+            if (flag_kink) {
+                xg_1 = xdpt2_kink_xg(units, best_gamma_1, method, flag_static,
+                                     t_min, t_max,
+                                     best_theta_1[rows(best_theta_1)],
+                                     cache[best_idx_1].dY,
+                                     cache[best_idx_1].times,
+                                     cache[best_idx_1].uid)
+            }
+            else {
+                xg_1 = xdpt2_jump_xg(units, best_gamma_1, best_theta_1, method,
+                                     flag_static, t_min, t_max,
+                                     cache[best_idx_1].dY,
+                                     cache[best_idx_1].dW,
+                                     cache[best_idx_1].times,
+                                     cache[best_idx_1].uid, tpl_main,
+                                     tpl_main_st)
+            }
+            gbar2_k = cache[best_idx_2].ZY -
+                      cache[best_idx_2].ZW * best_theta_2
+            V_joint = xdpt2_kink_joint_wind(cache[best_idx_1].ZW,
+                                            cache[best_idx_1].dW, xg_1,
+                                            *cache[best_idx_1].pZ,
+                                            cache[best_idx_1].uid, r_1, Omega,
+                                            *cache[best_idx_1].pW1, W_n_2,
+                                            cache[best_idx_2].ZW, xg_2,
+                                            gbar2_k,
+                                            cache[best_idx_2].n_rows)
+            // v0.9.35 (R2): a corrected joint variance that is not positive
+            // semidefinite is not reported: both corrections are dropped and
+            // the cluster-robust variances are used (e(vce_applied) = 0), so
+            // that e(V), e(V_cond), and the AR statistics stay consistent
+            if (rows(V_joint) > 0) {
+                if (!xdpt2_psd_ok(xdpt_V_joint_full)) {
+                    best_V = best_V_cr
+                    xdpt_wind_applied = 0
+                    V_joint = xdpt2_kink_joint_V(cache[best_idx_2].ZW, xg_2,
+                                                 *cache[best_idx_2].pZ, best_A,
+                                                 Omega_2,
+                                                 cache[best_idx_2].n_rows)
                 }
             }
         }
         else {
-            errprintf("xtdpthresh: final two-step gamma was not found in its estimation cache\n")
-            exit(498)
+            V_joint = xdpt2_kink_joint_V(cache[best_idx_2].ZW, xg_2,
+                                         *cache[best_idx_2].pZ, best_A,
+                                         Omega_2, cache[best_idx_2].n_rows)
         }
+        xdpt2_kink_apply_joint(best_V, V_joint)
     }
 }
+
 
 // v0.8.0 (audit R5, finding #2 FIX): residual-bootstrap PERCENTILE CIs for
 // the slope coefficients that account for THRESHOLD-SEARCH variability --
@@ -4345,6 +6430,17 @@ real matrix xdpt2_coef_bootstrap(struct xdpt2_gamma_cache rowvector cache,
     real scalar idx, gl, b, n_u, n_rows, k, mb, gsel, j
     real colvector fastl, resid, fit, col_ok, okl, uid_draw
     real matrix ETA, Ymat, OBJ, ZYall, TH, out
+    // v0.9.30: centering flag read once for the per-draw cluster Omega
+    // (xdpt2_build_cluster_omega_c), instead of an -external- bind per draw.
+    external real scalar xdpt_center
+    real scalar cb_center
+    cb_center = xdpt_center
+    // v0.9.31: the reported stage 1 searched the initial grid only; refine()
+    // points (appended after it) enter stage 2 alone, so the replay's stage-1
+    // set is restricted the same way. Before, it also searched them.
+    external real scalar xdpt_n_stage1
+    real scalar cb_n1
+    cb_n1 = (xdpt_n_stage1 < . ? xdpt_n_stage1 : cols(cache))
 
     B_eff = 0
     // v0.8.3 R12 (#1/#2): out-arg defaults -- valid_out=1 is set ONLY once
@@ -4397,7 +6493,7 @@ real matrix xdpt2_coef_bootstrap(struct xdpt2_gamma_cache rowvector cache,
             n_skip = n_skip + 1
             continue
         }
-        fastl = fastl \ gl
+        if (gl <= cb_n1) fastl = fastl \ gl
     }
     if (rows(fastl) == 0) {
         if (xdpt_verbose) printf("  [coefboot] bail: no fast-path grid entries\n")
@@ -4451,11 +6547,9 @@ real matrix xdpt2_coef_bootstrap(struct xdpt2_gamma_cache rowvector cache,
     ch = n_boot
         ETA = J(n_u, ch, 0)
         for (b = 1; b <= ch; b++) ETA[., b] = xdpt2_mammen_draw(n_u)
-        Ymat = fit :+ (resid :* ETA[uid_draw, .])
-        OBJ = J(rows(fastl), ch, .)
-        for (gl = 1; gl <= rows(fastl); gl++) {
-            OBJ[gl, .] = xdpt2_fast_obj_batch(Ymat, cache[fastl[gl]])
-        }
+        Ymat = fit :+ resid :* ETA[uid_draw, .]
+        // v0.9.31: objectives by the split (xdpt2_fast_obj_split_list)
+        OBJ = xdpt2_fast_obj_split_list(fit, resid, uid_draw, ETA, cache, fastl)
         // Z is gamma-invariant (bitwise): one batched cross product serves
         // every grid point.
         ZYall = (*cache[idx].pZ)' * Ymat / n_rows
@@ -4500,7 +6594,8 @@ real matrix xdpt2_coef_bootstrap(struct xdpt2_gamma_cache rowvector cache,
             }
             // ---- stage 1 residuals at gamma1* ----
             r1_b = Ymat[., b] - cache[gsel].dW * (cache[gsel].C_g * ZYall[., b])
-            Om_b = xdpt2_build_cluster_omega(*cache[gsel].pZ, r1_b, cache[gsel].uid)
+            Om_b = xdpt2_build_cluster_omega_c(*cache[gsel].pZ, r1_b,
+                                               cache[gsel].uid, cb_center)
             xdpt2_syminv(Om_b, inv_ok_b, W2_b)
             if (!inv_ok_b) {
                 B_fb = B_fb + 1
@@ -4564,9 +6659,10 @@ real matrix xdpt2_coef_bootstrap(struct xdpt2_gamma_cache rowvector cache,
 
     // v0.8.1 (audit R6, #5): SYMMETRIC percentile intervals by default --
     // theta_hat +/- c*, with c* the (1-alpha) quantile of |theta*-theta_hat|.
-    // Gong-Seo report that raw percentile intervals can under-cover while
-    // symmetric ones perform markedly better. coefcitype(percentile) gives
-    // the raw form.
+    // coefcitype(percentile) gives Efron's percentile interval
+    // [q(alpha/2), q(1-alpha/2)] of theta*. The percentile interval studied
+    // by Gong and Seo (2026, eq. 9) is the basic interval, and their
+    // coverage results concern their own bootstrap, not this legacy scheme.
     external real scalar xdpt_coefci_sym
     out = J(2, k, .)
     for (j = 1; j <= k; j++) {
@@ -4594,6 +6690,39 @@ real matrix xdpt2_coef_bootstrap(struct xdpt2_gamma_cache rowvector cache,
     return(out)
 }
 
+// v0.9.33: 1 if the normal matrix ZW' A ZW of the fixed-weight solve
+// (xdpt2_solve_gmm_1step_pre, as run by the two-step search with A = W2)
+// passes the gate of xdpt2_syminv, else 0.
+real scalar xdpt2_w2_solvable(real matrix ZW, real matrix A)
+{
+    real scalar inv_ok
+    real matrix M, Minv
+    if (rows(A) == 0 | rows(A) != cols(A) | rows(A) != rows(ZW)) return(0)
+    M = ZW' * A * ZW
+    xdpt2_syminv(M, inv_ok, Minv)
+    return(inv_ok)
+}
+
+// v0.9.34 (C1): fixed-W2 solve of every ok entry, with the expressions of
+// xdpt2_solve_gmm_1step_pre (A = ZW' W ZW, theta = Ainv ZW' W ZY), so that
+// C_g2 * ZY is bit for bit the stage-2 coefficient vector at that gamma.
+void xdpt2_cache_w2(struct xdpt2_gamma_cache rowvector cache, real matrix W2)
+{
+    real scalar g, inv_ok
+    real matrix A2, A2inv
+    for (g = 1; g <= cols(cache); g++) {
+        cache[g].fast2_ok = 0
+        cache[g].C_g2 = J(0, 0, .)
+        if (!cache[g].ok) continue
+        if (rows(W2) != rows(cache[g].ZW) | cols(W2) != rows(cache[g].ZW)) continue
+        A2 = cache[g].ZW' * W2 * cache[g].ZW
+        xdpt2_syminv(A2, inv_ok, A2inv)
+        if (!inv_ok) continue
+        cache[g].C_g2 = A2inv * cache[g].ZW' * W2
+        if (!hasmissing(cache[g].C_g2)) cache[g].fast2_ok = 1
+    }
+}
+
 // Grid-bootstrap inversion. The default is an xthenreg-style cluster wild
 // residual approximation; boottype(unit) is an experimental unit-resampling
 // extension. Neither path is certified as the exact Gong-Seo Algorithm 1.
@@ -4615,7 +6744,9 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
                            real scalar bt2s, real matrix bA,
                            real colvector rhat, real scalar gb_minB,
                            real matrix ci_tab, real matrix ci_seg,
-                           real scalar ci_unres)
+                           real scalar ci_unres,
+                           struct xdpt2_stack_tpl scalar tpl_main,
+                           real scalar tpl_main_st)
 {
     real scalar n_ci, l, b, ok_r, obj_r, D_sample, D_boot, crit, min_obj_b
     real scalar has_alt_b
@@ -4640,20 +6771,57 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
     // "could not be evaluated" is not "rejected". Column 6 = status:
     //   1 valid inversion result        4 sample solve failed
     //   2 mechanical accept (D == 0)    5 insufficient valid draws
-    //   3 structurally inadmissible     6 bootstrap quantile failed
+    //   3 not admissible (no solve      6 bootstrap quantile failed (a
+    //                                     guard; unreachable when every draw
+    //                                     is valid)
+    //     under W1 nor, for a two-step fit, under W2)
     // Statuses 4-6 are UNRESOLVED: excluded from the reported set but
     // counted in ci_unres / e(ci_unresolved) and flagged loudly.
     ci_tab = J(n_ci, 6, .)
     if (n_ci > 0) ci_tab[., 1] = gamma_ci_grid
     ci_seg = J(0, 2, .)
     n_u = length(units)
+    // v0.9.34: the unrestricted minimum runs over one fixed set on the sample
+    // side and in every draw: the initial grid (entries 1..n1_ci), plus the
+    // candidate itself. Points added around the sample's own minimum
+    // (refine() support points, the kink refinement) would lower the sample
+    // minimum only, since no draw gets the same search, and the test would
+    // over-reject. best_obj is the minimum over that grid (the stage-2
+    // minimum for a two-step fit); gamma-hat itself still has D = 0.
+    external real scalar xdpt_n_stage1
+    real scalar n1_ci
+    n1_ci = (xdpt_n_stage1 < . ? min((xdpt_n_stage1, cols(gamma_cache))) :
+                                 cols(gamma_cache))
 
     // === Per-gamma caches: the estimation-grid cache is passed in (built
     // once in xtdpthresh_run, v0.7.0 D1); only the CI-grid cache is built here ===
     struct xdpt2_gamma_cache rowvector gamma_ci_cache
-    gamma_ci_cache = xdpt2_build_gamma_cache(units, gamma_ci_grid, method,
-                                              flag_static, flag_kink, t_min, t_max,
-                                              q_supp, min_user)
+    gamma_ci_cache = xdpt2_build_gamma_cache_t(units, gamma_ci_grid, method,
+                                                flag_static, flag_kink, t_min,
+                                                t_max, q_supp, min_user,
+                                                tpl_main, tpl_main_st,
+                                                gamma_cache)
+
+    // v0.9.34 (C1): the wild inversion uses the criterion of the reported
+    // estimator. With a two-step fit (bt2s = 1) that is the stage-2 criterion
+    // with the second-step weight W2 (bA) held at its sample value, whose
+    // minimum over the grid is attained at gamma-hat: D(gamma-hat) = 0 and
+    // gamma-hat always belongs to its own set, as in Gong and Seo (2026),
+    // whose statistic is built on the estimation criterion. Up to 0.9.33 the
+    // wild inversion used the one-step criterion (W1), whose zero is the
+    // one-step argmin, and the two-step gamma-hat could be rejected. After a
+    // one-step fallback (bt2s = 0) the reported criterion is the one-step one.
+    real scalar w2m
+    w2m = (xdpt_boot_exact != 1 & bt2s == 1 & rows(bA) > 0)
+    if (w2m) {
+        xdpt2_cache_w2(gamma_cache, bA)
+        xdpt2_cache_w2(gamma_ci_cache, bA)
+    }
+    // v0.9.34 (O1): common random numbers -- one set of Mammen weights for
+    // all candidates (the clusters are the same at every gamma), drawn at
+    // the first candidate that needs them.
+    real matrix ETA_crn
+    ETA_crn = J(0, 0, .)
 
     // Filled from the ACTUAL sample-side statuses after inversion. In
     // particular, boottype(unit) uses the fixed W2 solve and must not inherit
@@ -4684,8 +6852,8 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
         smin_ref_l = l0s
         break
     }
-    if (smin_ref_l > 0) {
-        for (gb_s = 1; gb_s <= cols(gamma_cache); gb_s++) {
+    if (smin_ref_l > 0 & !w2m) {
+        for (gb_s = 1; gb_s <= n1_ci; gb_s++) {
             if (!gamma_cache[gb_s].ok) continue
             if (gamma_cache[gb_s].n_rows != gamma_ci_cache[smin_ref_l].n_rows) continue
             xdpt2_fast_gmm_boot(gamma_ci_cache[smin_ref_l].dY,
@@ -4748,40 +6916,62 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
         // and the W_first gate could kill a point (status 4) whose
         // fixed-W2 solve is perfectly feasible.
         if (xdpt_boot_exact != 1) {
-            // Sample D_sample: use 1-step W_first, matching the implemented
-            // wild-bootstrap approximation. The two-step Omega-weighted obj is for point
-            // estimation only; for bootstrap test inversion, use 1-step throughout.
-            xdpt2_fast_gmm_boot(dY_r, gamma_ci_cache[l],
-                                 ok_r, theta_r, obj_r_1s)
-            if (!ok_r) {
-                accept[l] = 0
-                ci_tab[l, 6] = 4
-                continue
-            }
-            // Sample unrestricted: min 1-step obj over γ_grid using dY_r
-            // v0.7.9 (A): reuse the hoisted grid minimum under an exact bitwise
-            // dY guard (see the smin_* block above); identical dY implies an
-            // identical participating cache set and bitwise-identical
-            // objectives, and min() is order-free, so best_obj_1s -- and hence
-            // D_sample -- is bit-for-bit the per-l scan's value.
-            best_obj_1s = obj_r_1s
-            if (smin_ready & dY_r == gamma_ci_cache[smin_ref_l].dY) {
-                if (smin_has) {
-                    if (smin_val < best_obj_1s) best_obj_1s = smin_val
+            // Sample D_sample. v0.9.34 (C1): with a two-step fit, the stage-2
+            // restricted fit with the fixed W2 (the solve of the reported
+            // search, so its objective is bit for bit the stage-2 profile) and
+            // the stage-2 minimum best_obj; with a one-step fit, the one-step
+            // criterion (W1) and its grid minimum as before.
+            if (w2m) {
+                xdpt2_solve_gmm_1step_pre(dY_r, dW_r, Z_r,
+                                           gamma_ci_cache[l].ZW,
+                                           gamma_ci_cache[l].ZY, bA,
+                                           ok_r, theta_r, obj_r_1s, V_dummy)
+                if (!ok_r) {
+                    accept[l] = 0
+                    // not admissible (3) when the reported estimator's normal
+                    // matrix fails the gate there; any other failure is
+                    // unresolved (4)
+                    ci_tab[l, 6] = (gamma_ci_cache[l].fast2_ok == 1 ? 4 : 3)
+                    continue
                 }
+                best_obj_1s = obj_r_1s
+                if (best_obj < best_obj_1s) best_obj_1s = best_obj
             }
             else {
-                for (gb_s = 1; gb_s <= cols(gamma_cache); gb_s++) {
-                    if (!gamma_cache[gb_s].ok) continue
-                    if (gamma_cache[gb_s].n_rows != rows(dY_r)) continue
-                    xdpt2_fast_gmm_boot(dY_r, gamma_cache[gb_s],
-                                         ok_1s, theta_s_dummy, obj_u_1s)
-                    if (!ok_1s) continue
-                    if (obj_u_1s < best_obj_1s) best_obj_1s = obj_u_1s
+                xdpt2_fast_gmm_boot(dY_r, gamma_ci_cache[l],
+                                     ok_r, theta_r, obj_r_1s)
+                if (!ok_r) {
+                    accept[l] = 0
+                    // v0.9.31/0.9.33: not admissible (3) when the reported
+                    // (one-step) estimator cannot use the point; any other
+                    // failure of the sample solve is unresolved (4)
+                    ci_tab[l, 6] = (gamma_ci_cache[l].fast_ok == 0 ? 3 : 4)
+                    continue
+                }
+                // Sample unrestricted: min 1-step obj over γ_grid using dY_r
+                // v0.7.9 (A): reuse the hoisted grid minimum under an exact
+                // bitwise dY guard (see the smin_* block above); identical dY
+                // implies an identical participating cache set and bitwise-
+                // identical objectives, and min() is order-free.
+                best_obj_1s = obj_r_1s
+                if (smin_ready & dY_r == gamma_ci_cache[smin_ref_l].dY) {
+                    if (smin_has) {
+                        if (smin_val < best_obj_1s) best_obj_1s = smin_val
+                    }
+                }
+                else {
+                    for (gb_s = 1; gb_s <= n1_ci; gb_s++) {
+                        if (!gamma_cache[gb_s].ok) continue
+                        if (gamma_cache[gb_s].n_rows != rows(dY_r)) continue
+                        xdpt2_fast_gmm_boot(dY_r, gamma_cache[gb_s],
+                                             ok_1s, theta_s_dummy, obj_u_1s)
+                        if (!ok_1s) continue
+                        if (obj_u_1s < best_obj_1s) best_obj_1s = obj_u_1s
+                    }
                 }
             }
             D_sample = obj_r_1s - best_obj_1s
-            // best_obj_1s starts at the restricted objective, so this
+            // best_obj_1s is at most the restricted objective, so this
             // distance is nonnegative by construction. Only an EXACT zero
             // can be accepted mechanically; every positive statistic needs
             // its bootstrap critical value, regardless of outcome units.
@@ -4798,32 +6988,36 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
         }
 
         // Bootstrap loop  [FAST PATH: uses precomputed C_g, no cluster-Ω]
-        // v0.7.6 SPEEDUP: when γ_ℓ and every participating unrestricted γ use
-        // the fast path, the whole B-replication bootstrap is done in batched
-        // matrix form via xdpt2_fast_obj_batch (objective is a quadratic form
-        // in Z'Y). Mammen weights are drawn in the SAME per-replication order
-        // as the scalar loop, so D_vec — and the resulting CI — is identical
-        // to v0.7.5 to machine precision. Any cache needing the full 2-step
-        // fallback (singular fast path) drops to the original scalar loop in
-        // the else branch, preserving exact prior behavior.
+        // v0.7.6 SPEEDUP: when γ_ℓ uses the fast path, the whole
+        // B-replication bootstrap is done in batched matrix form (0.9.31:
+        // xdpt2_fast_obj_split_list). Mammen weights are drawn in the SAME
+        // per-replication order as the scalar loop, so D_vec -- and the
+        // resulting CI -- agree with the scalar loop to rounding error.
+        // v0.9.33: an unrestricted γ without the one-step solve
+        // (fast_ok = 0) is left out of the batch, as the scalar loop skips it
+        // (xdpt2_fast_gmm_boot returns ok = 0 there). Before, one such γ
+        // sent every CI point to the scalar loop, which is hundreds of times
+        // slower (e.g., γ = 0 when q >= 0 is also a regressor, where
+        // q*1(q > γ) equals q).
         D_vec = J(n_boot, 1, .)
-        real scalar n_rows_r_b, use_batch_b, jb
+        real scalar n_rows_r_b, use_batch_b
         real colvector fast_gb_b
-        real matrix ETA_b, ETAr_b, Ymat_b, OBJ_b
-        real rowvector objr_b, objg_b, altmin_b, minobj_b, Dvec_b
+        real matrix ETA_b, OBJ_b
+        real colvector F_b
+        real rowvector objr_b, altmin_b, minobj_b, Dvec_b
         n_rows_r_b  = rows(dY_r)
         use_batch_b = (gamma_ci_cache[l].ok == 1 &
-                       gamma_ci_cache[l].fast_ok == 1 &
+                       (w2m ? gamma_ci_cache[l].fast2_ok :
+                              gamma_ci_cache[l].fast_ok) == 1 &
                        gamma_ci_cache[l].n_rows == n_rows_r_b)
         fast_gb_b = J(0, 1, 0)
         if (use_batch_b) {
-            for (gb = 1; gb <= cols(gamma_cache); gb++) {
+            for (gb = 1; gb <= n1_ci; gb++) {
                 if (!gamma_cache[gb].ok) continue
                 if (gamma_cache[gb].n_rows != n_rows_r_b) continue
-                if (gamma_cache[gb].fast_ok != 1) {
-                    use_batch_b = 0      // a participating γ needs full solve
-                    break
-                }
+                // v0.9.34 (C1): the unrestricted set of the reported search,
+                // the points solvable with the weight of the inversion
+                if ((w2m ? gamma_cache[gb].fast2_ok : gamma_cache[gb].fast_ok) != 1) continue
                 fast_gb_b = fast_gb_b \ gb
             }
         }
@@ -4855,9 +7049,13 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
             real scalar ex_n1, ex_hi1, ex_tol1, ex_scale
             real scalar ex_n2, ex_hi2, ex_tol2, ex_b2
             external real scalar xdpt_center
+            // v0.9.31: stage 1 of the replay on the initial grid only, as in
+            // the reported search (refine() points enter stage 2 alone).
+            real scalar ex_n1max
+            ex_n1max = n1_ci
             real colvector ex_okl
             ex_okl = J(0, 1, 0)
-            for (gb = 1; gb <= cols(gamma_cache); gb++) {
+            for (gb = 1; gb <= n1_ci; gb++) {
                 if (!gamma_cache[gb].ok) continue
                 if (gamma_cache[gb].n_rows != n_rows_r_b) continue
                 ex_okl = ex_okl \ gb
@@ -4876,7 +7074,13 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
                                        ex_ok2, ex_th, ex_J2l, V_dummy)
             if (!ex_ok2) {
                 accept[l] = 0
-                ci_tab[l, 6] = 4
+                // v0.9.34: the rule of the wild path -- a point whose normal
+                // matrix under W2 fails the gate (for example an exactly
+                // collinear design, q*1(q > gamma) = q) is not admissible (3)
+                // for the reported estimator; any other failure is
+                // unresolved (4). Before, every failure was 4, so the unit
+                // bootstrap never reported a set on such data.
+                ci_tab[l, 6] = (xdpt2_w2_solvable(gamma_ci_cache[l].ZW, bA) ? 4 : 3)
                 continue
             }
             // The unrestricted comparison must contain the null candidate
@@ -4924,6 +7128,7 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
                 ex_n1 = 0
                 ex_hi1 = .
                 for (ex_g2 = 1; ex_g2 <= rows(ex_okl); ex_g2++) {
+                    if (ex_okl[ex_g2] > ex_n1max) continue
                     ex_c0 = (ex_g2 - 1) * ex_k
                     ex_ZWg = ex_ZWall[|1, ex_c0 + 1 \ cols(Z_r), ex_c0 + ex_k|]
                     ex_A = ex_ZWg' * (ex_W1ref * ex_ZWg)
@@ -5029,22 +7234,35 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
             }
         }
         else if (use_batch_b & rows(fast_gb_b) > 0) {
-            // ---- batched path (bit-for-bit identical to scalar loop) ----
-            ETA_b = J(n_draw, n_boot, 0)
-            for (b = 1; b <= n_boot; b++) {
-                ETA_b[., b] = xdpt2_mammen_draw(n_draw)   // contributing clusters only
+            // ---- batched path (agrees with the scalar loop to rounding) ----
+            // v0.9.34 (O1): the common Mammen weights (contributing clusters
+            // only), drawn once in the same per-replication order as before
+            if (rows(ETA_crn) != n_draw | cols(ETA_crn) != n_boot) {
+                ETA_crn = J(n_draw, n_boot, 0)
+                for (b = 1; b <= n_boot; b++) {
+                    ETA_crn[., b] = xdpt2_mammen_draw(n_draw)
+                }
             }
-            ETAr_b = ETA_b[uid_draw, .]
-            Ymat_b = (dW_r * theta_r) :+ (resid_r :* ETAr_b)
-            objr_b = xdpt2_fast_obj_batch(Ymat_b, gamma_ci_cache[l])
+            ETA_b = ETA_crn
+            // v0.9.31: Y* = F + E (restricted fit plus reweighted residuals),
+            // evaluated by the split (xdpt2_fast_obj_split_list); v0.9.33:
+            // E = resid_r :* ETA_b[uid_draw, .] is passed by its factors;
+            // v0.9.34: with the fixed W2 for a two-step fit.
+            F_b    = dW_r * theta_r
+            if (w2m) objr_b = xdpt2_fast_obj_split_list(F_b, resid_r, uid_draw, ETA_b,
+                                                        gamma_ci_cache, l, bA)
+            else     objr_b = xdpt2_fast_obj_split_list(F_b, resid_r, uid_draw, ETA_b,
+                                                        gamma_ci_cache, l)
             // v0.7.9 (D): preallocated stack (the old append recopied the
             // accumulator per gamma); values and row order identical
             OBJ_b  = J(1 + rows(fast_gb_b), n_boot, .)
             OBJ_b[1, .] = objr_b                       // restricted = initial min
-            for (jb = 1; jb <= rows(fast_gb_b); jb++) {
-                objg_b = xdpt2_fast_obj_batch(Ymat_b, gamma_cache[fast_gb_b[jb]])
-                OBJ_b[1 + jb, .] = objg_b
-            }
+            if (w2m) OBJ_b[|2, 1 \ 1 + rows(fast_gb_b), n_boot|] =
+                xdpt2_fast_obj_split_list(F_b, resid_r, uid_draw, ETA_b,
+                                          gamma_cache, fast_gb_b, bA)
+            else OBJ_b[|2, 1 \ 1 + rows(fast_gb_b), n_boot|] =
+                xdpt2_fast_obj_split_list(F_b, resid_r, uid_draw, ETA_b,
+                                          gamma_cache, fast_gb_b)
             minobj_b = colmin(OBJ_b)                   // per-sample min over γ
             Dvec_b   = objr_b - minobj_b
             D_vec    = Dvec_b'
@@ -5060,11 +7278,19 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
                 D_vec[b] = Dvec_b[b]
             }
         }
-        else {
-            // ---- original scalar loop (unchanged fallback) ----
+        else if (!w2m) {
+            // ---- original scalar loop (fallback; one-step criterion) ----
+            // v0.9.34: reached only when no alternative is batched (every
+            // draw is then invalid); with W2 the draws stay missing (status 5)
+            if (rows(ETA_crn) != n_draw | cols(ETA_crn) != n_boot) {
+                ETA_crn = J(n_draw, n_boot, 0)
+                for (b = 1; b <= n_boot; b++) {
+                    ETA_crn[., b] = xdpt2_mammen_draw(n_draw)
+                }
+            }
             for (b = 1; b <= n_boot; b++) {
-                // UNIT-LEVEL Mammen weights (vectorized)
-                eta_unit = xdpt2_mammen_draw(n_draw)
+                // UNIT-LEVEL Mammen weights: the common draws (O1)
+                eta_unit = ETA_crn[., b]
                 eta = eta_unit[uid_draw]
                 Y_boot = dW_r * theta_r + resid_r :* eta
 
@@ -5081,7 +7307,7 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
                 // Bootstrap unrestricted: grid search (fast 1-step per γ)
                 min_obj_b = obj_b_r
                 has_alt_b = 0
-                for (gb = 1; gb <= cols(gamma_cache); gb++) {
+                for (gb = 1; gb <= n1_ci; gb++) {
                     if (!gamma_cache[gb].ok) continue
                     if (gamma_cache[gb].n_rows != rows(Y_boot)) continue
                     xdpt2_fast_gmm_boot(Y_boot, gamma_cache[gb],
@@ -5105,27 +7331,24 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
 
         // v0.9.2 R18 (user): skipped/singular draws leave missing entries;
         // track the smallest per-point valid count (exported) and refuse to
-        // invert on fewer than 10 valid replications.
+        // invert on an incomplete set of draws (rule below).
         real scalar n_valid_b, min_valid_b
         n_valid_b = sum(D_vec :< .)
         if (gb_minB >= . | n_valid_b < gb_minB) gb_minB = n_valid_b
-        // v0.9.4 R20 (#2): the same validity floor as every other bootstrap
-        // object -- a 95% quantile from 10 surviving draws is close to a
-        // sample maximum, and survivors of numerical failure are a SELECTED
+        // v0.9.4 R20 (#2): survivors of numerical failure are a SELECTED
         // subsample. Points below the floor are UNRESOLVED (status 5), not
         // rejected.
-        if (xdpt_boot_exact == 1) min_valid_b = n_boot
-        else {
-            min_valid_b = ceil(0.9 * n_boot)
-            if (min_valid_b < 10) min_valid_b = 10
-        }
+        // v0.9.33: every draw must be valid, as under boottype(unit); the
+        // 90% floor of the wild inversion is gone. A wild draw fails only
+        // on a nonfinite value, so fits with all draws valid are unchanged.
+        min_valid_b = n_boot
         if (n_valid_b < min_valid_b) {
             accept[l] = 0
             ci_tab[l, 5] = n_valid_b
             ci_tab[l, 6] = 5
             continue
         }
-        crit = xdpt2_quantile(D_vec, 1 - alpha)
+        crit = xdpt2_crit_orderstat(D_vec, 1 - alpha)
         if (crit == .) {
             accept[l] = 0
             ci_tab[l, 5] = n_valid_b
@@ -5134,7 +7357,9 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
         }
         accept[l] = (D_sample <= crit)
         ci_tab[l, 2] = D_sample
-        ci_tab[l, 3] = crit
+        // v0.9.34: no finite critical value when boot() is too small for the
+        // level (every candidate is accepted); stored as missing
+        ci_tab[l, 3] = (crit >= maxdouble() ? . : crit)
         ci_tab[l, 4] = accept[l]
         ci_tab[l, 5] = n_valid_b
         ci_tab[l, 6] = 1
@@ -5150,8 +7375,8 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
         displayflush()
     }
 
-    // Status 3 is structurally inadmissible; status 4 failed the relevant
-    // sample solve. Statuses 1/2/5/6 all passed that solve, regardless of
+    // Status 3 is not admissible; status 4 failed the relevant sample
+    // solve. Statuses 1/2/5/6 all passed that solve, regardless of
     // whether the subsequent bootstrap was sufficiently complete.
     for (gci_l = 1; gci_l <= n_ci; gci_l++) {
         if (ci_tab[gci_l, 6] == 3 | ci_tab[gci_l, 6] == 4) continue
@@ -5260,10 +7485,22 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     // grid search, the sample statistic, and the bootstrap. The jump cache is
     // the main estimation cache passed in by the caller (the continuity test
     // only runs when the estimated model is the jump model, flag_kink = 0).
+    // v0.9.34: both models are searched over the initial grid on the sample
+    // side and in every draw (see xdpt2_grid_bootstrap); refine() points of
+    // the jump fit are left out.
+    external real scalar xdpt_n_stage1
+    real scalar n1_t
+    n1_t = min((rows(gamma_grid), cols(cache_jump)))
+    if (xdpt_n_stage1 < .) n1_t = min((n1_t, xdpt_n_stage1))
+    if (n1_t < 2) return(.)
     struct xdpt2_gamma_cache rowvector cache_kink
-    cache_kink = xdpt2_build_gamma_cache(units, gamma_grid, method,
-                                          flag_static, 1, t_min, t_max,
-                                          q_supp, min_user)
+    struct xdpt2_stack_tpl scalar tpl_k
+    real scalar tpl_k_st
+    tpl_k_st = 0
+    cache_kink = xdpt2_build_gamma_cache_t(units, gamma_grid[|1 \ n1_t|],
+                                            method, flag_static, 1, t_min,
+                                            t_max, q_supp, min_user, tpl_k,
+                                            tpl_k_st, cache_jump)
 
     // The computational comparison is nested only where BOTH specifications
     // solve on the same row sample with the same one-step criterion. The jump
@@ -5336,7 +7573,7 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     valid_boot = 0
 
     best_j_1s = .
-    for (gl_1s = 1; gl_1s <= cols(cache_jump); gl_1s++) {
+    for (gl_1s = 1; gl_1s <= n1_t; gl_1s++) {
         if (!cache_jump[gl_1s].ok) continue
         if (cache_jump[gl_1s].n_rows != rows(dY_k)) continue
         xdpt2_fast_gmm_boot(dY_k, cache_jump[gl_1s],
@@ -5359,10 +7596,14 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
 
     // v0.7.7 SPEEDUP: batch all B replications when every participating γ in
     // BOTH the kink and jump caches uses the fast path. Same Mammen draw order
-    // -> bit-for-bit identical p-value to v0.7.6; else original scalar loop.
-    real scalar use_batch_C, jjC, n_rows_k
+    // -> the scalar loop's p-value up to rounding; else original scalar loop.
+    // v0.9.33: a jump γ without the one-step solve (fast_ok = 0) is left out
+    // of the batch, as the scalar loop skips it; it no longer sends every
+    // draw to the scalar loop. The common set holds fast entries only.
+    real scalar use_batch_C, n_rows_k
     real colvector fast_k_C, fast_j_C
-    real matrix ETA_C, ETAr_C, Ymat_C, OBJk_C, OBJj_C, OBJkc_C
+    real matrix ETA_C, OBJk_C, OBJj_C, OBJkc_C
+    real colvector F_C
     real rowvector mink_C, minj_C, T_C
     real colvector jump_pos_C, pos_C
     n_rows_k = rows(dY_k)
@@ -5373,13 +7614,10 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     fast_k_C = common_C
     fast_j_C = J(0, 1, 0)
     if (use_batch_C) {
-        for (gl_j = 1; gl_j <= cols(cache_jump); gl_j++) {
+        for (gl_j = 1; gl_j <= n1_t; gl_j++) {
             if (!cache_jump[gl_j].ok) continue
             if (cache_jump[gl_j].n_rows != n_rows_k) continue
-            if (cache_jump[gl_j].fast_ok != 1) {
-                use_batch_C = 0
-                break
-            }
+            if (cache_jump[gl_j].fast_ok != 1) continue
             fast_j_C = fast_j_C \ gl_j
         }
     }
@@ -5397,21 +7635,14 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     if (use_batch_C & rows(fast_k_C) > 0 & rows(fast_j_C) > 0) {
         ETA_C = J(n_u, n_boot, 0)
         for (b = 1; b <= n_boot; b++) ETA_C[., b] = xdpt2_mammen_draw(n_u)
-        ETAr_C = ETA_C[uid_draw, .]
-        Ymat_C = (dW_k * theta_kink_sample) :+ (r_kink :* ETAr_C)
+        // v0.9.31: Y* = F + E, evaluated by the split; v0.9.33: E is
+        // passed by its factors, r_kink and ETA_C[uid_draw, .]
+        F_C = dW_k * theta_kink_sample
         // v0.7.9 (D): preallocated stacks; values and row order identical
-        OBJk_C = J(rows(fast_k_C), n_boot, .)
-        OBJk_C[1, .] = xdpt2_fast_obj_batch(Ymat_C, cache_kink[fast_k_C[1]])
-        for (jjC = 2; jjC <= rows(fast_k_C); jjC++) {
-            OBJk_C[jjC, .] = xdpt2_fast_obj_batch(Ymat_C,
-                                                  cache_kink[fast_k_C[jjC]])
-        }
-        OBJj_C = J(rows(fast_j_C), n_boot, .)
-        OBJj_C[1, .] = xdpt2_fast_obj_batch(Ymat_C, cache_jump[fast_j_C[1]])
-        for (jjC = 2; jjC <= rows(fast_j_C); jjC++) {
-            OBJj_C[jjC, .] = xdpt2_fast_obj_batch(Ymat_C,
-                                                  cache_jump[fast_j_C[jjC]])
-        }
+        OBJk_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
+                                           cache_kink, fast_k_C)
+        OBJj_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
+                                           cache_jump, fast_j_C)
         // The restricted minimum may use a gamma only when the matching
         // unrestricted jump solve is finite in that draw. The unrestricted
         // minimum itself still uses its full feasible set.
@@ -5462,7 +7693,7 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
             }
 
             min_obj_jump_b = .
-            for (gl_j = 1; gl_j <= cols(cache_jump); gl_j++) {
+            for (gl_j = 1; gl_j <= n1_t; gl_j++) {
                 if (!cache_jump[gl_j].ok) continue
                 if (cache_jump[gl_j].n_rows != rows(Y_boot)) continue
                 xdpt2_fast_gmm_boot(Y_boot, cache_jump[gl_j],
@@ -5486,11 +7717,12 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     }
 
     // v0.9.3 R19 (#7): a p-value from a handful of surviving draws is
-    // noise -- require >= 90% of the request and >= 10 valid replications.
+    // noise. v0.9.33: every draw must be valid (was >= 90% and >= 10), so
+    // the p-value is never computed from a subsample selected by failures.
     // v0.9.4 R20 (#6): the count is returned either way, so the display
     // can SAY why p is missing instead of printing a bare dot.
     valid_out = valid_boot
-    if (valid_boot < 10 | valid_boot < ceil(0.9 * n_boot)) return(.)
+    if (valid_boot < n_boot) return(.)
     // v0.7.0 (B2): add-one correction (Davidson-MacKinnon 2000) — a valid
     // bootstrap p-value is never exactly zero.
     return((1 + count_exceed) / (1 + valid_boot))
@@ -5522,8 +7754,14 @@ real scalar xdpt2_linearity_test(struct xdpt2_unit rowvector units,
     real scalar obj_r_1s, gl_s, obj_u_1s, ok_1s, min_obj_u_1s, has_alt_1s
     real colvector theta_1s_dummy
     theta_1s_dummy = J(0, 1, 0)
+    // v0.9.34: the threshold model is searched over the initial grid on the
+    // sample side and in every draw (see xdpt2_grid_bootstrap)
+    external real scalar xdpt_n_stage1
+    real scalar n1_l
 
     K = cols(units[1].X)
+    n1_l = (xdpt_n_stage1 < . ? min((xdpt_n_stage1, cols(gamma_cache))) :
+                                cols(gamma_cache))
 
     // v0.7.0 (D1): the per-γ cache is passed in (built once in
     // xtdpthresh_run). The restricted (no-regime) model uses only the
@@ -5548,16 +7786,9 @@ real scalar xdpt2_linearity_test(struct xdpt2_unit rowvector units,
     n_u = max(uid_draw)
     if (rows(dY_s) < 20) return(.)
 
-    // Restricted regressors: the base β columns. v0.7.0 (A3): under
-    // method(system) the stacked W carries the level-equation constant as its
-    // LAST column — a base parameter, not a regime parameter — so the null
-    // (linear) model must include it too; omitting it would make the
-    // restricted model artificially bad and bias the test toward rejection.
-    real scalar has_lvl_cons
-    has_lvl_cons = (cols(dW_s) > (flag_kink ? K + 1 : 2*K + 1))
+    // Restricted regressors: the base β columns.
     W_beta_s = J(rows(dW_s), 0, 0)
     if (K > 0) W_beta_s = dW_s[., 1..K]
-    if (has_lvl_cons) W_beta_s = W_beta_s, dW_s[., cols(dW_s)]
 
     // BUG 4b FIX: use 1-step theta_r with W_first (consistent with bootstrap).
     // Previously theta_r came from 2-step solve_gmm while supW uses 1-step obj,
@@ -5591,7 +7822,7 @@ real scalar xdpt2_linearity_test(struct xdpt2_unit rowvector units,
     // require at least one numerically valid threshold-model solve.
     min_obj_u_1s = obj_r_1s
     has_alt_1s = 0
-    for (gl_s = 1; gl_s <= cols(gamma_cache); gl_s++) {
+    for (gl_s = 1; gl_s <= n1_l; gl_s++) {
         if (!gamma_cache[gl_s].ok) continue
         if (gamma_cache[gl_s].n_rows != rows(dY_s)) continue
         xdpt2_fast_gmm_boot(dY_s, gamma_cache[gl_s],
@@ -5636,46 +7867,65 @@ real scalar xdpt2_linearity_test(struct xdpt2_unit rowvector units,
 
     real colvector ZY_b, r_b, g_b
     // v0.7.7 SPEEDUP: batch all B replications when the restricted (C_beta)
-    // solve is fast AND every participating unrestricted γ uses the fast path.
-    // Mammen draws keep the same per-replication order -> bit-for-bit identical
-    // p-value to v0.7.6. Otherwise fall back to the original scalar loop.
-    real scalar use_batch_L, jjL
+    // solve is fast. Mammen draws keep the same per-replication order -> the
+    // scalar loop's p-value up to rounding. Otherwise fall back to the
+    // original scalar loop.
+    // v0.9.33: an unrestricted γ without the one-step solve (fast_ok = 0) is
+    // left out of the batch, as the scalar loop skips it; it no longer sends
+    // every draw to the scalar loop.
+    real scalar use_batch_L
     real colvector fast_gl_L
-    real matrix ETA_L, ETAr_L, Ymat_L, OBJu_L, G0_L
+    real matrix ETA_L, OBJu_L, G0_L
     real rowvector objr_L, altminu_L, minu_L, supW_L
     use_batch_L = fast_r_ok
     fast_gl_L = J(0, 1, 0)
     if (use_batch_L) {
-        for (gl_b = 1; gl_b <= cols(gamma_cache); gl_b++) {
+        for (gl_b = 1; gl_b <= n1_l; gl_b++) {
             if (!gamma_cache[gl_b].ok) continue
             if (gamma_cache[gl_b].n_rows != n_rows_s) continue
-            if (gamma_cache[gl_b].fast_ok != 1) {
-                use_batch_L = 0
-                break
-            }
+            if (gamma_cache[gl_b].fast_ok != 1) continue
             fast_gl_L = fast_gl_L \ gl_b
         }
     }
     if (use_batch_L & rows(fast_gl_L) > 0) {
         ETA_L = J(n_u, n_boot, 0)
         for (b = 1; b <= n_boot; b++) ETA_L[., b] = xdpt2_mammen_draw(n_u)
-        ETAr_L = ETA_L[uid_draw, .]
-        Ymat_L = fit_r :+ (resid_r :* ETAr_L)
+        // v0.9.34: no n x B matrix. The restricted (linear) objectives go
+        // through the split with a one-entry cache for the linear model;
+        // with no regressor the fit is zero and g = Z'E/n = S'ETA/n.
         if (cols(W_beta_s) == 0) {
-            G0_L = Z_s' * Ymat_L / n_rows_s
-            objr_L = n_rows_s :* colsum(G0_L :* (W_first_s * G0_L))
+            G0_L = xdpt2_gsum_by_unit(Z_s :* resid_r, uid_draw, n_u)' * ETA_L / n_rows_s
+            // v0.9.35 (R3): a draw with a missing term has a missing objective
+            real matrix P_L
+            real rowvector bad_L
+            P_L = G0_L :* (W_first_s * G0_L)
+            objr_L = n_rows_s :* colsum(P_L)
+            if (hasmissing(P_L)) {
+                bad_L = selectindex(colmissing(P_L) :> 0)
+                objr_L[bad_L] = J(1, cols(bad_L), .)
+            }
         }
         else {
-            objr_L = xdpt2_fast_obj_batch_raw(Ymat_L, Z_s, W_beta_s, C_beta,
-                                               W_first_s, n_rows_s)
+            struct xdpt2_gamma_cache rowvector lin_c
+            lin_c = xdpt2_gamma_cache(1, 1)
+            lin_c[1].ok      = 1
+            lin_c[1].fast_ok = 1
+            lin_c[1].n_rows  = n_rows_s
+            lin_c[1].dW      = W_beta_s
+            lin_c[1].C_g     = C_beta
+            lin_c[1].ZW      = ZW_beta
+            lin_c[1].pZ      = gamma_cache[idx_base].pZ
+            lin_c[1].pW1     = gamma_cache[idx_base].pW1
+            objr_L = xdpt2_fast_obj_split_list(fit_r, resid_r, uid_draw, ETA_L,
+                                               lin_c, 1)
         }
         // v0.7.9 (D): preallocated stack; values and row order identical
         OBJu_L = J(1 + rows(fast_gl_L), n_boot, .)
         OBJu_L[1, .] = objr_L                        // restricted = initial min
-        for (jjL = 1; jjL <= rows(fast_gl_L); jjL++) {
-            OBJu_L[1 + jjL, .] = xdpt2_fast_obj_batch(Ymat_L,
-                                                      gamma_cache[fast_gl_L[jjL]])
-        }
+        // v0.9.31: objectives by the split (xdpt2_fast_obj_split_list)
+        OBJu_L[|2, 1 \ 1 + rows(fast_gl_L), n_boot|] =
+            xdpt2_fast_obj_split_list(fit_r, resid_r, uid_draw, ETA_L,
+                                      gamma_cache, fast_gl_L)
         minu_L = colmin(OBJu_L)
         // Alternative-only minimum: the restricted row cannot stand in for
         // an unrestricted threshold solve when every alternative is nonfinite.
@@ -5727,7 +7977,7 @@ real scalar xdpt2_linearity_test(struct xdpt2_unit rowvector units,
 
             min_obj_b_u = obj_b_r
             has_alt_b = 0
-            for (gl_b = 1; gl_b <= cols(gamma_cache); gl_b++) {
+            for (gl_b = 1; gl_b <= n1_l; gl_b++) {
                 if (!gamma_cache[gl_b].ok) continue
                 if (gamma_cache[gl_b].n_rows != rows(Y_boot)) continue
                 xdpt2_fast_gmm_boot(Y_boot, gamma_cache[gl_b],
@@ -5748,9 +7998,10 @@ real scalar xdpt2_linearity_test(struct xdpt2_unit rowvector units,
         displayflush()
     }
 
-    // v0.9.3 R19 (#7): same validity floor as the linearity test.
+    // v0.9.3 R19 (#7): same validity rule as the linearity test (v0.9.33:
+    // every draw must be valid).
     valid_out = valid_boot
-    if (valid_boot < 10 | valid_boot < ceil(0.9 * n_boot)) return(.)
+    if (valid_boot < n_boot) return(.)
     // v0.7.0 (B2): add-one correction (Davidson-MacKinnon 2000).
     return((1 + count_exceed) / (1 + valid_boot))
 }
@@ -5798,7 +8049,7 @@ real rowvector xdpt2_hansen_j(real scalar obj, real scalar n_iv, real scalar k_W
 //           xdpt2_grid_search), V̂ = the reported variance of θ̂.
 // ẽ_{-k} is zero where the lag-k residual is unobserved — the AB trimming
 // convention. T2/T3 use the ESTIMATION-equation pieces (which for
-// method(fod|system) differ from the FD test residuals; the c_i scalars link
+// method(fod) differs from the FD test residuals; the c_i scalars link
 // the two within unit). If the full variance pieces are unavailable or
 // nonpositive, the statistic and p-value are missing; a negative pair count
 // records that diagnostic state. No simplified T1-only statistic is reported.
@@ -5811,8 +8062,9 @@ real rowvector xdpt2_ar_full(real scalar k,
 {
     real scalar i, j, jj, t_jk, found, n_pairs, n_pairs_i, n_pair_units, n_units_t
     real scalar b0, T1, T2, T3, c_u, mk, pval, denom2, full_ok, k_par
+    real scalar fast_t, fast_s, jlo, jhi, nt, ns
     real colvector rows_i, times_i, r_i, elk, uniq_t, g, g_pad, s, c_row
-    real matrix G_s, GAG, B_map
+    real matrix G_s, GAG, B_map, info_t, info_s
     real rowvector out_miss
     transmorphic cmap
 
@@ -5827,6 +8079,25 @@ real rowvector xdpt2_ar_full(real scalar k,
     elk = J(rows(e_t), 1, 0)
     uniq_t = uniqrows(uid_t)
     n_units_t = rows(uniq_t)
+    // v0.9.35: every stack is sorted by unit and, within unit, by time. The
+    // rows of a unit are then one block (panelsetup, in the order of uniq_t),
+    // and the lag-k partner of a row, if any, is among the k rows before it,
+    // times being increasing integers. The rows, their order, and the
+    // arithmetic are those of the scans, which remain for any other order.
+    nt = rows(uid_t)
+    fast_t = (rows(times_t) == nt & nt >= 2)
+    if (fast_t) {
+        fast_t = all((uid_t[|2 \ nt|] :> uid_t[|1 \ nt - 1|]) :|
+                     ((uid_t[|2 \ nt|] :== uid_t[|1 \ nt - 1|]) :&
+                      (times_t[|2 \ nt|] :> times_t[|1 \ nt - 1|])))
+    }
+    if (fast_t) {
+        fast_t = all(times_t :== trunc(times_t))
+    }
+    if (fast_t) {
+        info_t = panelsetup(uid_t, 1)
+        fast_t = (rows(info_t) == n_units_t)
+    }
     cmap = asarray_create("real", 1)
     asarray_notfound(cmap, 0)
     b0 = 0
@@ -5834,7 +8105,8 @@ real rowvector xdpt2_ar_full(real scalar k,
     n_pairs = 0
     n_pair_units = 0
     for (i = 1; i <= n_units_t; i++) {
-        rows_i = selectindex(uid_t :== uniq_t[i])
+        if (fast_t) rows_i = (info_t[i, 1]::info_t[i, 2])
+        else        rows_i = selectindex(uid_t :== uniq_t[i])
         if (rows(rows_i) < 1) continue
         times_i = times_t[rows_i]
         r_i = e_t[rows_i]
@@ -5843,7 +8115,13 @@ real rowvector xdpt2_ar_full(real scalar k,
         for (j = 1; j <= rows(rows_i); j++) {
             t_jk = times_i[j] - k
             found = 0
-            for (jj = 1; jj <= rows(rows_i); jj++) {
+            jlo = 1
+            jhi = rows(rows_i)
+            if (fast_t) {
+                jlo = max((1, j - k))
+                jhi = j - 1
+            }
+            for (jj = jlo; jj <= jhi; jj++) {
                 if (times_i[jj] == t_jk) {
                     found = jj
                     break
@@ -5879,8 +8157,7 @@ real rowvector xdpt2_ar_full(real scalar k,
         rows(A) == cols(Z_s) & cols(A) == cols(Z_s) &
         k_par == cols(X_s) & cols(X_t) <= k_par) {
 
-        // g = X_t' ẽ_{-k}, zero-padded to dim(θ̂) (e.g. the system level
-        // constant has no FD-residual derivative, so its entry is 0)
+        // g = X_t' ẽ_{-k}, zero-padded to dim(θ̂) when needed.
         g = X_t' * elk
         if (rows(g) < k_par) g_pad = g \ J(k_par - rows(g), 1, 0)
         else                 g_pad = g
@@ -5889,8 +8166,22 @@ real rowvector xdpt2_ar_full(real scalar k,
         // test stack contribute c = 0 (asarray notfound default)
         s = J(cols(Z_s), 1, 0)
         c_row = J(rows(e_s), 1, 0)
-        for (j = 1; j <= rows(e_s); j++) {
-            c_row[j] = asarray(cmap, uid_s[j])
+        // v0.9.35: one lookup per unit block when uid_s is sorted
+        ns = rows(uid_s)
+        fast_s = (ns >= 2)
+        if (fast_s) fast_s = all(uid_s[|2 \ ns|] :>= uid_s[|1 \ ns - 1|])
+        if (fast_s) {
+            info_s = panelsetup(uid_s, 1)
+            for (i = 1; i <= rows(info_s); i++) {
+                c_row[|info_s[i, 1] \ info_s[i, 2]|] =
+                    J(info_s[i, 2] - info_s[i, 1] + 1, 1,
+                      asarray(cmap, uid_s[info_s[i, 1]]))
+            }
+        }
+        else {
+            for (j = 1; j <= rows(e_s); j++) {
+                c_row[j] = asarray(cmap, uid_s[j])
+            }
         }
         s = Z_s' * (e_s :* c_row)
 
@@ -5921,6 +8212,96 @@ real rowvector xdpt2_ar_full(real scalar k,
     pval = 2 * normal(-abs(mk))
     // v0.7.2-d5: expose b0, T1, T2+T3 for external verification
     return((mk, n_pairs, pval, b0, T1, T2 + T3, n_pair_units))
+}
+
+// v0.9.29: for each variable in -vars-, 1 if its value is identical within
+// every group of -grp- over the rows marked by -touse- (groups with a single
+// row carry no variation and are ignored), 0 otherwise. With grp = panel
+// variable this detects regressors removed exactly by FD/FOD; with grp = time
+// variable it detects regressors common to all units in every period, which
+// td removes. Exact comparisons: FOD of such a column would otherwise leave
+// rounding noise (Mata's mean of k equal doubles is not always exact) that
+// the estimator would fit.
+real rowvector xdpt2_const_within(string scalar vars, string scalar grp,
+                                  string scalar touse)
+{
+    real matrix X, info
+    real colvector g, ord
+    real rowvector out
+    real scalar j, i, r0, r1
+    X = st_data(., vars, touse)
+    g = st_data(., grp, touse)
+    out = J(1, cols(X), 1)
+    if (rows(X) < 2) return(out)
+    ord = order(g, 1)
+    X = X[ord, .]
+    g = g[ord]
+    info = panelsetup(g, 1)
+    for (j = 1; j <= cols(X); j++) {
+        for (i = 1; i <= rows(info); i++) {
+            r0 = info[i, 1]
+            r1 = info[i, 2]
+            if (r1 <= r0) continue
+            if (max(X[|r0, j \ r1, j|]) != min(X[|r0, j \ r1, j|])) {
+                out[j] = 0
+                break
+            }
+        }
+    }
+    return(out)
+}
+
+// v0.9.33 (an identical copy lives in xtdpthresh_p.ado, whose Mata block
+// cannot see this one; keep the two function texts identical -- the files
+// differ only in their line endings): data
+// signature for -predict- (e(p_dsig_type) "rowsig2") that ties every value to
+// its (panel, time) key. The first two variables must be the panel and time
+// variables. Rows are sorted by those keys and each column is summarized by
+// its plain sum and two sums weighted by Park-Miller sequences in the row
+// rank, so values moved between rows, relabelled keys, added or dropped
+// observations, and changes to single values change the signature (unless
+// smaller than the rounding of the column sums, about 1e-16 of a sum),
+// while a change of storage type (compress) or of the sort order does not.
+// Missing values enter as a fixed sentinel. rowsig1 (0.9.29-0.9.32) used the
+// weights 1 + mod(r*a, m)/m, which are linear in r below r = m/a (about
+// 30,000 rows), so its two weighted sums added only sum(r*x) to sum(x): a
+// change such as +c, -2c, +c on three consecutive rows kept all three sums.
+string scalar xdpt2_rowsig2(string scalar vars)
+{
+    real matrix X
+    real colvector ord, w1, w2
+    real scalar j, n, x1, x2
+    string scalar s
+    X = st_data(., vars)
+    n = rows(X)
+    if (n == 0) return("0")
+    // v0.9.34: sort by every column, not only (panel, time): rows that
+    // share a key (several rows of a panel with a missing time) are ties
+    // that order() does not keep in a fixed order; identical rows are
+    // interchangeable. For unique keys the order is unchanged.
+    ord = order(X, (1..cols(X)))
+    X = editmissing(X[ord, .], -9876543210.125)
+    // Park-Miller sequences x(j) = a*x(j-1) mod (2^31 - 1), x(0) = 1, for
+    // a = 48271 and a = 69621; a*x < 2^48, so every step is exact in double
+    w1 = J(n, 1, .)
+    w2 = J(n, 1, .)
+    x1 = 1
+    x2 = 1
+    for (j = 1; j <= n; j++) {
+        x1 = mod(48271 * x1, 2147483647)
+        x2 = mod(69621 * x2, 2147483647)
+        w1[j] = x1
+        w2[j] = x2
+    }
+    w1 = 1 :+ w1 :/ 2147483647
+    w2 = 1 :+ w2 :/ 2147483647
+    s = "2:" + strofreal(n) + ":" + strofreal(cols(X))
+    for (j = 1; j <= cols(X); j++) {
+        s = s + ":" + strofreal(sum(X[., j]), "%21x") +
+                "," + strofreal(sum(X[., j] :* w1), "%21x") +
+                "," + strofreal(sum(X[., j] :* w2), "%21x")
+    }
+    return(s)
 }
 
 // v0.7.3 (D5): fill the -predict- target variable from the persisted
@@ -6029,7 +8410,6 @@ void xtdpthresh_run(string scalar depvar_name,
                       real scalar flag_kink,
                       real scalar flag_collapse,
                       real scalar maxlag_lo, real scalar maxlag_hi,
-                      real scalar levmaxlag_lo, real scalar levmaxlag_hi,
                       real scalar n_grid,
                       real scalar n_gridci,
                       real scalar trim_rate,
@@ -6043,14 +8423,17 @@ void xtdpthresh_run(string scalar depvar_name,
                        real scalar flag_notest,
                        real scalar flag_cont_test)
 {
+    // Keep the numerical backend closed to unsupported transformations.
+    if (method != "fd" & method != "fod") {
+        errprintf("xtdpthresh: backend supports method(fd) and method(fod) only\n")
+        exit(198)
+    }
     external real scalar xdpt_collapse, xdpt_iv_collapse, xdpt_lag_lo, xdpt_lag_hi
-    external real scalar xdpt_lev_lo, xdpt_lev_hi, xdpt_verbose, xdpt_trim_rate
+    external real scalar xdpt_verbose, xdpt_trim_rate
     xdpt_collapse = flag_collapse
     xdpt_iv_collapse = flag_iv_collapse
     xdpt_lag_lo = maxlag_lo
     xdpt_lag_hi = maxlag_hi
-    xdpt_lev_lo = levmaxlag_lo
-    xdpt_lev_hi = levmaxlag_hi
     xdpt_trim_rate = trim_rate
     xdpt_verbose = strtoreal(st_local("flag_verbose"))
     // v0.7.13 (C1): Windmeijer flag read from the caller's frame; the
@@ -6061,6 +8444,29 @@ void xtdpthresh_run(string scalar depvar_name,
     xdpt_vce_wind = strtoreal(st_local("flag_vce_wind"))
     if (xdpt_vce_wind >= .) xdpt_vce_wind = 0
     xdpt_wind_applied = 0
+    // v0.9.32: kink joint-variance flag and the conditional V kept for the
+    // AR statistics; set inside the grid search for the kink model only.
+    external real matrix xdpt_V_cond_ar
+    external real scalar xdpt_kink_joint
+    xdpt_V_cond_ar = J(0, 0, .)
+    xdpt_kink_joint = .
+    // v0.9.35: the full joint variance of (theta, gamma), for the AR tests
+    external real matrix xdpt_V_joint_full
+    xdpt_V_joint_full = J(0, 0, .)
+    // v0.9.34 (C3): 1 if the kink refinement moved gamma-hat off the grid
+    external real scalar xdpt_kref
+    xdpt_kref = .
+    // v0.9.35: residual diagnostics of the dropped instrument columns, set
+    // by the final stack at gamma-hat (xdpt2_indep_cols)
+    external real scalar xdpt_ivc_diag, xdpt_ivc_dep_res, xdpt_ivc_dep_near
+    xdpt_ivc_diag = 0
+    xdpt_ivc_dep_res = .
+    xdpt_ivc_dep_near = 0
+    // v0.9.35: kernel bandwidth of the jump model's joint variance
+    external real scalar xdpt_bwscale, xdpt_gamma_bw
+    xdpt_bwscale = strtoreal(st_local("bwscale"))
+    if (xdpt_bwscale >= . | xdpt_bwscale <= 0) xdpt_bwscale = 1.5
+    xdpt_gamma_bw = .
     // v0.9.9 R26: exportgmm flag visible to grid_search, plus a RESET of
     // the Windmeijer-input externals (populated inside grid_search when
     // the correction runs under exportgmm; used by the independent
@@ -6084,6 +8490,24 @@ void xtdpthresh_run(string scalar depvar_name,
     xdpt_w_r1 = J(0, 1, .)
     xdpt_w_gbar2 = J(0, 1, .)
     xdpt_w_n = .
+    // v0.9.29: first-step weight fallback flag (see xdpt2_build_W_ma1).
+    external real scalar xdpt_w1_fallback
+    xdpt_w1_fallback = 0
+    // v0.9.30: instrument columns dropped by xdpt2_drop_cellconst (last stack).
+    external real scalar xdpt_ivc_drop
+    xdpt_ivc_drop = 0
+    // v0.9.31: number of stage-1 grid points (the initial grid; refine()
+    // appends its candidates after them), for the bootstrap replays.
+    external real scalar xdpt_n_stage1
+    xdpt_n_stage1 = .
+    // v0.9.31: drop-mask cache of xdpt2_stack_at_gamma, reset per run.
+    external real matrix xdpt_ivc_Zref
+    external real rowvector xdpt_ivc_mask
+    external real colvector xdpt_ivc_tref
+    xdpt_ivc_Zref = J(0, 0, .)
+    xdpt_ivc_mask = J(1, 0, .)
+    xdpt_ivc_tref = J(0, 1, .)
+    xdpt2_tpl_release()
     // v0.7.13 (C2): FWL time-dummy partialling flag for the stack builder.
     external real scalar xdpt_td_fwl
     xdpt_td_fwl = strtoreal(st_local("flag_td_fwl"))
@@ -6182,8 +8606,7 @@ void xtdpthresh_run(string scalar depvar_name,
         }
     }
     units = xdpt2_build_units(y, Ly, X_exog, X_endog, X_predet, X_inst,
-                               q, pid, tid, eqv, flag_static,
-                               (method == "system" ? 1 : 2))
+                               q, pid, tid, eqv, flag_static)
     n_units = length(units)
     if (n_units < 5) {
         errprintf("xtdpthresh: need >= 5 units (got %g)\n", n_units)
@@ -6217,16 +8640,24 @@ void xtdpthresh_run(string scalar depvar_name,
         _teqpos = _teqpos + rows(_tei)
     }
     xdpt_teq = uniqrows(xdpt_teq)
+    // v0.9.31: t_max only sets the lag width (xdpt2_transform_unit) and the
+    // allocation gate below. Instruments are lags, so the widest lag any
+    // equation can use is (last equation time) - t_min: under FD t - L >=
+    // t_min, under FOD t + 1 - L >= t_min with t at most the last equation
+    // time minus one. Trailing history rows (after the last equation, e.g.
+    // from -if t <= 30- on a longer panel) only added all-zero lag columns,
+    // which were dropped, but they inflated the gate and could reject a
+    // valid large design.
+    t_max = max(xdpt_teq)
 
     // v0.9.19: fail BEFORE allocating a nominally enormous instrument
     // matrix. Lag columns are pruned only after stacking; on a long or
-    // sparse delta-1 calendar, an open/large maxlag() or levmaxlag() can
+    // sparse delta-1 calendar, an open/large maxlag() can
     // otherwise allocate a huge Z and then form an L x L weight matrix,
     // exhausting RAM before the existing proliferation warning can help.
     // These are conservative upper bounds before exact-zero columns drop.
     real scalar _iv_span, _iv_hi, _iv_lo_y, _iv_lo_p, _iv_ny, _iv_np
     real scalar _iv_tstart, _iv_toff, _iv_nt, _iv_per_t, _iv_tcols
-    real scalar _iv_lhi, _iv_nl, _iv_loff, _iv_nlt, _iv_per_l, _iv_lcols
     real scalar _iv_total, _iv_row_upper, _iv_maxcols, _iv_maxcells
     _iv_span = t_max - t_min
     _iv_hi = maxlag_hi
@@ -6244,24 +8675,8 @@ void xtdpthresh_run(string scalar depvar_name,
     _iv_tcols = (flag_collapse ? _iv_per_t : _iv_nt * _iv_per_t) +
                 (cols(X_inst) == 0 ? 0 :
                  (flag_iv_collapse ? cols(X_inst) : _iv_nt * cols(X_inst)))
-    _iv_lcols = 0
-    if (method == "system") {
-        _iv_lhi = levmaxlag_hi
-        if (_iv_lhi > _iv_span) _iv_lhi = _iv_span
-        _iv_nl = (_iv_lhi >= levmaxlag_lo ?
-                  _iv_lhi - levmaxlag_lo + 1 : 0)
-        _iv_loff = xdpt2_tpos(xdpt_teq, t_min)
-        _iv_nlt = rows(xdpt_teq) - _iv_loff + 1
-        if (_iv_nlt < 1) _iv_nlt = 1
-        _iv_per_l = ((flag_static ? 0 : 1) + cols(X_exog) +
-                     cols(X_endog) + cols(X_predet)) * _iv_nl
-        _iv_lcols = (flag_collapse ? _iv_per_l : _iv_nlt * _iv_per_l) +
-                    (cols(X_inst) == 0 ? 0 :
-                     (flag_iv_collapse ? cols(X_inst) :
-                      _iv_nlt * cols(X_inst))) + 1
-    }
-    _iv_total = _iv_tcols + _iv_lcols
-    _iv_row_upper = _nteq * (method == "system" ? 2 : 1)
+    _iv_total = _iv_tcols
+    _iv_row_upper = _nteq
     _iv_maxcols = 5000
     _iv_maxcells = 50000000
     if (_iv_total > _iv_maxcols |
@@ -6269,9 +8684,9 @@ void xtdpthresh_run(string scalar depvar_name,
         errprintf("xtdpthresh: projected instrument allocation is unsafe before zero-column pruning\n")
         errprintf("  (up to %g columns and %g Z cells over retained span %g).\n",
                   _iv_total, _iv_row_upper * _iv_total, _iv_span)
-        errprintf("  Use an explicit, tighter maxlag(); with method(system), also tighten\n")
-        errprintf("  levmaxlag(); and/or specify collapse. This safety gate prevents an\n")
-        errprintf("  out-of-memory failure while preserving all requested moments when run.\n")
+        errprintf("  Use an explicit, tighter maxlag() and/or specify collapse.\n")
+        errprintf("  This gate bounds the size of the instrument matrix; the per-gamma\n")
+        errprintf("  caches need additional memory that it does not count.\n")
         exit(498)
     }
 
@@ -6281,63 +8696,81 @@ void xtdpthresh_run(string scalar depvar_name,
     real matrix Y_eff, W_eff, Z_eff
     real colvector times_eff, uid_eff, q_eff
     real scalar n_units_eff
-    real colvector eqtype_eff
     xdpt2_stack_at_gamma(units, (q_lo + q_hi) / 2, method,
                           flag_static, flag_kink, t_min, t_max,
-                          Y_eff, W_eff, Z_eff, times_eff, uid_eff,
-                          eqtype_eff)
+                          Y_eff, W_eff, Z_eff, times_eff, uid_eff)
     if (rows(Y_eff) < 20) {
         errprintf("xtdpthresh: fewer than 20 usable GMM rows after transformation\n")
         exit(498)
     }
-    // v0.8.6 R15 (#1/#2): method(system) must contribute BOTH equation
-    // blocks -- transformed AND level -- or it is not system GMM (the
-    // Blundell-Bond level moments AUGMENT the transformed system; a
-    // level-only or transformed-only fit under a system label mislabels
-    // the estimator, starves the FD-restacked AR tests, and makes Hansen J
-    // reflect a single block). Equation-row availability does not depend
-    // on gamma, so the initial effective stack decides this once, BEFORE
-    // the grid build, point estimation, and every bootstrap.
-    if (method == "system") {
-        real scalar n_trans0, n_level0
-        n_trans0 = sum(eqtype_eff :== 1)
-        n_level0 = sum(eqtype_eff :== 2)
-        if (n_trans0 == 0) {
-            errprintf("xtdpthresh: method(system) has no usable transformed equations;\n")
-            errprintf("  the fit would be level-only and is not system GMM\n")
-            exit(498)
+    // v0.9.28: Z does not depend on gamma, so its conditioning is checked
+    // once here. The grid loop applies the same Z'Z test at every candidate
+    // and, when it fails, reported only that no gamma was admitted. The
+    // decision is identical; only the message and the time to fail change.
+    real matrix ZZ_eff, ZZ_eff_inv
+    real scalar zz_eff_ok
+    ZZ_eff = Z_eff' * Z_eff / rows(Z_eff)
+    xdpt2_syminv(ZZ_eff, zz_eff_ok, ZZ_eff_inv)
+    if (!zz_eff_ok) {
+        // v0.9.34: dependent columns are dropped in the stack
+        // (xdpt2_indep_cols), so what reaches this gate is near dependence.
+        // v0.9.35: columns within a relative residual of 3.2e-7 are dropped
+        // too, so this is near dependence beyond that.
+        errprintf("xtdpthresh: the instrument matrix is ill-conditioned: some instrument\n")
+        errprintf("  columns are nearly, though not exactly, linear combinations of others\n")
+        errprintf("  (columns closer than a relative residual of 3.2e-7 are dropped). Common\n")
+        errprintf("  causes: an iv() variable close to a combination of instruments already\n")
+        errprintf("  present (for example one built from lags of y), or lags of a variable\n")
+        errprintf("  common to all units only up to rounding. A smaller instrument set\n")
+        errprintf("  (collapse, maxlag()) can help, as can rescaling nearly equal\n")
+        errprintf("  instruments (for example, (z2 - z1)/c in place of z2).\n")
+        // v0.9.30: variables common to all units only up to rounding are not
+        // recognized as common; name them, since they are a likely cause.
+        string scalar _ncv
+        _ncv = xdpt2_near_common(st_local("_cc_vars"), st_local("_cc_labs"),
+                                 st_local("timevar"), st_local("touse"))
+        if (_ncv != "") {
+            errprintf("  Nearly common to all units in every period, but not exactly: %s.\n", _ncv)
+            errprintf("  Make such a variable exactly equal across units (for example, merge it\n")
+            errprintf("  by period) so that xtdpthresh can treat it as a common variable.\n")
         }
-        if (n_level0 == 0) {
-            errprintf("xtdpthresh: method(system) has no usable level equations;\n")
-            errprintf("  the fit would be FOD-only -- use method(fod) explicitly\n")
-            exit(498)
+        exit(498)
+    }
+    // v0.9.31: a regressor removed by the unit and time effects together
+    // (a_i + g_t) under td -- see xdpt2_stack_at_gamma. FOD used to fit the
+    // rounding residue (coefficients near 1e25, rc 0); FD failed generically.
+    external real rowvector xdpt_td_gone
+    if (cols(xdpt_td_gone) > 0) {
+        string rowvector _bl
+        string scalar _gone
+        real scalar _gi
+        _bl = J(1, 0, "")
+        if (!flag_static) _bl = _bl, ("L." + st_local("depvar"))
+        _bl = _bl, tokens(st_local("all_exog_lab")), tokens(st_local("endog_lab")),
+              tokens(st_local("predet_lab"))
+        _gone = ""
+        for (_gi = 1; _gi <= cols(xdpt_td_gone); _gi++) {
+            _gone = _gone + (_gone == "" ? "" : " ") +
+                (xdpt_td_gone[_gi] <= cols(_bl) ? _bl[xdpt_td_gone[_gi]] :
+                 "regressor " + strofreal(xdpt_td_gone[_gi]))
         }
-        // v0.9.1 R17 (#2): row counts are not enough. Each block needs
-        // enough CLUSTERS for its moments and their clustered covariance
-        // to mean anything, and the two blocks must overlap on at least
-        // one panel unit -- disjoint blocks have mechanically zero
-        // cross-block covariance and are not the usual system-GMM
-        // structure (both moment sets built for the SAME units).
-        real colvector u_t0, u_l0
-        real scalar nu_t0, nu_l0, nu_b0
-        u_t0 = uniqrows(select(uid_eff, eqtype_eff :== 1))
-        u_l0 = uniqrows(select(uid_eff, eqtype_eff :== 2))
-        nu_t0 = rows(u_t0)
-        nu_l0 = rows(u_l0)
-        nu_b0 = nu_t0 + nu_l0 - rows(uniqrows(u_t0 \ u_l0))
-        if (nu_t0 < 5) {
-            errprintf("xtdpthresh: method(system) has fewer than 5 transformed-equation clusters (got %g)\n", nu_t0)
-            exit(498)
-        }
-        if (nu_l0 < 5) {
-            errprintf("xtdpthresh: method(system) has fewer than 5 level-equation clusters (got %g);\n", nu_l0)
-            errprintf("  so few clusters cannot support the level moments -- use method(fod)\n")
-            exit(498)
-        }
-        if (nu_b0 == 0) {
-            errprintf("xtdpthresh: method(system) has no panel units contributing to BOTH equation blocks\n")
-            exit(498)
-        }
+        errprintf("xtdpthresh: %s is removed by the unit and time effects together: it\n", _gone)
+        errprintf("  has the form a_i + g_t (for example, firm age = year - founding year),\n")
+        errprintf("  which the %s transformation and td remove exactly, so its coefficient\n", strupper(method))
+        errprintf("  is not identified. Remove it, or drop td.\n")
+        exit(498)
+    }
+    // v0.9.31: after the columns that repeat the constant instruments are
+    // dropped, the threshold needs at least one instrument more than the
+    // coefficients; otherwise every candidate would be rejected with a
+    // generic message.
+    external real scalar xdpt_ivc_drop
+    if (xdpt_ivc_drop > 0 & cols(Z_eff) < cols(W_eff) + 1) {
+        errprintf("xtdpthresh: %g instrument column(s) that repeat the constant instruments\n", xdpt_ivc_drop)
+        errprintf("  (variables common to all units in each period) were dropped, leaving %g\n", cols(Z_eff))
+        errprintf("  instruments for %g coefficients; at least %g are needed. Add\n", cols(W_eff), cols(W_eff) + 1)
+        errprintf("  instruments (a wider maxlag(), or iv()) or remove such variables.\n")
+        exit(498)
     }
 
     // v0.8.1 R7 (audit): the grid/trim support is the set of q values whose
@@ -6349,19 +8782,14 @@ void xtdpthresh_run(string scalar depvar_name,
     if (st_local("gridsample") == "observed") {
         // v0.8.2 R10 (#5): xthenreg-style support -- current-row q of the
         // retained equation rows only.
-        // v0.8.2 R11 (#6): deduplicate by (unit, time) first. Under
-        // method(system) the same observation appears in BOTH a transformed
-        // and a level row, so raw stacked rows would double-count every
-        // level-equation q in the quantile bounds, the grid quantiles, and
-        // the minregime() counts. Under fd/fod the keys are already unique
-        // and this is a no-op.
+        // Deduplicate by (unit,time) before mapping back to q.
         real matrix obs_keys
         obs_keys = uniqrows((uid_eff, times_eff))
         q_eff = xdpt2_q_at_rows(units, obs_keys[., 2], obs_keys[., 1])
         q_eff = select(q_eff, q_eff :< .)
     }
     else {
-        q_eff = xdpt2_q_support(units, times_eff, uid_eff, eqtype_eff, method)
+        q_eff = xdpt2_q_support(units, times_eff, uid_eff, method)
     }
     // v0.8.2 R9 (#7): the deduplicated effective support is passed to the
     // cache builders as an ARGUMENT (grid construction and grid admission
@@ -6382,9 +8810,6 @@ void xtdpthresh_run(string scalar depvar_name,
     // floor and the floor actually applied (max of the two); mirrors
     // xdpt2_build_gamma_cache exactly.
     real scalar minreg_def, minreg_applied
-    minreg_def = ceil(trim_rate * rows(q_eff) / 2)
-    if (minreg_def < 2) minreg_def = 2
-    minreg_applied = (minreg_user > minreg_def ? minreg_user : minreg_def)
     if (rows(q_eff) < 20) {
         errprintf("xtdpthresh: threshold variable has too few usable values\n")
         exit(498)
@@ -6395,6 +8820,16 @@ void xtdpthresh_run(string scalar depvar_name,
         errprintf("xtdpthresh: qx() has insufficient variation on the effective GMM sample\n")
         exit(498)
     }
+    // v0.9.34: the default floor is the number of observations in the
+    // smaller trimmed tail, min(#{q <= q_lo}, #{q > q_hi}): the counts at the
+    // two ends of the grid, so both ends are admitted. It was ceil(trim*n/2);
+    // when q_hi was a data value only ceil(trim*n/2) - 1 observations lay
+    // above it, and the top grid point was admitted or not by rounding.
+    external real scalar xdpt_minreg_def
+    minreg_def = min((sum(q_eff :<= q_lo), sum(q_eff :> q_hi)))
+    if (minreg_def < 2) minreg_def = 2
+    minreg_applied = (minreg_user > minreg_def ? minreg_user : minreg_def)
+    xdpt_minreg_def = minreg_def
     n_units_eff = rows(uniqrows(uid_eff))
     if (n_units_eff < 5) {
         errprintf("xtdpthresh: need >= 5 contributing units (got %g)\n", n_units_eff)
@@ -6430,9 +8865,15 @@ void xtdpthresh_run(string scalar depvar_name,
     // grid search, the grid-bootstrap CI, the linearity test, and (as the
     // jump cache) the continuity test below.
     struct xdpt2_gamma_cache rowvector cache_main
-    cache_main = xdpt2_build_gamma_cache(units, gamma_grid, method,
-                                          flag_static, flag_kink, t_min, t_max,
-                                          q_eff, minreg_user)
+    // v0.9.34 (SPEEDUP): the template of this build serves the later builds
+    // of the same model (refinements, the confidence-set grid)
+    struct xdpt2_stack_tpl scalar tpl_main
+    real scalar tpl_main_st
+    tpl_main_st = 0
+    cache_main = xdpt2_build_gamma_cache_t(units, gamma_grid, method,
+                                            flag_static, flag_kink, t_min,
+                                            t_max, q_eff, minreg_user,
+                                            tpl_main, tpl_main_st)
     // v0.8.2 R10 (#2/#4): the search space users should reason about is the
     // ADMITTED grid, not the nominal trim bounds -- minregime,
     // ties, rank/condition failures and solver availability all prune
@@ -6450,26 +8891,89 @@ void xtdpthresh_run(string scalar depvar_name,
     }
     real matrix best_A
     real scalar best_twostep
-    // v0.9.14 R33 (#4): under refine() the correction and the xdpt_w_*
-    // certification exports belong to the FINAL estimate only -- disable
-    // both for the coarse and intermediate searches and run one final
-    // enabled search after the pool loop ("computed once at the final
-    // estimate" is then literally true, and no intermediate pass wastes
-    // the correction solve).
-    real scalar _rf_wind_hold, _rf_expg_hold, _rf_gated
-    _rf_gated = 0
-    if (strtoreal(st_local("refine")) > 0) {
-        _rf_wind_hold = xdpt_vce_wind
-        _rf_expg_hold = xdpt_expg
-        xdpt_vce_wind = 0
-        xdpt_expg = 0
-        _rf_gated = 1
+    // v0.9.25 adaptive-search bookkeeping.  q_split_supp always uses the
+    // transformed design support, even when gridsample(observed) defines the
+    // initial grid, because stopping is about the realized regime split.
+    real colvector q_split_supp
+    q_split_supp = xdpt2_q_support(units, times_eff, uid_eff, method)
+    if (rows(q_split_supp) > 0) {
+        q_split_supp = uniqrows(sort(q_split_supp, 1))
     }
+    real scalar search_l1_n, search_l2_n, search_l3_n
+    real scalar search_s1_level, search_s2_level
+    real scalar search_s1_n, search_s2_n
+    real scalar search_s1_same, search_s2_same
+    real scalar search_s1_gain, search_s2_gain
+    real scalar search_s1_conv, search_s2_conv
+    real scalar search_hit_max, search_W2_builds
+    real scalar search_g1, search_o1, search_g2_global, search_o2_global
+    real scalar n_refine, ref_it, ref_added, ref_obj_gain
+    real scalar ref_pool_n, ref_remaining, ref_exhausted
+    real scalar ref_alo, ref_ahi, ref_in_basin, ref_neigh_rem, ref_complete
+    string scalar search_mode
+    real scalar search_tol, search_max_level
+    search_mode = st_local("searchmode")
+    search_tol = strtoreal(st_local("searchtol"))
+    search_max_level = strtoreal(st_local("search_max_level"))
+    n_refine = strtoreal(st_local("refine"))
+    if (n_refine >= .) n_refine = 0
+    search_l1_n = .
+    search_l2_n = .
+    search_l3_n = .
+    search_s1_level = .
+    search_s2_level = .
+    search_s1_n = .
+    search_s2_n = .
+    search_s1_same = .
+    search_s2_same = .
+    search_s1_gain = .
+    search_s2_gain = .
+    search_s1_conv = .
+    search_s2_conv = .
+    search_hit_max = .
+    search_W2_builds = .
+    search_g1 = .
+    search_o1 = .
+    search_g2_global = .
+    search_o2_global = .
+    ref_it = .
+    ref_added = .
+    ref_obj_gain = .
+    ref_pool_n = .
+    ref_remaining = .
+    ref_exhausted = .
+    ref_alo = .
+    ref_ahi = .
+    ref_in_basin = .
+    ref_neigh_rem = .
+    ref_complete = .
+
     xdpt2_grid_search(units, gamma_grid, cache_main, method, flag_static,
-                       flag_kink, t_min, t_max,
-                       best_gamma, best_obj, best_theta, best_V, best_V_influence, best_A,
+                       flag_kink, t_min, t_max, q_eff, q_split_supp,
+                       minreg_user, search_mode, search_tol,
+                       search_max_level, n_refine,
+                       best_gamma, best_obj, best_theta, best_V,
+                       best_V_influence, best_A,
                        best_twostep, n_adm2, grid2_adm_lo, grid2_adm_hi,
-                       gamma_admitted)
+                       gamma_admitted, search_l1_n, search_l2_n,
+                       search_l3_n, search_s1_level, search_s2_level,
+                       search_s1_n, search_s2_n, search_s1_same,
+                       search_s2_same, search_s1_gain, search_s2_gain,
+                       search_s1_conv, search_s2_conv, search_hit_max,
+                       search_W2_builds, search_g1, search_o1,
+                       search_g2_global, search_o2_global,
+                       ref_it, ref_added, ref_pool_n, ref_remaining,
+                       ref_exhausted, ref_alo, ref_ahi, ref_in_basin,
+                       ref_neigh_rem, ref_complete, ref_obj_gain,
+                       tpl_main, tpl_main_st)
+    // v0.9.31: stage 1 of the search runs on the initial grid only
+    // (entries 1..search_s1_n of cache_main); the replays must match.
+    xdpt_n_stage1 = search_s1_n
+    // The engine may have appended global level-2/3 and local support entries.
+    n_struct = 0
+    for (gg_a = 1; gg_a <= rows(gamma_grid); gg_a++) {
+        if (cache_main[gg_a].ok) n_struct = n_struct + 1
+    }
     if (rows(gamma_admitted) > 0) {
         grid_adm_lo = min(gamma_admitted)
         grid_adm_hi = max(gamma_admitted)
@@ -6478,10 +8982,24 @@ void xtdpthresh_run(string scalar depvar_name,
         grid_adm_lo = .
         grid_adm_hi = .
     }
-    printf("  Grid: requested %g, distinct %g, structural %g, admitted %g; admitted span [%8.4f, %8.4f]\n",
+    printf("  Grid: initial %g, cached %g, structural %g, stage-1 admitted %g; span [%8.4f, %8.4f]\n",
            n_grid, rows(gamma_grid), n_struct, rows(gamma_admitted), grid_adm_lo, grid_adm_hi)
+    if (search_mode == "adaptive") {
+        printf("  Nested search: stage 1 level %g (%g points, converged=%g); stage 2 level %g (%g points, converged=%g); W2 builds=%g\n",
+               search_s1_level, search_s1_n, search_s1_conv,
+               search_s2_level, search_s2_n, search_s2_conv,
+               search_W2_builds)
+    }
     displayflush()
 
+    if (best_gamma == . & rows(gamma_admitted) >= 2) {
+        // v0.9.34: stage 1 admitted candidates, but the profile is flat
+        errprintf("xtdpthresh: the GMM criterion is flat over the admitted grid: every\n")
+        errprintf("  candidate threshold gives the same fit (for example, q takes few values,\n")
+        errprintf("  so all admitted candidates give the same regime split). The threshold is\n")
+        errprintf("  not identified on this grid.\n")
+        exit(498)
+    }
     if (best_gamma == .) {
         errprintf("xtdpthresh: point estimation failed (no γ admitted a valid GMM solve)\n")
         errprintf("  Hard requirements include >=20 usable rows, at least K+1 moments,\n")
@@ -6493,267 +9011,16 @@ void xtdpthresh_run(string scalar depvar_name,
     }
     if (xdpt_verbose) printf("  γ̂ = %8.4f, obj = %8.4f\n", best_gamma, best_obj)
 
-    // v0.9.10 R27: OPT-IN local refinement -- refine(#) iterations. The
-    // coarse grid is a finite approximation and the design only changes at
-    // OBSERVED q support points, so each iteration takes the support
-    // values strictly between gamma-hat's two grid neighbors, APPENDS them
-    // to gamma_grid/cache_main (the point estimate, unrestricted bootstrap
-    // searches, and admission bookkeeping then see them natively), and re-runs
-    // the same
-    // two-stage fixed-weight search over the enlarged grid. Terminates
-    // when no new support values remain between the neighbors or the
-    // iteration cap is reached. Default 0 (off): all fixed-grid anchors
-    // are unchanged.
-    real scalar n_refine, ref_it, ref_added
-    real colvector ref_cand, ref_gs, ref_keep, ref_ix, ref_base, ref_supp
-    real scalar ref_pos, ref_lo, ref_hi, ref_j2
-    struct xdpt2_gamma_cache rowvector cache_ref
-    n_refine = strtoreal(st_local("refine"))
-    if (n_refine >= .) n_refine = 0
-    ref_added = 0
-    ref_it = 0
-    // v0.9.11 R30: (a) brackets come from the ORIGINAL coarse grid, not the
-    // refined grid -- a refined point that fails to solve would otherwise
-    // become an artificial barrier that shrinks the search cell and stops
-    // refinement early; (b) candidates come from the TRANSFORM support
-    // (q values that actually enter the transformed design), which under
-    // gridsample(observed) is a superset of the current-row grid support.
-    // v0.9.12 R31 / v0.9.13 R32: brackets are based on the STAGE-1
-    // SEARCHABLE coarse points (full fixed-W1 solve) plus gamma-hat.
-    // Excluding stage-1-unsearchable points avoids artificial barriers;
-    // some excluded points may nevertheless be solvable under the stage-2
-    // weight -- exclusion only WIDENS the bracket, never orphans support.
-    // v0.9.13 R32: the candidate POOL is fixed ONCE from the INITIAL
-    // coarse optimum's bracket. Re-bracketing around each provisional
-    // best (with the <=30-per-iteration batch cap) made the outcome
-    // depend on the batch rule: a provisional best in the first batch
-    // could shrink the bracket and orphan never-evaluated support points
-    // on the far side. With a fixed pool, enough iterations evaluate the
-    // ENTIRE support of the initial basin, and no evaluated point is ever
-    // lost (the grid only grows).
-    // v0.9.16 R35: the anchor base tracks the CURRENT estimator state --
-    // it is rebuilt via xdpt2_ref_base_current() here AND after every
-    // re-search inside the loop (W2 and even the two-step/one-step status
-    // can change with each enlarged-grid search; a frozen base
-    // mis-brackets migrated optima and yields false completeness).
-    real scalar n_coarse, ref_nanchor
-    n_coarse = rows(gamma_grid)
-    ref_base = J(0, 1, .)
     if (n_refine > 0) {
-        ref_base = xdpt2_ref_base_current(gamma_grid, cache_main, n_coarse,
-                                          best_twostep, best_A, best_gamma,
-                                          ref_nanchor)
-    }
-    if (n_refine > 0 & st_local("gridsample") == "observed") {
-        ref_supp = xdpt2_q_support(units, times_eff, uid_eff, eqtype_eff, method)
-    }
-    else ref_supp = q_eff
-    // Refinement candidates are distinct q support VALUES, not observation
-    // counts. Deduplicate once so completion metadata cannot double-count ties.
-    if (rows(ref_supp) > 0) ref_supp = uniqrows(sort(ref_supp, 1))
-    real colvector ref_pool
-    real scalar ref_alo, ref_ahi, ref_pool_n, ref_remaining, ref_exhausted
-    real scalar ref_alo0, ref_ahi0, ref_nlo, ref_nhi
-    real scalar ref_in_basin, ref_neigh_rem, ref_complete
-    ref_pool = J(0, 1, .)
-    ref_pool_n = 0
-    ref_remaining = 0
-    ref_exhausted = .
-    ref_alo = .
-    ref_ahi = .
-    if (n_refine > 0) {
-        ref_pos = 1
-        for (ref_j2 = 1; ref_j2 <= rows(ref_base); ref_j2++) {
-            if (ref_base[ref_j2] <= best_gamma) ref_pos = ref_j2
+        printf("  Final fixed-W2 refine: %g iteration(s), %g support point(s) added; complete=%g\n",
+               ref_it, ref_added, ref_complete)
+        if (best_twostep != 1 & st_local("nowarn") == "") {
+            printf("{err}warning: refine() was not applied because the estimator fell back to one step.\n")
         }
-        ref_alo = (ref_pos > 1 ? ref_base[ref_pos - 1] : q_lo)
-        ref_ahi = (ref_pos < rows(ref_base) ? ref_base[ref_pos + 1] : q_hi)
-        ref_pool = select(ref_supp, (ref_supp :> ref_alo) :& (ref_supp :< ref_ahi))
-        if (rows(ref_pool) > 0) ref_pool = uniqrows(ref_pool)
-        ref_pool_n = rows(ref_pool)
-    }
-    ref_alo0 = ref_alo
-    ref_ahi0 = ref_ahi
-    ref_in_basin = .
-    ref_neigh_rem = .
-    ref_complete = .
-    while (ref_it < n_refine) {
-        ref_cand = ref_pool
-        if (rows(ref_cand) > 0) {
-            ref_keep = J(rows(ref_cand), 1, 1)
-            for (ref_j2 = 1; ref_j2 <= rows(ref_cand); ref_j2++) {
-                if (sum(gamma_grid :== ref_cand[ref_j2]) > 0) ref_keep[ref_j2] = 0
-            }
-            ref_cand = select(ref_cand, ref_keep)
+        else if (ref_complete != 1 & st_local("nowarn") == "") {
+            printf("{err}warning: final fixed-W2 refinement is incomplete; see e(refine_remaining)\n")
+            printf("{err}         and e(refine_neigh_unevaluated).\n")
         }
-        if (rows(ref_cand) == 0) break
-        if (rows(ref_cand) > 30) {
-            // v0.9.14 R33 (#1): endpoint-inclusive spacing -- ceil(k*n/30)
-            // skipped the SMALLEST candidate (right-end bias per batch,
-            // material for refine(1) since ties resolve to the smaller
-            // gamma). floor((0..29)*(n-1)/29)+1 always includes both ends.
-            ref_ix = floor((0::29) :* ((rows(ref_cand) - 1) / 29)) :+ 1
-            ref_ix = uniqrows(ref_ix)
-            ref_cand = ref_cand[ref_ix]
-        }
-        cache_ref = xdpt2_build_gamma_cache(units, ref_cand, method,
-                                             flag_static, flag_kink,
-                                             t_min, t_max, q_eff, minreg_user)
-        gamma_grid = gamma_grid \ ref_cand
-        cache_main = cache_main, cache_ref
-        ref_added = ref_added + rows(ref_cand)
-        ref_it = ref_it + 1
-        // v0.9.11 R30 (blocker 1): the applied-flag is LATCHED inside
-        // grid_search; without a reset a successful correction on the
-        // coarse pass would survive a failed/fallback correction on this
-        // re-search and e(vce)/e(vce_applied) would misreport the model.
-        xdpt_wind_applied = 0
-        xdpt2_clear_wind_exports()
-        xdpt2_grid_search(units, gamma_grid, cache_main, method, flag_static,
-                           flag_kink, t_min, t_max,
-                           best_gamma, best_obj, best_theta, best_V, best_V_influence, best_A,
-                           best_twostep, n_adm2, grid2_adm_lo, grid2_adm_hi,
-                           gamma_admitted)
-        if (best_gamma == .) {
-            errprintf("xtdpthresh: refine() re-search failed unexpectedly\n")
-            exit(498)
-        }
-        // v0.9.16 R35: (a) REBUILD the anchor base for the current
-        // estimator state (W2 and the two-step/one-step status can change
-        // with every enlarged-grid search); (b) ALWAYS union the current
-        // basin around gamma-hat -- a hull test (alo/ahi) missed interior
-        // basins that were never pooled when coverage became
-        // non-contiguous. The pool only grows, so the moving-bracket
-        // path dependence cannot return.
-        ref_base = xdpt2_ref_base_current(gamma_grid, cache_main, n_coarse,
-                                          best_twostep, best_A, best_gamma,
-                                          ref_nanchor)
-        ref_pos = 1
-        for (ref_j2 = 1; ref_j2 <= rows(ref_base); ref_j2++) {
-            if (ref_base[ref_j2] <= best_gamma) ref_pos = ref_j2
-        }
-        ref_nlo = (ref_pos > 1 ? ref_base[ref_pos - 1] : q_lo)
-        ref_nhi = (ref_pos < rows(ref_base) ? ref_base[ref_pos + 1] : q_hi)
-        ref_pool = uniqrows(ref_pool \ select(ref_supp,
-            (ref_supp :> ref_nlo) :& (ref_supp :< ref_nhi)))
-        ref_pool_n = rows(ref_pool)
-        if (ref_nlo < ref_alo) ref_alo = ref_nlo
-        if (ref_nhi > ref_ahi) ref_ahi = ref_nhi
-        if (xdpt_verbose) {
-            printf("  refine it %g: +%g support points, γ̂ = %8.4f, obj = %8.4f\n",
-                   ref_it, rows(ref_cand), best_gamma, best_obj)
-        }
-    }
-    // v0.9.14 R33 (#4): final enabled search -- the ONLY pass that
-    // computes the Windmeijer correction and populates the certification
-    // exports under refine().
-    if (_rf_gated) {
-        xdpt_vce_wind = _rf_wind_hold
-        xdpt_expg = _rf_expg_hold
-        // v0.9.15 R34 (#3): the certification inputs only exist under
-        // vce(windmeijer); exportgmm alone exports the general GMM pieces
-        // AFTER the search from run state, so an expg-only final re-search
-        // was pure waste.
-        if (xdpt_vce_wind == 1) {
-            xdpt_wind_applied = 0
-            xdpt2_clear_wind_exports()
-            xdpt2_grid_search(units, gamma_grid, cache_main, method, flag_static,
-                               flag_kink, t_min, t_max,
-                               best_gamma, best_obj, best_theta, best_V, best_V_influence, best_A,
-                               best_twostep, n_adm2, grid2_adm_lo, grid2_adm_hi,
-                               gamma_admitted)
-            if (best_gamma == .) {
-                errprintf("xtdpthresh: final refine() search failed unexpectedly\n")
-                exit(498)
-            }
-        }
-    }
-
-    // v0.9.14 R33 (#3): was the basin pool exhausted? The <=30-per-round
-    // batches with refine() capped at 20 evaluate at most 600 points; the
-    // unrestricted bootstrap searches run on the enlarged estimation grid,
-    // so an unexhausted pool is worth flagging.
-    if (n_refine > 0 & ref_pool_n > 0) {
-        ref_remaining = 0
-        for (ref_j2 = 1; ref_j2 <= rows(ref_pool); ref_j2++) {
-            if (sum(gamma_grid :== ref_pool[ref_j2]) == 0) {
-                ref_remaining = ref_remaining + 1
-            }
-        }
-        ref_exhausted = (ref_remaining == 0)
-    }
-    else if (n_refine > 0) ref_exhausted = 1
-    // v0.9.15 R34 (#1): completeness is TWO statements -- the pool was
-    // consumed AND the final gamma-hat's own coarse neighbourhood holds no
-    // unevaluated support. e(refine_exhausted) alone never implied the
-    // second.
-    if (n_refine > 0 & best_gamma < .) {
-        ref_in_basin = (best_gamma >= ref_alo0 & best_gamma <= ref_ahi0)
-        // v0.9.16 R36 hardening: with fewer than two valid coarse anchors
-        // under the FINAL criterion the bracket is degenerate --
-        // neighbourhood refinement cannot be certified. Fail the
-        // completeness claim rather than certify against a zero-width cell.
-        if (ref_nanchor < 2) {
-            ref_neigh_rem = .
-            ref_complete = 0
-            if (st_local("nowarn") == "") {
-                printf("{err}warning: too few valid coarse anchors under the final criterion to\n")
-                printf("{err}         certify neighbourhood refinement (e(refine_complete) = 0).\n")
-            }
-        }
-        else {
-        ref_pos = 1
-        for (ref_j2 = 1; ref_j2 <= rows(ref_base); ref_j2++) {
-            if (ref_base[ref_j2] <= best_gamma) ref_pos = ref_j2
-        }
-        ref_nlo = (ref_pos > 1 ? ref_base[ref_pos - 1] : q_lo)
-        ref_nhi = (ref_pos < rows(ref_base) ? ref_base[ref_pos + 1] : q_hi)
-        ref_neigh_rem = 0
-        for (ref_j2 = 1; ref_j2 <= rows(ref_supp); ref_j2++) {
-            if (ref_supp[ref_j2] <= ref_nlo | ref_supp[ref_j2] >= ref_nhi) continue
-            if (sum(gamma_grid :== ref_supp[ref_j2]) == 0) {
-                ref_neigh_rem = ref_neigh_rem + 1
-            }
-        }
-        ref_complete = (ref_remaining == 0 & ref_neigh_rem == 0)
-        if (st_local("nowarn") == "") {
-            if (ref_remaining > 0) {
-                printf("{err}warning: refine() stopped with %g candidate support point(s) unevaluated\n", ref_remaining)
-                if (n_refine >= 20) {
-                    printf("{err}         (see e(refine_remaining)); the pool remains unexhausted at the\n")
-                    printf("{err}         maximum refine(20) -- reduce the support (trim/gridsample) instead.\n")
-                }
-                else {
-                    printf("{err}         (see e(refine_remaining)); increase refine() (max 20) to consume it.\n")
-                }
-            }
-            if (ref_neigh_rem > 0) {
-                if (!ref_in_basin) {
-                    printf("{err}warning: the final gamma-hat moved OUTSIDE the initially refined basin;\n")
-                }
-                printf("{err}warning: %g support point(s) around the reported gamma-hat remain\n", ref_neigh_rem)
-                printf("{err}         unevaluated -- the threshold's neighbourhood was not fully refined.\n")
-            }
-        }
-        }
-    }
-    if (ref_added > 0) {
-        // refresh the admission bookkeeping over the ENLARGED grid
-        n_struct = 0
-        for (gg_a = 1; gg_a <= rows(gamma_grid); gg_a++) {
-            if (!cache_main[gg_a].ok) continue
-            n_struct = n_struct + 1
-        }
-        if (rows(gamma_admitted) > 0) {
-            grid_adm_lo = min(gamma_admitted)
-            grid_adm_hi = max(gamma_admitted)
-        }
-        else {
-            grid_adm_lo = .
-            grid_adm_hi = .
-        }
-        printf("  Refined: %g iteration(s), %g support point(s) added; γ̂ = %8.4f\n",
-               ref_it, ref_added, best_gamma)
         displayflush()
     }
 
@@ -6833,19 +9100,21 @@ void xtdpthresh_run(string scalar depvar_name,
         }
         else gamma_ci_grid = xdpt2_rangen(q_lo, q_hi, n_gridci)
         // v0.7.13 (audit R4): the inverted confidence set must contain the
-        // point at which the test statistic is exactly zero — the 1-STEP
-        // argmin over the estimation grid (the CI inversion runs on 1-step
-        // objectives, so D_sample = 0 there and the point is always
-        // accepted). Include the reported γ̂ (2-step argmin) as well. When
-        // gridci equals grid the two grids already coincide and this is a
-        // no-op; when they differ, the union guarantees the confidence set
-        // can never be empty by discretization alone (Gong-Seo property).
-        real scalar _g1s_obj, _g1s_gamma, _gok, _gobj, _gl
+        // point at which the test statistic is exactly zero, so that it can
+        // never be empty by discretization alone (Gong-Seo property).
+        // v0.9.34 (C1): with a two-step fit the wild inversion uses the
+        // stage-2 criterion, whose zero is the reported gamma-hat (appended
+        // below); only after a one-step fallback is the one-step argmin over
+        // the estimation grid appended as well.
+        real scalar _g1s_obj, _g1s_gamma, _gok, _gobj, _gl, _w2ci
         real colvector _gtheta
         real matrix _gV
+        _w2ci = (xdpt_boot_exact != 1 & best_twostep == 1 & rows(best_A) > 0)
         _g1s_obj = .
         _g1s_gamma = .
-        for (_gl = 1; _gl <= cols(cache_main); _gl++) {
+        for (_gl = 1; _gl <= (_w2ci ? 0 :
+             (xdpt_n_stage1 < . ? min((xdpt_n_stage1, cols(cache_main))) :
+                                   cols(cache_main))); _gl++) {
             if (!cache_main[_gl].ok) continue
             if (rows(cache_main[_gl].dY) < 20) continue
             xdpt2_solve_gmm_1step_pre(cache_main[_gl].dY, cache_main[_gl].dW,
@@ -6862,7 +9131,7 @@ void xtdpthresh_run(string scalar depvar_name,
         // (one-step) inversion, where D(gamma_1step) = 0 guarantees a
         // non-empty acceptance set. The unit inversion is two-stage: its
         // zero point is best_gamma (already appended below).
-        if (xdpt_boot_exact != 1 & _g1s_gamma < .) gamma_ci_grid = gamma_ci_grid \ _g1s_gamma
+        if (xdpt_boot_exact != 1 & !_w2ci & _g1s_gamma < .) gamma_ci_grid = gamma_ci_grid \ _g1s_gamma
         gamma_ci_grid = sort(uniqrows(gamma_ci_grid \ best_gamma), 1)
         gci_eff_n = rows(gamma_ci_grid)
         // v0.9.2 R18 (#1): the unit bootstrap needs the reported two-step
@@ -6893,15 +9162,21 @@ void xtdpthresh_run(string scalar depvar_name,
         // Keep the threshold-CI stream pinned to the historical rseed() draw
         // sequence; later inference objects receive component-specific seeds.
         seed_threshold = xdpt2_component_seed(0)
+        // v0.9.34: the sample side of the inversion takes its minimum over
+        // the initial grid, as every draw does (see xdpt2_grid_bootstrap)
+        real scalar ci_gmin
+        ci_gmin = ((best_twostep == 1 & search_o2_global < .) ?
+                   search_o2_global : best_obj)
         xdpt2_grid_bootstrap(units, cache_main, gamma_grid, gamma_ci_grid,
                               q_eff, minreg_user,
-                              best_obj, best_gamma,
+                              ci_gmin, best_gamma,
                               method, flag_static, flag_kink,
                               t_min, t_max, n_boot, alpha,
                               gam_lo, gam_hi, ci_empty, ci_nseg,
                               gci_adm, gci_lo, gci_hi,
                               best_twostep, best_A, resid_hat_v, gb_minB,
-                              ci_tab_r, ci_seg_r, ci_unres_r)
+                              ci_tab_r, ci_seg_r, ci_unres_r,
+                              tpl_main, tpl_main_st)
         if (rows(ci_tab_r) > 0) {
             gci_eval = sum((ci_tab_r[., 6] :== 1) :| (ci_tab_r[., 6] :== 2))
         }
@@ -6962,12 +9237,44 @@ void xtdpthresh_run(string scalar depvar_name,
     // === Count sample sizes and instruments at best γ ===
     real matrix dY_f, dW_f, Z_f
     real colvector times_f, uid_f
-    real colvector eqty_f, eqty_ar1, eqty_ar2
+    // v0.9.35: with the joint variance, a template of this stack (and under
+    // FOD of the FD stack of the AR test) gives the derivative column of the
+    // AR statistics (xdpt2_ar_xg)
+    external real scalar xdpt_tpl_rec
+    struct xdpt2_stack_tpl scalar tp_f, tp_fd
+    real scalar ar_try
+    ar_try = (xdpt_kink_joint == 1)
+    xdpt_ivc_diag = 1
+    xdpt_tpl_rec = ar_try
     xdpt2_stack_at_gamma(units, best_gamma, method, flag_static, flag_kink,
                           t_min, t_max,
-                          dY_f, dW_f, Z_f, times_f, uid_f, eqty_f)
+                          dY_f, dW_f, Z_f, times_f, uid_f)
+    xdpt_tpl_rec = 0
+    xdpt_ivc_diag = 0
+    if (ar_try) {
+        tp_f = xdpt2_tpl_build(units, method, flag_kink, dY_f, Z_f, times_f,
+                               uid_f)
+        if (!tp_f.ok) ar_try = 0
+    }
+    // v0.9.34: units whose regime changes within their equations at gamma-hat
+    real scalar n_switch
+    n_switch = xdpt2_n_switch(units, best_gamma, method, uid_f, times_f)
+    // v0.9.30: instrument columns dropped as multiples of the per-period
+    // constants in the estimation Z (read before the FD restack for the AR
+    // test overwrites the counter).
+    external real scalar xdpt_ivc_drop
+    real scalar ivc_final
+    ivc_final = xdpt_ivc_drop
+    // v0.9.34: numerically dependent instrument columns dropped; v0.9.35:
+    // those not linear combinations of the kept ones, and the largest
+    // relative residual
+    external real scalar xdpt_ivc_dep
+    real scalar ivdep_final, ivdep_res_final, ivdep_near_final
+    ivdep_final = xdpt_ivc_dep
+    ivdep_res_final = xdpt_ivc_dep_res
+    ivdep_near_final = xdpt_ivc_dep_near
 
-    real scalar n_raw, n_trans, n_usable, n_iv, n_level, balanced_eff
+    real scalar n_raw, n_trans, n_usable, n_iv, balanced_eff
     // v0.8.1: complete-case count = equation-eligible rows (rows(y) now
     // counts the full history sample).
     n_raw    = sum(eqv)
@@ -6975,107 +9282,7 @@ void xtdpthresh_run(string scalar depvar_name,
     n_iv     = cols(Z_f)
     balanced_eff = xdpt2_is_strongly_balanced(uid_f, times_f)
 
-    real matrix dY_fod, dW_fod, Z_fod
-    real colvector times_fod, uid_fod, dh_uid_sys, dh_uid_fod
-    real scalar dh_cluster_mismatch
-    dh_cluster_mismatch = 0
-    if (method == "system") {
-        // Re-stack with FOD only to isolate transformed rows
-        xdpt2_stack_at_gamma(units, best_gamma, "fod", flag_static, flag_kink,
-                              t_min, t_max,
-                              dY_fod, dW_fod, Z_fod, times_fod, uid_fod, eqty_ar1)
-        n_trans = rows(dY_fod)
-        n_level = n_usable - n_trans
-        dh_uid_sys = uniqrows(uid_f)
-        dh_uid_fod = uniqrows(uid_fod)
-        if (rows(dh_uid_sys) != rows(dh_uid_fod)) dh_cluster_mismatch = 1
-        else if (dh_uid_sys != dh_uid_fod) dh_cluster_mismatch = 1
-    }
-    else {
-        n_trans = n_usable
-        n_level = 0
-    }
-
-    // v0.9.2 R18 (#2): Difference-in-Hansen REWORKED. The reduced
-    // (suspect-free) model must be FULLY re-estimated, INCLUDING its own
-    // threshold search: J_fod = min_gamma of the two-step FOD criterion.
-    // (R17 pinned the FOD fit at the system gamma-hat, which is >= the
-    // minimum and biased the C statistic downward, even negative.)
-    // df = (L_sys - L_fod) - 1 (level constant; gamma counts cancel).
-    // v0.9.2 R18 (#2.1): negative differences are NOT clamped to 0 --
-    // xtabond2 warns rather than zeroing. p is set missing and
-    // e(diffhansen_negative)=1 marks the diagnostic unreliable.
-    real scalar dh_stat, dh_df, dh_p, dh_neg
-    real scalar dh_fodJ, dh_fod_df, dh_fod_p, dh_fod_g
-    dh_stat = .
-    dh_df = .
-    dh_p = .
-    dh_neg = 0
-    dh_fodJ = .
-    dh_fod_df = .
-    dh_fod_p = .
-    dh_fod_g = .
-    if (method == "system" & best_twostep == 1 & rows(dY_fod) > 0) {
-        struct xdpt2_gamma_cache rowvector cache_fod
-        real scalar fod_gamma, fod_obj, fod_2s, fod_adm2, fod_lo2, fod_hi2
-        real colvector fod_theta, fod_gamma_admitted
-        real matrix fod_V, fod_V_influence, fod_A
-        // v0.9.11 R30 (blocker 1): the reduced-FOD re-search runs the SAME
-        // grid_search code, which would (a) recompute Windmeijer on the
-        // reduced model and latch xdpt_wind_applied, and (b) overwrite the
-        // xdpt_w_* certification exports with reduced-model inputs. Hold
-        // and zero the request flags around the reduced search; restore
-        // the main model's state after.
-        real scalar _dh_wind_hold, _dh_expg_hold, _dh_applied_hold
-        _dh_wind_hold = xdpt_vce_wind
-        _dh_expg_hold = xdpt_expg
-        _dh_applied_hold = xdpt_wind_applied
-        xdpt_vce_wind = 0
-        xdpt_expg = 0
-        cache_fod = xdpt2_build_gamma_cache(units, gamma_grid, "fod",
-                                             flag_static, flag_kink,
-                                             t_min, t_max, q_eff, minreg_user)
-        fod_gamma = .
-        fod_obj = .
-        fod_2s = 0
-        fod_adm2 = .
-        fod_lo2 = .
-        fod_hi2 = .
-        fod_theta = J(0, 1, .)
-        fod_V = J(0, 0, .)
-        fod_V_influence = J(0, 0, .)
-        fod_A = J(0, 0, .)
-        xdpt2_grid_search(units, gamma_grid, cache_fod, "fod", flag_static,
-                           flag_kink, t_min, t_max,
-                           fod_gamma, fod_obj, fod_theta, fod_V, fod_V_influence, fod_A,
-                           fod_2s, fod_adm2, fod_lo2, fod_hi2,
-                           fod_gamma_admitted)
-        cache_fod = xdpt2_gamma_cache(0)
-        xdpt_vce_wind = _dh_wind_hold
-        xdpt_expg = _dh_expg_hold
-        xdpt_wind_applied = _dh_applied_hold
-        if (fod_2s == 1 & fod_obj < . & best_obj < .) {
-            dh_fodJ = fod_obj
-            dh_fod_g = fod_gamma
-            dh_fod_df = cols(Z_fod) - cols(dW_fod) - 1
-            if (dh_fod_df > 0) dh_fod_p = chi2tail(dh_fod_df, dh_fodJ)
-            // A Hansen difference is a C-statistic only when both fits use
-            // the same panel-cluster universe. Keep the standalone reduced
-            // FOD diagnostics, but fail closed on the subtraction otherwise.
-            if (!dh_cluster_mismatch) {
-                dh_df = n_iv - cols(Z_fod) - 1
-                if (dh_df > 0) {
-                    dh_stat = best_obj - fod_obj
-                    if (dh_stat < 0) {
-                        dh_neg = 1
-                        dh_p = .
-                    }
-                    else dh_p = chi2tail(dh_df, dh_stat)
-                }
-                else dh_df = .
-            }
-        }
-    }
+    n_trans = n_usable
 
     // === Hansen J over-identification test ===
     // Hansen J uses the same second-step weight and criterion minimized by the
@@ -7094,20 +9301,20 @@ void xtdpthresh_run(string scalar depvar_name,
     // xtabond2 (Roodman 2009) convention: AR test is ALWAYS computed on
     // first-difference residuals, regardless of the transformation used for
     // estimation. This makes AR(1)/AR(2) interpretation consistent across
-    // FD, FOD, and System GMM.
+    // FD and FOD.
     // v0.7.2 (B1 FIX): full Arellano-Bond (1991, eq. 8) statistic including
     // the estimated-parameter variance terms (see xdpt2_ar_full). The
     // estimation-equation pieces (residuals/instruments/regressors at γ̂, the
     // weight A actually paired with θ̂, and V̂) feed Terms 2-3; for
-    // method(fod|system) the test residuals are the FD restack while the
-    // estimator pieces remain those of the FOD/system stack, linked within
-    // unit via the c_i scalars. FD parity CERTIFIED against -abar-
-    // (Roodman): suite M.6 matches the full AR z-statistics to 1e-6 on the
-    // FD path, which exercises xdpt2_ar_full end-to-end (Terms 1-3). For
-    // method(fod|system) no reference implementation exists (xtabond2 has
-    // no FOD threshold estimator), so the FD-restack + FOD-influence
-    // construction remains a documented extension, validated indirectly
-    // through the shared FD-certified code path.
+    // method(fod) the test residuals are the FD restack while the
+    // estimator pieces remain those of the FOD stack, linked within
+    // unit via the c_i scalars.
+    // v0.9.29: Term 3 uses the REPORTED variance of theta-hat (best_V), i.e.
+    // the Windmeijer-corrected V under vce(windmeijer), as xtabond2 does with
+    // twostep robust; the default vce(robust) V is unchanged. Certified
+    // against xtabond2 at gamma fixed at gamma-hat (identical Z, W2, and
+    // residuals): with the same V the AR(1)/AR(2) statistics coincide under
+    // both FD and FOD (_dev_0928/tests/ar_diag.do, _dev_0929/tests).
     real matrix dY_fd_ar, dW_fd_ar, Z_fd_ar, X_ar
     real colvector times_fd_ar, uid_fd_ar, resid_trans, times_trans, uid_trans
     real colvector resid_est, dy_test
@@ -7120,31 +9327,83 @@ void xtdpthresh_run(string scalar depvar_name,
         dy_test = dY_f
     }
     else {
-        // FOD or System: re-stack with FD to get proper AR-test residuals
+        // FOD: re-stack with FD to get proper AR-test residuals
+        xdpt_tpl_rec = ar_try
         xdpt2_stack_at_gamma(units, best_gamma, "fd", flag_static, flag_kink,
                               t_min, t_max,
-                              dY_fd_ar, dW_fd_ar, Z_fd_ar, times_fd_ar, uid_fd_ar, eqty_ar2)
-        // v0.7.0 (A3): under method(system) best_theta carries the level-eq
-        // constant as its LAST element; the FD restack has no constant column
-        // (FD of a constant is zero), so slice it off before forming residuals.
-        real colvector theta_ar
-        if (cols(dW_fd_ar) < rows(best_theta)) {
-            theta_ar = best_theta[|1 \ cols(dW_fd_ar)|]
+                              dY_fd_ar, dW_fd_ar, Z_fd_ar, times_fd_ar, uid_fd_ar)
+        xdpt_tpl_rec = 0
+        if (ar_try) {
+            tp_fd = xdpt2_tpl_build(units, "fd", flag_kink, dY_fd_ar, Z_fd_ar,
+                                    times_fd_ar, uid_fd_ar)
+            if (!tp_fd.ok) ar_try = 0
         }
-        else theta_ar = best_theta
-        resid_trans = dY_fd_ar - dW_fd_ar * theta_ar
+        resid_trans = dY_fd_ar - dW_fd_ar * best_theta
         times_trans = times_fd_ar
         uid_trans = uid_fd_ar
         X_ar = dW_fd_ar
         dy_test = dY_fd_ar
     }
 
-    real rowvector ar1, ar2
-    real scalar ar1_stat, ar1_p, ar2_stat, ar2_p
-    ar1 = xdpt2_ar_full(1, resid_trans, X_ar, times_trans, uid_trans,
-                         resid_est, Z_f, uid_f, dW_f, best_A, best_V_influence)
-    ar2 = xdpt2_ar_full(2, resid_trans, X_ar, times_trans, uid_trans,
-                         resid_est, Z_f, uid_f, dW_f, best_A, best_V_influence)
+    real rowvector ar1, ar2, ar1_c, ar2_c, ar1_j, ar2_j
+    real scalar ar1_stat, ar1_p, ar2_stat, ar2_p, ar_joint, K_base
+    real colvector xg_est, xg_test
+    // v0.9.32: under kink the reported V includes the estimation error of
+    // gamma-hat; the statistics that treat gamma-hat as known (Terms 2-3
+    // without a gamma column) use the conditional V. v0.9.35: in the jump
+    // model too. They equal xtabond2's with gamma fixed at gamma-hat and are
+    // kept in e(ar1_cond), e(ar2_cond).
+    real matrix V_ar
+    V_ar = best_V
+    if (xdpt_kink_joint == 1 & rows(xdpt_V_cond_ar) == rows(best_V) &
+        cols(xdpt_V_cond_ar) == cols(best_V)) V_ar = xdpt_V_cond_ar
+    ar1_c = xdpt2_ar_full(1, resid_trans, X_ar, times_trans, uid_trans,
+                          resid_est, Z_f, uid_f, dW_f, best_A, V_ar)
+    ar2_c = xdpt2_ar_full(2, resid_trans, X_ar, times_trans, uid_trans,
+                          resid_est, Z_f, uid_f, dW_f, best_A, V_ar)
+    ar1 = ar1_c
+    ar2 = ar2_c
+    // v0.9.35: with the joint variance, the reported statistics include the
+    // estimation of gamma-hat. The derivative column x_g of the residuals in
+    // gamma (xdpt2_ar_xg: on the estimation rows, and under FOD on the FD
+    // rows of the test) is appended to the test and estimation designs, and V
+    // is the joint variance of (theta, gamma) of the reported type, so Terms
+    // 2-3 treat gamma as a parameter. If a joint statistic cannot be formed
+    // where the conditional one can, both conditional statistics are kept.
+    ar_joint = 0
+    xg_est = J(0, 1, .)
+    xg_test = J(0, 1, .)
+    if (ar_try & rows(xdpt_V_joint_full) == cols(dW_f) + 1 &
+        cols(xdpt_V_joint_full) == cols(dW_f) + 1) {
+        K_base = cols(units[1].X)
+        xg_est = xdpt2_ar_xg(tp_f, best_gamma, best_theta, K_base, flag_kink,
+                             dW_f, xdpt_gamma_bw)
+        if (method == "fd") xg_test = xg_est
+        else xg_test = xdpt2_ar_xg(tp_fd, best_gamma, best_theta, K_base,
+                                   flag_kink, dW_fd_ar, xdpt_gamma_bw)
+        if (rows(xg_est) == rows(dW_f) & rows(xg_test) == rows(X_ar) &
+            rows(xg_est) > 0 & rows(xg_test) > 0) {
+            ar1_j = xdpt2_ar_full(1, resid_trans, (X_ar, xg_test), times_trans,
+                                  uid_trans, resid_est, Z_f, uid_f,
+                                  (dW_f, xg_est), best_A, xdpt_V_joint_full)
+            ar2_j = xdpt2_ar_full(2, resid_trans, (X_ar, xg_test), times_trans,
+                                  uid_trans, resid_est, Z_f, uid_f,
+                                  (dW_f, xg_est), best_A, xdpt_V_joint_full)
+            if (!((ar1_j[1] >= . & ar1_c[1] < .) |
+                  (ar2_j[1] >= . & ar2_c[1] < .))) {
+                ar1 = ar1_j
+                ar2 = ar2_j
+                ar_joint = 1
+            }
+        }
+    }
+    // v0.9.35: jump model with the joint variance: distinct values of q
+    // within two bandwidths of gamma-hat (a warning below 10)
+    real scalar q_nvals_bw
+    q_nvals_bw = .
+    if (!flag_kink & xdpt_kink_joint == 1) {
+        q_nvals_bw = xdpt2_q_nvals(units, best_gamma, xdpt_gamma_bw)
+    }
 
     // v0.7.3 (D5 rework): persist the EXACT AR-test row set for -predict-.
     // Mata globals survive -restore-, so xtdpthresh_p can merge residuals
@@ -7170,10 +9429,7 @@ void xtdpthresh_run(string scalar depvar_name,
         p_id_map[pr] = units[uid_trans[pr]].id
     }
     // Estimation-equation series: y/resid on the ACTUAL estimation rows
-    // (FOD rows under method(fod); identical to the FD series under fd). For
-    // method(system) these stack transformed + level rows and are not used by
-    // -predict- (system routes to the FD series, since level residuals are
-    // not exposed and the mixed (id,time) keys are non-unique).
+    // (FOD rows under method(fod); identical to the FD series under fd).
     p_id_est = J(rows(uid_f), 1, .)
     for (pe = 1; pe <= rows(uid_f); pe++) {
         p_id_est[pe] = units[uid_f[pe]].id
@@ -7217,19 +9473,32 @@ void xtdpthresh_run(string scalar depvar_name,
     //   xdpt_best_X_f  — regressors at gamma_hat, estimation stack (n x k_par)
     //   xdpt_best_Xar  — FD AR-test-equation regressors (rows match
     //                    xdpt_p_resid); equals X_f under method(fd), the FD
-    //                    restack under fod/system — needed (with xdpt_p_resid
+    //                    restack under FOD — needed (with xdpt_p_resid
     //                    and xdpt_p_est) to reproduce e(ar*) externally for
     //                    those methods.
+    //   v0.9.35, when the AR statistics include gamma-hat (e(ar_joint) = 1):
+    //   xdpt_best_xg_f, xdpt_best_xg_ar -- their derivative columns on the
+    //   estimation and test rows; xdpt_best_Vj -- the joint variance of
+    //   (theta, gamma) they use.
     external real matrix xdpt_best_A, xdpt_best_Z_f, xdpt_best_X_f, xdpt_best_Xar
+    external real matrix xdpt_best_Vj, xdpt_best_xg_f, xdpt_best_xg_ar
     xdpt_best_A   = J(0, 0, .)
     xdpt_best_Z_f = J(0, 0, .)
     xdpt_best_X_f = J(0, 0, .)
     xdpt_best_Xar = J(0, 0, .)
+    xdpt_best_Vj    = J(0, 0, .)
+    xdpt_best_xg_f  = J(0, 0, .)
+    xdpt_best_xg_ar = J(0, 0, .)
     if (flag_exportgmm) {
         xdpt_best_A   = best_A
         xdpt_best_Z_f = Z_f
         xdpt_best_X_f = dW_f
         xdpt_best_Xar = X_ar
+        if (ar_joint) {
+            xdpt_best_Vj    = xdpt_V_joint_full
+            xdpt_best_xg_f  = xg_est
+            xdpt_best_xg_ar = xg_test
+        }
     }
     ar1_stat = ar1[1]
     ar1_p = ar1[3]
@@ -7245,6 +9514,13 @@ void xtdpthresh_run(string scalar depvar_name,
                ar1_stat, ar1_p, ar2_stat, ar2_p)
     }
 
+    // v0.9.31: release the drop-mask cache (a copy of Z)
+    xdpt_ivc_Zref = J(0, 0, .)
+    xdpt_ivc_mask = J(1, 0, .)
+    xdpt_ivc_tref = J(0, 1, .)
+    // v0.9.34: and the template records of the per-gamma caches
+    xdpt2_tpl_release()
+
     // Return results
     st_rclear()
     // v0.7.5 hotfix (restored): persist serial AFTER st_rclear so e(p_serial)
@@ -7255,40 +9531,24 @@ void xtdpthresh_run(string scalar depvar_name,
     st_numscalar("r(xdpt2_p_sig)", p_cache_sig)
     st_matrix("r(xdpt2_theta)", best_theta')
     st_matrix("r(xdpt2_V)",     best_V)
+    // v0.9.32: kink joint variance flag and the conditional V it replaced
+    st_numscalar("r(xdpt2_kink_joint)", xdpt_kink_joint)
+    st_numscalar("r(xdpt2_kink_refined)", xdpt_kref)
+    st_numscalar("r(xdpt2_gamma_bw)", (flag_kink ? . : xdpt_gamma_bw))
+    if (xdpt_kink_joint == 1) st_matrix("r(xdpt2_V_cond)", xdpt_V_cond_ar)
     st_numscalar("r(xdpt2_gamma)", best_gamma)
     st_numscalar("r(xdpt2_obj)",   best_obj)
     st_numscalar("r(xdpt2_nused)",     n_usable)
     st_numscalar("r(xdpt2_n_raw)",     n_raw)
-    // v0.8.7 R16 (#5): per-block unit participation -- under system a
-    // unit can contribute transformed rows, level rows, or both; a system
-    // estimate identified almost entirely off one block deserves a flag.
-    real scalar nu_trans, nu_level, nu_both
-    real colvector _ut_u, _ul_u
-    nu_trans = 0
-    nu_level = 0
-    nu_both = 0
-    if (rows(uid_f) > 0) {
-        _ut_u = select(uid_f, eqty_f :== 1)
-        _ul_u = select(uid_f, eqty_f :== 2)
-        if (rows(_ut_u) > 0) {
-            _ut_u = uniqrows(_ut_u)
-            nu_trans = rows(_ut_u)
-        }
-        if (rows(_ul_u) > 0) {
-            _ul_u = uniqrows(_ul_u)
-            nu_level = rows(_ul_u)
-        }
-        if (nu_trans > 0 & nu_level > 0) {
-            nu_both = nu_trans + nu_level - rows(uniqrows(_ut_u \ _ul_u))
-        }
-    }
-    st_numscalar("r(xdpt2_nu_trans)", nu_trans)
-    st_numscalar("r(xdpt2_nu_level)", nu_level)
-    st_numscalar("r(xdpt2_nu_both)",  nu_both)
     st_numscalar("r(xdpt2_n_trans)",   n_trans)
-    st_numscalar("r(xdpt2_n_level)",   n_level)
     st_numscalar("r(xdpt2_n_iv)",      n_iv)
+    st_numscalar("r(xdpt2_w1_fallback)", xdpt_w1_fallback)
+    st_numscalar("r(xdpt2_iv_common)", ivc_final)
+    st_numscalar("r(xdpt2_iv_dep)", ivdep_final)
+    st_numscalar("r(xdpt2_iv_dep_res)", ivdep_res_final)
+    st_numscalar("r(xdpt2_iv_dep_near)", ivdep_near_final)
     st_numscalar("r(xdpt2_n_units)",   rows(uniqrows(uid_f)))
+    st_numscalar("r(xdpt2_n_switch)",  n_switch)
     st_numscalar("r(xdpt2_balanced_eff)", balanced_eff)
     st_numscalar("r(xdpt2_wind_applied)", xdpt_wind_applied)
     st_numscalar("r(xdpt2_bci_B)", bci_B)
@@ -7307,6 +9567,44 @@ void xtdpthresh_run(string scalar depvar_name,
     st_numscalar("r(xdpt2_grid_hi)",  grid_adm_hi)
     st_numscalar("r(xdpt2_minreg)",   (minreg_user > 0 ? minreg_user : 0))
     st_numscalar("r(xdpt2_grid_struct)", n_struct)
+    st_numscalar("r(xdpt2_search_l1_n)", search_l1_n)
+    st_numscalar("r(xdpt2_search_l2_n)", search_l2_n)
+    st_numscalar("r(xdpt2_search_l3_n)", search_l3_n)
+    st_numscalar("r(xdpt2_search_s1_level)", search_s1_level)
+    st_numscalar("r(xdpt2_search_s2_level)", search_s2_level)
+    st_numscalar("r(xdpt2_search_s1_n)", search_s1_n)
+    st_numscalar("r(xdpt2_search_s2_n)", search_s2_n)
+    st_numscalar("r(xdpt2_search_s1_same)", search_s1_same)
+    st_numscalar("r(xdpt2_search_s2_same)", search_s2_same)
+    st_numscalar("r(xdpt2_search_s1_gain)", search_s1_gain)
+    st_numscalar("r(xdpt2_search_s2_gain)", search_s2_gain)
+    st_numscalar("r(xdpt2_search_s1_conv)", search_s1_conv)
+    st_numscalar("r(xdpt2_search_s2_conv)", search_s2_conv)
+    st_numscalar("r(xdpt2_search_hit_max)", search_hit_max)
+    st_numscalar("r(xdpt2_search_W2_builds)", search_W2_builds)
+    st_numscalar("r(xdpt2_search_g1)", search_g1)
+    // v0.9.29: the Windmeijer correction is derived for a second-step weight
+    // built on the same regressor design as the final estimate; flag whether
+    // the stage-1 threshold (where W2 was built) gives the reported design.
+    // v0.9.34: in the jump model the design depends on gamma only through
+    // the regime split, so the flag compares splits over the effective
+    // support (refine() moves gamma-hat to a support point with the grid
+    // point's split, and the flag used to drop to 0 with an identical fit);
+    // the kink design changes with gamma itself. Under kink with the joint
+    // variance the correction differentiates W2 in the stage-1 threshold as
+    // well, so it does not require the two thresholds to agree (missing).
+    // v0.9.35: the same holds for the jump model's joint variance.
+    real scalar same_thr
+    same_thr = .
+    if (search_g1 < . & best_gamma < . & xdpt_kink_joint != 1) {
+        if (flag_kink) same_thr = (search_g1 == best_gamma)
+        else same_thr = (sum((q_eff :> min((search_g1, best_gamma))) :&
+                             (q_eff :<= max((search_g1, best_gamma)))) == 0)
+    }
+    st_numscalar("r(xdpt2_same_threshold)", same_thr)
+    st_numscalar("r(xdpt2_search_o1)", search_o1)
+    st_numscalar("r(xdpt2_search_g2_global)", search_g2_global)
+    st_numscalar("r(xdpt2_search_o2_global)", search_o2_global)
     st_numscalar("r(xdpt2_ref_it)",  ref_it)
     st_numscalar("r(xdpt2_ref_add)", ref_added)
     st_numscalar("r(xdpt2_ref_pool)", ref_pool_n)
@@ -7317,6 +9615,7 @@ void xtdpthresh_run(string scalar depvar_name,
     st_numscalar("r(xdpt2_ref_inb)",  ref_in_basin)
     st_numscalar("r(xdpt2_ref_nrem)", ref_neigh_rem)
     st_numscalar("r(xdpt2_ref_comp)", ref_complete)
+    st_numscalar("r(xdpt2_ref_obj_gain)", ref_obj_gain)
     st_numscalar("r(xdpt2_grid_adm2)",   n_adm2)
     st_numscalar("r(xdpt2_grid2_lo)",    grid2_adm_lo)
     st_numscalar("r(xdpt2_grid2_hi)",    grid2_adm_hi)
@@ -7350,15 +9649,6 @@ void xtdpthresh_run(string scalar depvar_name,
     st_numscalar("r(xdpt2_hansen)",    hansen_stat)
     st_numscalar("r(xdpt2_hansen_df)", hansen_df)
     st_numscalar("r(xdpt2_hansen_p)",  hansen_p)
-    st_numscalar("r(xdpt2_dh)",        dh_stat)
-    st_numscalar("r(xdpt2_dh_df)",     dh_df)
-    st_numscalar("r(xdpt2_dh_p)",      dh_p)
-    st_numscalar("r(xdpt2_dh_neg)",    dh_neg)
-    st_numscalar("r(xdpt2_dh_cluster_mismatch)", dh_cluster_mismatch)
-    st_numscalar("r(xdpt2_hfod)",      dh_fodJ)
-    st_numscalar("r(xdpt2_hfod_df)",   dh_fod_df)
-    st_numscalar("r(xdpt2_hfod_p)",    dh_fod_p)
-    st_numscalar("r(xdpt2_gfod)",      dh_fod_g)
     st_numscalar("r(xdpt2_ar1)",       ar1_stat)
     st_numscalar("r(xdpt2_ar1_p)",     ar1_p)
     st_numscalar("r(xdpt2_ar2)",       ar2_stat)
@@ -7373,6 +9663,11 @@ void xtdpthresh_run(string scalar depvar_name,
     st_numscalar("r(xdpt2_ar2_np)",    ar2[2])
     st_numscalar("r(xdpt2_ar1_nclust)", ar1[7])
     st_numscalar("r(xdpt2_ar2_nclust)", ar2[7])
+    // v0.9.35
+    st_numscalar("r(xdpt2_ar_joint)", ar_joint)
+    st_numscalar("r(xdpt2_ar1_cond)", ar1_c[1])
+    st_numscalar("r(xdpt2_ar2_cond)", ar2_c[1])
+    st_numscalar("r(xdpt2_q_nvals_bw)", q_nvals_bw)
 }
 
 end
@@ -8247,4 +10542,461 @@ end
 *   grid materially under-covered while the finer grid moved coverage close
 *   to nominal. A non-fatal note is printed for gridci()<100 unless nowarn is
 *   specified.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.25 R46 (search-architecture correction, 15aug2026):
+*   Point estimation uses one incremental nested global cache
+*   (g -> 2g-1 -> 4g-3). Stage 1 holds W1 fixed; W2 is constructed exactly
+*   once from its selected residuals; stage 2 profiles the retained nested
+*   levels under that same W2. For the jump model, refine() is now a final
+*   support-point search inside the selected stage-2 basin under the fixed
+*   W2: it appends at most 30 new candidates per round and never restarts the
+*   estimator or rebuilds W2. Stage-specific gamma/objective, convergence,
+*   grid, pool, and W2-build diagnostics are posted. searchmax(199|397)
+*   exposes an explicit cap for the default 100-point adaptive schedule;
+*   capped nonconvergence remains visible in e(search_incomplete). Omitting
+*   searchmax() preserves g -> 2g-1 -> 4g-3 for custom initial grids.
+*   e(search_cap_exhausted) identifies a cap reached without stage stability;
+*   e(search_hit_max) is its compatibility alias and no longer fires merely
+*   because a converged level equals the configured cap. The experimental
+*   System GMM API, level-equation builder, moments, diagnostics, returns, and predict
+*   branches were removed; the implementation now contains FD and FOD only.
+*   The transformed-equation timing classes remain intact: exogenous(),
+*   predetermined(), endogenous(), iv(), maxlag(), and collapse.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.26 R47 (public-scope freeze, 16aug2026):
+*   The reported numerical estimator is now defined on the finite grid chosen
+*   explicitly by grid(), followed by optional final fixed-W2 refine() for the
+*   jump model. Adaptive escalation and its user controls searchmode(),
+*   searchmax(), and searchtol() are retired with informative compatibility
+*   errors; legacy e(search_*) fields remain temporarily for MC-harness
+*   compatibility and are non-applicable on the fixed path. The coefficient
+*   bootstrap is no longer automatic: coefboot(none) is the default and the
+*   onestep/twostep implementations are retained only as opt-in legacy paths.
+*   boottype(unit) remains callable solely as a verification-only,
+*   Algorithm-1-oriented threshold-CI path; it is not certified as exact and
+*   e(boottype_status) records that status. The default wild threshold
+*   bootstrap, the FD/FOD estimators, instrument controls, diagnostics, and
+*   fixed-W2 refinement are otherwise unchanged. The boundary warning now
+*   describes Gong-Seo's p10-p90 application grid as trim(.20) with quantile
+*   spacing rather than incorrectly calling trim(.15) their convention.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.27 (25sep2026): method(fod) now dates internal lag instruments from t+1,
+*   the xtabond2 convention (Roodman 2009), so maxlag() admits the FOD-valid
+*   lags: L.y and endogenous() from t-1, predetermined() from t. Earlier FOD
+*   reused the FD dates (valid, but one usable lag short per variable, and an
+*   endogenous() variable could drop the first FOD equation). method(fd) is
+*   bit-for-bit unchanged.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.28 (25sep2026): exact duplicate instrument columns are dropped (first
+*   kept) after stacking. Declaring a variable together with its own lag
+*   (x and L.x, or L2.depvar next to the automatic L.depvar) produced
+*   identical (variable, date) columns, made Z'Z singular, and rejected every
+*   candidate threshold; such models are now estimable. A lag of the
+*   dependent variable in indepvars or exogenous() is rejected (error 198),
+*   because it is not strictly exogenous; it belongs in predetermined(). The
+*   conditioning of Z, which does not depend on gamma, is checked once before
+*   the grid search, with a specific message. Fits that succeeded under
+*   0.9.27 had no duplicate column and are bit-for-bit unchanged.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.29 (25sep2026): the AR(1)/AR(2) statistics now use the reported
+*   variance of theta-hat in their third term, so under vce(windmeijer) they
+*   use the Windmeijer-corrected variance, as xtabond2 does with twostep
+*   robust; under the default vce(robust) nothing changes. iv() variables no
+*   longer define the equation sample: a missing value contributes a zero
+*   instrument in that row, as for the internal lag instruments (previously it
+*   removed the equation, and under FD also the next period's equation). Fits
+*   with vce(robust) and without missing iv() values are bit-for-bit
+*   unchanged.
+*   Second round (code read-through): regressors or q with no variation within
+*   units, or common to all units under td, are rejected (498) instead of being
+*   fitted on rounding noise; any operator on depvar in indepvars/exogenous(),
+*   and a lag of an endogenous/predetermined variable placed in indepvars, are
+*   rejected (198); predict checks a key-tied data signature (459 on swapped
+*   rows); e(wind_same_threshold), e(W1_fallback), fallback warnings, and a
+*   corrected rank-failure message; display and help fixes.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.30 (25sep2026): instrument columns that are exact multiples of the
+*   constant instrument columns are dropped (xdpt2_drop_cellconst). A
+*   regressor or iv() variable that takes one value for every unit in a period
+*   (a macro variable, a trend) produced such columns in every period block,
+*   made Z'Z singular, and stopped the command at the rank check; it is now
+*   instrumented by the per-period constants, as xtabond2 and xthenreg do
+*   implicitly through a generalized inverse, and a note names it
+*   (e(N_iv_common), e(iv_common)). Under td such a regressor is still not
+*   identified (498). The rank-failure message names variables that are common
+*   only up to rounding. Fits that succeeded under 0.9.29 had no such column
+*   and are bit-for-bit unchanged.
+*   Speed (bit-for-bit): xdpt2_transform_unit, called once per unit per grid
+*   point, no longer declares -external- variables. Mata binds externals at
+*   every call at a cost that grows with the number of live objects, which
+*   took about 90% of a point estimate and made it O(N^2); the settings are
+*   now read once per stack (xdpt2_unit_cfg). Point estimates with the Monte
+*   Carlo settings: N = 400 51 s -> 8 s, N = 800 ~3 min -> 14 s, N = 1600
+*   ~15-20 min -> 34 s (same PC). The bootstraps and tests compute Z'Y once
+*   per shared Z instead of once per grid point (xdpt2_fast_obj_batch_list),
+*   and the coefficient bootstrap no longer binds an external per draw.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.31 (25sep2026): the bootstrap one-step objectives (threshold
+*   confidence set, linearity and continuity tests, coefficient bootstrap) are
+*   evaluated by xdpt2_fast_obj_split_list. Each bootstrap sample is F + E,
+*   the fit that generates every draw plus the reweighted residuals; the
+*   moment vector is linear, so g(F + E) = g(F) + g(E). g(F) is formed from
+*   residuals as before (once per candidate threshold); g(E) from cross
+*   products, Z'E/n - (Z'dW/n)(C Z'E/n), with Z'E/n formed once per shared Z;
+*   no n-row residual matrix is formed per draw and candidate threshold. The
+*   sample statistics and the scalar fallback paths keep the 0.9.30
+*   arithmetic; point estimates, SEs, Hansen J and AR tests are unchanged, and
+*   bootstrap critical values agree with 0.9.30 to rounding (against a 40-digit
+*   reference the split is as accurate as the residual form).
+*   Audit fixes: a regressor of the form a_i + g_t (firm age) under td is
+*   rejected (498) -- FOD used to return coefficients near 1e25; a CI point with
+*   a singular one-step normal matrix is status 3 (not admissible) instead of
+*   4, which withheld the whole set; the stage-1 replay of the coefficient
+*   bootstrap and of boottype(unit) searches the initial grid only, as the
+*   reported stage 1 does; operator temporaries are recomputed in double
+*   (tsrevar keeps a float source's type); the common-column rule compares
+*   across periods to a relative 1e-10 (a trend's differences), reuses its
+*   mask for an unchanged Z, and a specific error replaces the generic failure
+*   when it leaves too few instruments; real-valued search diagnostics
+*   (e(gamma_stage1), e(obj_stage1), e(gamma_stage2_global), ...) are carried
+*   in scalars instead of locals, which rounded them; t_max is the last
+*   equation time, so trailing history rows no longer inflate the allocation
+*   gate; iv() keeps Stata's own error codes; the dropped-column note is worded
+*   exactly; dead code (xdpt2_fast_obj_batch) removed. Non-fatal "Warning:"
+*   and "Note:" labels are coloured with {err} inside -as text- output: shown
+*   -as err-, they escaped -quietly-, so -qui xtdpthresh- printed fragments.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.32 (25sep2026): two changes from the full audit of 0.9.31.
+*   (1) The critical value of the grid-bootstrap test is the empirical
+*   (1 - alpha) quantile of the valid bootstrap statistics, the
+*   ceil((1 - alpha)*B_v)-th order statistic (Gong and Seo 2026, eq. 7),
+*   instead of the type-7 interpolated quantile, which fell up to one rank
+*   lower and made the test liberal by about 0.9/(B_v + 1). It now agrees
+*   with the add-one rule of the linearity and continuity tests.
+*   (2) Kink model: e(V) is the slope block of the joint variance of the
+*   slopes and gamma-hat. The kink term is continuous in gamma, with
+*   derivative -delta_k*1(q > gamma), so the design is augmented by
+*   x_g = -delta_k*T(1(q > gamma-hat)) and the existing sandwich and
+*   Windmeijer code applies. The conditional variance is kept in e(V_cond)
+*   and used by the AR tests, which stay conditional on gamma-hat;
+*   e(kink_joint_vce) = 1 (0 if the joint variance could not be computed,
+*   missing for the jump model). The jump model is unchanged.
+*   Text only: the disconnected-set note says "rejected or inadmissible";
+*   the trim warning no longer attributes trim(0.40) to Seo-Shin or
+*   trim(0.10) to xthreg2; e(threshold_bootstrap) no longer says
+*   "xthenreg-style"; two code comments corrected.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.33 (26sep2026): speed only; no change in method.
+*   (1) The batched bootstraps (threshold confidence set, linearity and
+*   continuity tests) leave out a candidate threshold without the one-step
+*   solve (fast_ok = 0), as the scalar loops always did. Before, one such
+*   point sent every draw to the scalar loop: with qx(debt) and debt >= 0 also
+*   a regressor, gamma = 0 makes debt*1(debt > 0) equal debt, and the
+*   default confidence set on the Hansen investment data would have taken
+*   several hours instead of seconds.
+*   (2) xdpt2_fast_obj_split_list receives the reweighted residuals by their
+*   factors (residuals, cluster index, cluster weights) and forms
+*   Z'E/n = S'ETA/n from the within-cluster sums S of z_i*r_i, without the
+*   n x B matrix E; g(F) is formed for all candidate thresholds that share Z
+*   by one product Z'[r_1, ..., r_m] instead of one matrix-vector product
+*   each. The arithmetic of each term is unchanged; only the order of
+*   summation differs, so bootstrap objectives equal those of 0.9.32 to
+*   rounding. Point estimates, SEs, J and AR are bit-for-bit unchanged.
+*   (3) The per-gamma caches no longer restack the data at every candidate
+*   threshold. Only the regime columns of dW depend on gamma; the rows, dY,
+*   Z, the base columns of dW and the time-effect partialling do not. The
+*   first stack of each cache build records them (xdpt2_tpl_build), and dW
+*   is then rebuilt with the arithmetic of xdpt2_transform_unit
+*   (xdpt2_tpl_dW): W(t) - W(t-1) under FD; under FOD, the mean of the later
+*   equation rows as a quad-precision sum divided by their number, which is
+*   how mean() forms it. The second gamma is also stacked in full and
+*   compared bit for bit; on any difference the build restacks at every
+*   gamma. Results are bit-for-bit those of (1)-(2).
+*   Example 4 of the help at the defaults (gridci(100), boot(299)): about
+*   7 hours under 0.9.32 (profiled), 23 seconds now.
+*   (4) predict: the data signature (e(p_dsig_type) "rowsig2") weights
+*   each column by Park-Miller sequences in the row rank. The weights of
+*   rowsig1, 1 + mod(r*a, m)/m, are linear in r below about 30,000 rows,
+*   so rowsig1 checked only sum(x) and sum(r*x): a change of +c, -2c, +c
+*   on three consecutive rows kept it unchanged, and predict then served
+*   results of the old data. predict still checks rowsig1 results.
+*   (5) Threshold confidence set: a candidate threshold without the one-step
+*   solve (fast_ok = 0) is status 3 (not admissible) only if the reported
+*   estimator cannot use it either. The two-step search runs over every
+*   admissible point with the second-step weight W2, so a point whose
+*   one-step normal matrix fails the numerical gate while Z_W'W2 Z_W passes
+*   it can be the reported threshold; the one-step inversion cannot
+*   evaluate it, so it is now unresolved (status 4) and the set is not
+*   reported. Exactly collinear points (q*1(q > gamma) = q at gamma = 0 when
+*   q >= 0) fail under both weights and stay status 3. The inversion and the
+*   linearity and continuity tests use a candidate or report a p-value only
+*   if every bootstrap draw is valid (before: at least 90% and 10), so no
+*   result rests on draws selected by numerical failures; a wild draw can
+*   fail only on a nonfinite value, so fits with all draws valid are
+*   unchanged.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.34 (26sep2026): fixes from the independent audit of 0.9.33, and speed.
+*   Bugs.
+*   (1) A model whose only regressor is L.depvar stopped with a Mata error
+*   (r(3598)): the list of variables checked for constancy within units was
+*   blank but not empty. Such models now run.
+*   (2) iv(): a lag of depvar or of an endogenous() variable must be of order
+*   2 or more under FD and 1 or more under FOD, and a lag of a
+*   predetermined() variable of order 1 or more under FD (error 198
+*   otherwise). iv(L.y) under FD was accepted and biased every estimate,
+*   and the Hansen test did not detect it.
+*   (3) predict: the data signature sorts the rows by every column. Sorted by
+*   (panel, time) only, rows that share a key (two or more rows of a panel
+*   with a missing time) had no fixed order, and predict could refuse
+*   unchanged data (459).
+*   (4) boottype(unit): a candidate threshold whose normal matrix fails the
+*   numerical gate under W2 (for example q*1(q > gamma) = q) is not
+*   admissible (status 3), as in the wild inversion since 0.9.33. It was
+*   unresolved (status 4), so the unit bootstrap reported no set on the
+*   main model of the help.
+*   (5) predict refuses results whose data signature is not rowsig2 (fits of
+*   0.9.32 or earlier still in memory after an update) with error 498.
+*   (6) The template of the per-gamma caches forms the FOD later-row sums in
+*   forward order, as mean() does. 0.9.33 summed them in reverse order,
+*   which differs by one unit in the last place for values whose exponents
+*   span 2^35 or more with exact cancellation, so the rebuild equalled a
+*   full restack only for data that passed the check at the second gamma;
+*   it now does for all data.
+*   (7) The template records are released at the start and end of each run.
+*   Method.
+*   (8) The threshold confidence set inverts the test on the criterion of the
+*   reported estimator: for two-step estimates, the second-step criterion
+*   with W2 held at its sample value (e(ci_criterion) "twostep"); after a
+*   one-step fallback, the one-step criterion as before ("onestep"). The
+*   statistic is then zero at gamma-hat, which always belongs to its set, as
+*   in Gong and Seo (2026). Up to 0.9.33 the zero was at the one-step
+*   argmin, and gamma-hat could be rejected (help example 4). All candidate
+*   thresholds use the same Mammen weights (common random numbers), which
+*   also removes most of the fragmentation of the set on flat profiles.
+*   (9) The critical value is the ceil(p*(B + 1))-th order statistic, the
+*   rule of the add-one p-values of the tests; with B < p/(1 - p) every
+*   candidate is accepted. ceil(p*B) (0.9.32) is liberal when
+*   (1 - p)*(B + 1) is not an integer (6% instead of 5% at B = 100).
+*   Correction to the 0.9.32 entry: the two rules agree only when
+*   (1 - p)*(B + 1) is an integer.
+*   (10) Kink model: the criterion is continuous in gamma, and the joint
+*   variance of the slopes and gamma-hat presumes its exact minimizer. After
+*   the grid search, the second-step criterion (the one-step criterion after
+*   a fallback) is minimized between the admitted grid points next to the
+*   grid minimum: 40 equally spaced points, then rounds of 10 around the
+*   best point so far, down to a spacing below 1e-6 of that interval. The
+*   best point is added to the estimation grid; e(kink_refined) = 1 if it
+*   lies between grid points. In a well-identified design (N = 3000) the
+*   continuous minimizer lay 0.6-1.8 standard errors of gamma-hat from the
+*   grid point, and the slope on q moved by up to 0.7 of its SE.
+*   (11) The confidence set and the linearity and continuity tests take the
+*   unrestricted minimum over the initial grid, on the sample side and in
+*   every draw. Points added around the sample's own minimum (refine(), the
+*   kink refinement) lowered only the sample minimum, since no draw gets the
+*   same search. gamma-hat keeps a zero statistic.
+*   (12) Instrument columns that are linear combinations of the others (a
+*   period with fewer units than block columns; FOD with td when units share
+*   their last period) are dropped, as the generalized inverse of xtabond2
+*   does (e(N_iv_dep), shown in the output), instead of stopping the command
+*   with 498. The rank check that follows concerns ill-conditioning only.
+*   (13) The default regime floor is the number of observations in the
+*   smaller trimmed tail, min(#{q <= q_lo}, #{q > q_hi}), and the last point
+*   of a uniform grid is q_hi exactly. The floor was ceil(trim*n/2), and the
+*   top grid point was admitted or not by rounding when q_hi is a data
+*   value.
+*   (14) e(N_switch): the number of units whose regime changes within their
+*   equations at gamma-hat; a note is shown when it is below 10.
+*   (15) e(wind_same_threshold) compares, in the jump model, the regime
+*   splits of the stage-1 threshold and gamma-hat. Under kink with the joint
+*   variance, whose correction differentiates W2 in the stage-1 threshold as
+*   well, it is missing.
+*   (16) The linearity test forms no n x B matrix (the split with a
+*   one-entry cache for the linear model).
+*   Messages: the note on invalid draws, the one-step fallback warning (it
+*   named only a singular W2), the note on the approximate threshold set (it
+*   referred to "intervals below"), the error for a flat criterion (it was
+*   reported as "no gamma admitted"), and the grid count after refine().
+*   Correction to the 0.9.33 entry, item (5): a continuity-test draw is also
+*   discarded when the kink criterion falls below the jump criterion beyond
+*   rounding, so a nonfinite value is not the only way a draw fails.
+*   Speed, bit for bit: xdpt2_build_units allocates the unit vector once
+*   (appending copied it at every unit, O(N^2): 16 of 22 seconds of a fit
+*   at N = 3000); later cache builds of the same model reuse the template
+*   and the first-step weight of the main build and compare the template
+*   pieces with their reference once; the FOD later-row sums of all units
+*   with the same number of equations are formed by one quadcross. Study A
+*   settings at N = 1600: 7.8 to 2.6 seconds per fit.
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.35 (27sep2026): joint variance of the slopes and gamma-hat in the jump
+* model.
+*   Under the GMM asymptotics of Seo and Shin (2016), gamma-hat and the slopes
+*   of the jump model are jointly sqrt(n)-normal, so a variance that treats
+*   gamma-hat as known (0.9.34 and earlier, the Hansen convention) omits a
+*   first-order term; vce(windmeijer) did not add it either. The sample
+*   moments are step functions of gamma, but their expectation is smooth, with
+*   derivative -E[z (1, x')delta f(gamma | .)]. As in xthenreg (Seo, Kim, and
+*   Kim 2019), it is estimated with a Gaussian kernel, with a bandwidth of the
+*   form of xthenreg's, h = 1.06 s_q n^(-1/5) (s_q: standard deviation of q
+*   over the panel rows, n: units), times the new option bwscale(), whose
+*   default 1.5 is xthenreg's multiplier (see item k). The derivative column
+*   x_g = -T(phi_h(q - gamma-hat) (1, x')delta-hat) is transformed by a
+*   template recorded at gamma-hat (FD or FOD, rows, td partialling), which
+*   must reproduce the regime columns of the design there, and enters the
+*   sandwich and Windmeijer code of the kink model's joint variance (0.9.32).
+*   e(V) is the slope block; e(V_cond) keeps the conditional variance, as
+*   under kink; e(joint_vce) (both models; e(kink_joint_vce) is kept for
+*   kink), e(gamma_bw), e(bwscale). e(wind_same_threshold) is missing when the
+*   joint variance is reported, since the correction then differentiates W2
+*   in the stage-1 threshold as well. Point estimates, gamma-hat, the
+*   confidence set, the tests and J are unchanged; the AR statistics change by
+*   item (e) below.
+*   Checks: against xthenreg's jump covariance (its own estimator replayed on
+*   a common grid, 6 configurations incl. static, discrete q and gamma-hat
+*   differing between the steps) the bandwidth is identical and the efficient
+*   form built from xtdpthresh's design and derivative column equals
+*   xthenreg's full covariance, gamma included, to 3e-14 - 1.3e-12; under FOD,
+*   td and gaps the template column equals the stacker's own transformation of
+*   the level kernel column to 4e-16.
+*   Also in 0.9.35 (external review):
+*   (a) Dropped instrument columns. The rule of 0.9.34 (Cholesky of the
+*   unit-diagonal Gram matrix, pivot below 1e-13, i.e. relative residual below
+*   3.2e-7) is unchanged, but rounding in the Gram matrix is of order 1e-8 in
+*   relative residual, so it drops nearly dependent columns as well and cannot
+*   tell them from exact combinations. The final stack at gamma-hat now
+*   measures the relative residual of each dropped column on Z itself against
+*   the kept columns (Householder QR): e(iv_dep_res) is the largest, and
+*   e(N_iv_dep_near) counts those above 1e-10. The output calls the columns
+*   linear combinations only when none is above 1e-10; otherwise it warns that
+*   the directions they add are lost and that the estimates depend on how the
+*   instruments are written (iv(z1 z2) with z2 = z1 + 1e-8*q^3 loses the q^3
+*   direction that iv(z1 zc), zc = (z2 - z1)/1e-8, keeps). Measured residuals:
+*   exact combinations (a thin FD period, FOD + td with a shared last period,
+*   an iv() equal to L2.y + L3.y) 0 to 9e-13; nearly dependent columns (that
+*   example, a variable common to all units up to 1e-9) 7e-10 to 3e-7.
+*   Estimates are unchanged.
+*   (b) bwscale() with a missing value is rejected (198); it was accepted and
+*   treated as 1 while e(bwscale) stored the missing value.
+*   (c) The note on e(N_switch) says that the change in the intercept rests on
+*   the switching units; the slope changes also use units that stay in the
+*   upper regime.
+*   (d) Help: the chi-square reference of Hansen J presumes regular
+*   identification, and a large p-value does not show that the instruments
+*   are valid; the AR(2) and Hansen tests are diagnostics for the assumptions.
+*   (e) The AR statistics include the estimation of gamma-hat when the joint
+*   variance is reported (e(ar_joint) = 1). The derivative column of the
+*   residuals in gamma, as in the joint variance (kernel under jump, exact
+*   under kink; under FOD also on the FD rows of the test, from a template of
+*   that stack), is appended to the test and estimation designs of the
+*   Arellano-Bond (1991, eq. 8) statistic, and V is the joint variance of
+*   (theta, gamma), of the reported type. The statistics with gamma-hat treated
+*   as known, which equal xtabond2's with gamma fixed at gamma-hat, are kept
+*   in e(ar1_cond), e(ar2_cond). On 10 fits (FD, jump and kink) AR(2) moved by
+*   at most 0.024.
+*   (f) e(ar_vcetype) follows e(ar_joint). (A Hansen J p-value with gamma not
+*   counted in df was added during development and withdrawn: the argument
+*   J(gamma-hat) <= J(gamma_0) needs the true threshold on the grid and a
+*   consistent second-step weight, which is built at the first-step estimate;
+*   Stock and Wright's result concerns the continuously updated criterion.)
+*   (g) xdpt2_ar_full runs in O(n) on sorted stacks (every stack is sorted by
+*   unit and time): the rows of a unit are one block (panelsetup) and the
+*   lag-k partner of a row is among the k rows before it; c_i is looked up
+*   once per unit. It scanned all rows for every unit (O(n x units)). Same
+*   rows, order and arithmetic; the scans remain for any other order. The
+*   four AR statistics of a fit now cost less than the two of 0.9.34.
+*   (h) A discrete threshold variable. The joint variance of the jump model and
+*   the AR statistics with gamma-hat assume that q has a continuous density,
+*   positive at the threshold (Seo and Shin 2016, Assumption 2); with few
+*   values of q, every threshold between two adjacent values gives the same
+*   split and the kernel derivative has no density to estimate, yet the
+*   variance is computed. e(q_nvals_bw) counts the distinct values of q within
+*   two bandwidths of gamma-hat, and the output warns below 10; the help
+*   states the limitation. The bwscale() help now says that the AR statistics
+*   with gamma-hat depend on the bandwidth as well.
+*   (i) Help: the unbalanced-panel assumptions are stated for the unit's
+*   observation pattern and the equations actually retained (FD needs t-1,
+*   FOD a later observation, the instruments depend on the periods observed,
+*   and rows without a non-constant instrument are dropped); (U2) is the
+*   identification and rank condition on the retained equations, which
+*   selection independent of the regime does not replace. The title no longer
+*   says "continuity-robust inference" (the default bootstrap is an
+*   approximation that Gong and Seo's results do not cover), as in the package
+*   description.
+*   (j) Help: vce(windmeijer) with the joint variance is described as a
+*   Windmeijer-type correction applied to the linearized joint moments (the
+*   2005 result is derived for linear moment conditions); the standard-error
+*   note limits the unreliability near continuity to the unrestricted jump
+*   model (under kink, with the restriction true, a nonzero change in the
+*   slope of q and full rank, the estimator is asymptotically normal); and the
+*   bandwidth is said to have the form of xthenreg's rule.
+*   (k) The default of bwscale() is 1.5, the default multiplier of xthenreg
+*   (it was 1 during development), so the default bandwidth, and the jump
+*   model's default joint SEs, can be compared with xthenreg directly. The
+*   help cites Windmeijer (2005): the correction improves the variance
+*   estimate for moment conditions linear in the parameters (sec. 2.1); for
+*   nonlinear moments its term is of the same order as other remainders
+*   (sec. 2), and the joint moments here are not linear in gamma.
+*   (l) Help: collapse -- fewer instruments can reduce the problems caused by
+*   too many instruments (it said that they make the Hansen test more
+*   reliable).
+*   (m) External review (faults), two computational errors:
+*   R1. xdpt2_syminv checked the conditioning of the equilibrated matrix but,
+*   when the raw matrix also passed, returned invsym() of the raw matrix,
+*   which drops pivots below an absolute tolerance: a matrix of tiny scale
+*   (condition number 3) came back as a zero "inverse" with ok = 1. With y
+*   multiplied by 1e6 the command selected another threshold (-1.38 -> 0.32
+*   in the review's fixture). The inverse is now always that of the
+*   equilibrated matrix, mapped back, and checked (no dropped pivot; residual
+*   of C * inv(C) within 10 k eps cond(C)). Estimates change at the rounding
+*   level; they no longer depend on the units of the data.
+*   R2. The Windmeijer correction V2 + D V2 + V2 D' + D V1 D' assumes equal
+*   stage-1 and stage-2 Jacobians; they differ when gamma-hat_1 != gamma-hat_2
+*   and, in the joint variance, through the derivative columns, and the
+*   formula could give negative variances (a variance of -231 in the review's
+*   FOD fixture; an indefinite matrix with positive diagonal in a correctly
+*   specified design). It is now the variance of the linearized two-step
+*   estimator, (L2 + D L1) Omega1 (L2 + D L1)' / n, which equals the former
+*   when the Jacobians are equal and is positive semidefinite. A corrected
+*   variance is used only if it is positive semidefinite (xdpt2_psd_ok);
+*   otherwise the cluster-robust variances are reported (e(vce_applied) = 0),
+*   for e(V), e(V_cond), and the AR statistics alike.
+*   (n) External review (R4): the stacking template refused K = 0, a static
+*   model without base regressors whose only regime term is the intercept
+*   (the hinge under kink). The jump model's joint variance and the AR
+*   statistics with gamma-hat rely on the template, so such models reported
+*   the conditional variance (e(joint_vce) = 0, correctly labeled) and, under
+*   kink, conditional AR statistics, although the joint Jacobian has full
+*   rank. The template now accepts K = 0 (two slicings guarded). Its cache
+*   path is checked against a full stack at the second grid point, as for any
+*   K, so the estimates are unchanged.
+*   (o) External review (R3): colsum() skips missing values. In the batched
+*   bootstrap objectives (xdpt2_fast_obj_split_list, and the linearity test
+*   without regressors) a term that overflowed, or a missing weight, left a
+*   partial sum -- zero when the other terms were zero -- and the draw passed
+*   as valid, whereas the scalar path reports it as failed. Such draws now have
+*   a missing objective and go through the invalid-draw handling; the
+*   per-unit moment sums (xdpt2_gsum_by_unit) return missing for a missing
+*   input. No natural fit reproduced a wrong confidence set.
+*   (p) Help and output shortened, with every point of the review kept.
 * ---------------------------------------------------------------------------

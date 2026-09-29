@@ -42,15 +42,15 @@
 
 {synopt:{opt tvar(varname)}}Time variable, supplied as a single numeric time index. For seasonal adjustment, see {cmd:rolling()}.{p_end}
 
-{synopt:{opt gvar(varname)}}Treatment cohort variable (first treated period). Never-treated units should be coded as 0 or missing. {cmd:gvar()} must be measured on the same scale as {cmd:tvar()}.{p_end}
+{synopt:{opt gvar(varname)}}Treatment cohort variable indicating the first-treated period for each unit. {cmd:gvar()} should be constant across all observations within each treated unit. Never-treated units should be coded as 0 or missing. {cmd:gvar()} must be measured on the same scale as {cmd:tvar()}.{p_end}
 
 {synopt:{opt rolling(type)}}Unit-specific outcome transformation for {it:yvar}:{break}
-{space 2}{bf:demean}   removes the pre-treatment mean{break}
-{space 2}{bf:detrend}  removes the pre-treatment linear trend{break}
-{space 2}{bf:demeanq}  removes the pre-treatment mean and quarter-of-year effects{break}
-{space 2}{bf:detrendq} removes the pre-treatment linear trend and quarter-of-year effects{break}
-{space 2}{bf:demeanm}  removes the pre-treatment mean and month-of-year effects{break}
-{space 2}{bf:detrendm} removes the pre-treatment linear trend and month-of-year effects{p_end}
+{space 2}{bf:demean}   removes the pre-treatment mean{break} 
+{space 2}{bf:detrend}  removes the pre-treatment linear trend{break} 
+{space 2}{bf:demeanq}  removes the pre-treatment mean and quarterly seasonal effects{break} 
+{space 2}{bf:detrendq} removes the pre-treatment linear trend and quarterly seasonal effects{break} 
+{space 2}{bf:demeanm}  removes the pre-treatment mean and monthly seasonal effects{break} 
+{space 2}{bf:detrendm} removes the pre-treatment linear trend and monthly seasonal effects{p_end}
 
 {syntab:Required (depends on implementation)}
 {synopt:{opt method(ra|ipw|ipwra)}}{it:Large-N only.} Specifies the large-N estimation method:{break}
@@ -118,7 +118,7 @@ Treatment effects are then estimated via simple cross-sectional regressions in e
 period, enabling both overall and period-specific ATT estimation.
 
 {pstd}
-By default, {cmd:lwdid} uses the large-N procedure of Lee and Wooldridge (2025),
+By default, {cmd:lwdid} uses the large-N procedure of Lee and Wooldridge (2026a),
 which is designed for panels with a large cross-sectional dimension and allows for
 heterogeneous treatment effects and unit-specific heterogeneous linear trends.
 
@@ -126,8 +126,7 @@ heterogeneous treatment effects and unit-specific heterogeneous linear trends.
 When the cross-sectional dimension is small ({it:small-N}), conventional
 large-N inference may be unreliable. In such settings, specifying
 the {cmd:small} option invokes the exact small-sample inference procedures
-developed in Lee and Wooldridge (2026b). The seasonal-adjustment options
-{cmd:demeanq}, {cmd:detrendq}, {cmd:demeanm}, and {cmd:detrendm} are currently available under the small-N implementation.
+developed in Lee and Wooldridge (2026b). 
 
 {pstd}
 Based on the treatment cohort variable specified in {cmd:gvar()}, {cmd:lwdid}

@@ -1,4 +1,4 @@
-*! version 3.2 : 6 September 2026
+*! version 3.3 : 27 September 2026
 *! lwdid - Lee & Wooldridge rolling DID estimator (unified: small-N + large-N)
 *! authors: Soo Jeong Lee, Jeffrey M. Wooldridge
 *! contact: soojeong.lee@siu.edu, wooldri1@msu.edu
@@ -60,21 +60,12 @@ program define lwdid, eclass sortpreserve
 		local xlist: list varlist - y       
 
 			
-		*-- rolling() check  (small-N adds demeanq/detrendq)
+		*-- rolling() check
+		*   The same six transformations are available in both small-N and large-N modes.
 		local rolling = lower("`rolling'")
-		if "`small'" != "" {
-			local ok = inlist("`rolling'","demean","detrend","demeanq","detrendq","demeanm","detrendm")
-		}
-		else {
-			local ok = inlist("`rolling'","demean","detrend")
-		}
+		local ok = inlist("`rolling'","demean","detrend","demeanq","detrendq","demeanm","detrendm")
 		if !`ok' {
-			if "`small'" != "" {
-				di as err "rolling() must be: demean | detrend | demeanq | detrendq | demeanm | detrendm"
-			}
-			else {
-				di as err "rolling() must be: demean | detrend  (large-N mode)"
-			}
+			di as err "rolling() must be: demean | detrend | demeanq | detrendq | demeanm | detrendm"
 			exit 198
 		}
 
@@ -88,6 +79,14 @@ program define lwdid, eclass sortpreserve
 			local rolling_lo = lower("`rolling'")
 			if "`rolling_lo'" == "detrend" & `pre' < 2 {
 				di as err "pre() must be at least 2 when rolling(detrend) is specified (need >= 2 periods to estimate slope)."
+				exit 198
+			}
+			if "`rolling_lo'" == "detrendq" & `pre' < 5 {
+				di as err "pre() must be at least 5 when rolling(detrendq) is specified (need within-quarter time variation to identify the trend)."
+				exit 198
+			}
+			if "`rolling_lo'" == "detrendm" & `pre' < 13 {
+				di as err "pre() must be at least 13 when rolling(detrendm) is specified (need within-month time variation to identify the trend)."
 				exit 198
 			}
 		}
@@ -291,38 +290,49 @@ program define lwdid_small_single, eclass
         local tpost1 = r(min)
 
 
-    * ---  For each unit, predict yhat for ALL periods (based on selected rolling)
+    * ---  For each unit, construct yhat for ALL periods (based on selected rolling)
 		qui gen double `yhat' = .
-        qui levelsof `id', local(IDlist)
 
-        quietly foreach ii of local IDlist {
-            cap drop __fit
-            if "`rolling'"=="demean" {
-                regress `y' if `id'==`ii' & `post_'==0
-                predict double __fit if `id'==`ii', xb
+        * rolling(demean): use the mean of the available nonmissing pre-treatment
+        * outcomes for each unit directly. This supports unbalanced panels and
+        * allows a unit to contribute with only one observed pre-treatment outcome.
+        * If a unit has no observed pre-treatment outcome, its pre-mean (and hence
+        * yhat/ydot) remains missing and it is naturally excluded downstream.
+        if "`rolling'"=="demean" {
+            tempvar __premean
+            quietly bysort `id': egen double `__premean' = ///
+                mean(cond(`post_'==0, `y', .))
+            quietly replace `yhat' = `__premean' if !missing(`__premean')
+        }
+        else {
+            qui levelsof `id', local(IDlist)
+            tempvar __fit
+
+            quietly foreach ii of local IDlist {
+                capture drop `__fit'
+                if "`rolling'"=="detrend" {
+                    regress `y' c.`tindex' if `id'==`ii' & `post_'==0
+                    predict double `__fit' if `id'==`ii', xb
+                }
+                else if "`rolling'"=="demeanq" {
+                    regress `y' i.`__qvar' if `id'==`ii' & `post_'==0
+                    predict double `__fit' if `id'==`ii', xb
+                }
+                else if "`rolling'"=="detrendq" {
+                    regress `y' c.`tindex' i.`__qvar' if `id'==`ii' & `post_'==0
+                    predict double `__fit' if `id'==`ii', xb
+                }
+                else if "`rolling'"=="demeanm" {
+                    regress `y' i.`__mvar' if `id'==`ii' & `post_'==0
+                    predict double `__fit' if `id'==`ii', xb
+                }
+                else if "`rolling'"=="detrendm" {
+                    regress `y' c.`tindex' i.`__mvar' if `id'==`ii' & `post_'==0
+                    predict double `__fit' if `id'==`ii', xb
+                }
+                qui replace `yhat' = `__fit' if `id'==`ii'
+                capture quietly drop `__fit'
             }
-            else if "`rolling'"=="detrend" {
-                regress `y' c.`tindex' if `id'==`ii' & `post_'==0
-                predict double __fit if `id'==`ii', xb
-            }
-            else if "`rolling'"=="demeanq" {
-                regress `y' i.`__qvar' if `id'==`ii' & `post_'==0
-                predict double __fit if `id'==`ii', xb
-            }
-            else if "`rolling'"=="detrendq" {
-                regress `y' c.`tindex' i.`__qvar' if `id'==`ii' & `post_'==0
-                predict double __fit if `id'==`ii', xb
-            }
-            else if "`rolling'"=="demeanm" {
-                regress `y' i.`__mvar' if `id'==`ii' & `post_'==0
-                predict double __fit if `id'==`ii', xb
-            }
-            else if "`rolling'"=="detrendm" {
-                regress `y' c.`tindex' i.`__mvar' if `id'==`ii' & `post_'==0
-                predict double __fit if `id'==`ii', xb
-            }
-            qui replace `yhat' = __fit if `id'==`ii'
-            cap qui drop __fit
         }
 
 
@@ -1098,42 +1108,53 @@ program define lwdid_small_staggered, eclass
                 tempvar yhat ydotg ybar_tr ybar_co
                 gen double `yhat' = .
 
-                levelsof `id', local(IDlist)
+                * rolling(demean): for each cohort g, use each unit's available
+                * nonmissing outcomes from periods t < g. This supports unbalanced
+                * panels and permits a unit with only one observed pre-treatment
+                * outcome. Units with no observed pre-treatment outcome for cohort g
+                * retain missing yhat and are naturally excluded from that comparison.
+                if "`rolling'" == "demean" {
+                    tempvar __premean_g
+                    bysort `id': egen double `__premean_g' = ///
+                        mean(cond(`timevar' < `g', `y', .))
+                    replace `yhat' = `__premean_g' if !missing(`__premean_g')
+                }
+                else {
+                    levelsof `id', local(IDlist)
+                    tempvar __fit
 
-                foreach idval of local IDlist {
-                    capture quietly {
-                        if "`rolling'" == "demean" {
-                            qui regress `y' if `id'==`idval' & `timevar' < `g'
+                    foreach idval of local IDlist {
+                        capture quietly {
+                            if "`rolling'" == "detrend" {
+                                qui regress `y' c.`timevar' if `id'==`idval' & `timevar' < `g'
+                            }
+                            else if "`rolling'" == "demeanq" {
+                                regress `y' i.`__qvar' if `id'==`idval' & `timevar' < `g'
+                            }
+                            else if "`rolling'" == "detrendq" {
+                                regress `y' c.`timevar' i.`__qvar' if `id'==`idval' & `timevar' < `g'
+                            }
+                            else if "`rolling'" == "demeanm" {
+                                regress `y' i.`__mvar' if `id'==`idval' & `timevar' < `g'
+                            }
+                            else if "`rolling'" == "detrendm" {
+                                regress `y' c.`timevar' i.`__mvar' if `id'==`idval' & `timevar' < `g'
+                            }
+                            else {
+                                di as err "rolling() must be demean, detrend, demeanq, detrendq, demeanm, or detrendm"
+                                exit 198
+                            }
                         }
-                        else if "`rolling'" == "detrend" {
-                            qui regress `y' c.`timevar' if `id'==`idval' & `timevar' < `g'
-                        }
-                        else if "`rolling'" == "demeanq" {
-                            regress `y' i.`__qvar' if `id'==`idval' & `timevar' < `g'
-                        }
-                        else if "`rolling'" == "detrendq" {
-                            regress `y' c.`timevar' i.`__qvar' if `id'==`idval' & `timevar' < `g'
-                        }
-                        else if "`rolling'" == "demeanm" {
-                            regress `y' i.`__mvar' if `id'==`idval' & `timevar' < `g'
-                        }
-                        else if "`rolling'" == "detrendm" {
-                            regress `y' c.`timevar' i.`__mvar' if `id'==`idval' & `timevar' < `g'
+
+                        if _rc == 0 {
+                            capture drop `__fit'
+                            predict double `__fit' if `id'==`idval', xb
+                            replace `yhat' = `__fit' if `id'==`idval'
+                            capture drop `__fit'
                         }
                         else {
-                            di as err "rolling() must be demean, detrend, demeanq, detrendq, demeanm, or detrendm"
-                            exit 198
+                            capture drop `__fit'
                         }
-                    }
-
-                    if _rc == 0 {
-                        cap drop __fit
-                        predict double __fit if `id'==`idval', xb
-                        replace `yhat' = __fit if `id'==`idval'
-                        cap drop __fit
-                    }
-                    else {
-                        cap drop __fit
                     }
                 }
 
@@ -1338,6 +1359,27 @@ program define lwdid_large, eclass
 		local y    : word 1 of `varlist'
 		local xlist: list varlist - y
 		local rolling = lower("`rolling'")
+		local __is_demean  = inlist("`rolling'","demean","demeanq","demeanm")
+		local __is_detrend = inlist("`rolling'","detrend","detrendq","detrendm")
+
+		*-- seasonal date validation and internal season index for large-N
+		local __tfmt : format `tvar'
+		local __gfmt : format `gvar'
+		tempvar __qvar __mvar
+		if inlist("`rolling'","demeanq","detrendq") {
+			if strpos("`__tfmt'","%tq")==0 | strpos("`__gfmt'","%tq")==0 {
+				di as err "rolling(`rolling') requires tvar() and gvar() to be Stata quarterly date variables (format %tq)."
+				exit 198
+			}
+			quietly gen byte `__qvar' = quarter(dofq(`tvar')) if `touse'
+		}
+		if inlist("`rolling'","demeanm","detrendm") {
+			if strpos("`__tfmt'","%tm")==0 | strpos("`__gfmt'","%tm")==0 {
+				di as err "rolling(`rolling') requires tvar() and gvar() to be Stata monthly date variables (format %tm)."
+				exit 198
+			}
+			quietly gen byte `__mvar' = month(dofm(`tvar')) if `touse'
+		}
 
 		local method  = lower("`method'") 
 			*-- large-N: method required
@@ -1508,40 +1550,65 @@ program define lwdid_large, eclass
 					tempvar __y`g'd
 					local yvarname_`g' `__y`g'd'
 					qui gen double `yvarname_`g'' = . if `touse'
-				if ("`rolling'" == "demean") {
-					tempvar Sy_pre n_pre
+				if `__is_demean' {
+					* --------------------------------------------------------
+					* Demeaning family: demean / demeanq / demeanm
+					* --------------------------------------------------------
+					if "`rolling'" == "demean" {
+						tempvar Sy_pre n_pre
 
-					* Total sum and count of pre-treatment outcomes for each unit
-					* If pre() specified, restrict to the most recent pre() periods (t in [g-pre, g-1])
-					* Otherwise use all pre-treatment periods (t < g)
-					if `pre' > 0 {
-						local g_pre_lo = `g' - `pre'
-						bys `id': egen double `Sy_pre' = total(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `y', 0)) if `touse'
-						bys `id': egen double `n_pre'  = total(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', 1, 0)) if `touse'
-					}
-					else {
-						bys `id': egen double `Sy_pre' = total(cond(`tvar' < `g' & `yobs', `y', 0)) if `touse'
-						bys `id': egen double `n_pre'  = total(cond(`tvar' < `g' & `yobs', 1, 0)) if `touse'
-					}
-
-					* Pre- and post-treatment periods:
-					* Subtract the mean over selected pre-treatment periods
-					replace `yvarname_`g'' = `y' - (`Sy_pre'/`n_pre') ///
-						if `touse' & `yobs' & `n_pre' > 0 ///
-						& !missing(`Sy_pre', `n_pre')
-
-					drop `Sy_pre' `n_pre'
-				}
-					else {  // detrend: use one fixed pre-treatment trend for both pre and post
-						tempvar SyP StP SttP StyP nP denomP bP aP fitP
-
-						* Pre-treatment totals for each unit
-						* If pre() specified, transformation window (t in [g-pre, g-1])
-						* Otherwise use all pre-treatment periods (t < g)
+						* Unit-specific mean over available nonmissing pre-treatment outcomes.
 						if `pre' > 0 {
 							local g_pre_lo = `g' - `pre'
-							* Use running cumulative sums: take values AT t = g-1 minus values AT t = g_pre_lo-1
-							* Simpler approach: use conditional totals directly
+							bys `id': egen double `Sy_pre' = total(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `y', 0)) if `touse'
+							bys `id': egen double `n_pre'  = total(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', 1, 0)) if `touse'
+						}
+						else {
+							bys `id': egen double `Sy_pre' = total(cond(`tvar' < `g' & `yobs', `y', 0)) if `touse'
+							bys `id': egen double `n_pre'  = total(cond(`tvar' < `g' & `yobs', 1, 0)) if `touse'
+						}
+
+						replace `yvarname_`g'' = `y' - (`Sy_pre'/`n_pre') ///
+							if `touse' & `yobs' & `n_pre' > 0 ///
+							& !missing(`Sy_pre', `n_pre')
+
+						drop `Sy_pre' `n_pre'
+					}
+					else {
+						* Seasonal demeaning.  This is the reduced-form equivalent of
+						* regress y i.quarter (or i.month) on the pre-treatment sample:
+						* subtract the unit-by-season pre-treatment mean directly.
+						local __svar `__qvar'
+						if "`rolling'" == "demeanm" local __svar `__mvar'
+						tempvar SyS nS
+
+						if `pre' > 0 {
+							local g_pre_lo = `g' - `pre'
+							bys `id' `__svar': egen double `SyS' = total(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `y', 0)) if `touse'
+							bys `id' `__svar': egen double `nS'  = total(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', 1, 0)) if `touse'
+						}
+						else {
+							bys `id' `__svar': egen double `SyS' = total(cond(`tvar' < `g' & `yobs', `y', 0)) if `touse'
+							bys `id' `__svar': egen double `nS'  = total(cond(`tvar' < `g' & `yobs', 1, 0)) if `touse'
+						}
+
+						replace `yvarname_`g'' = `y' - (`SyS'/`nS') ///
+							if `touse' & `yobs' & `nS' > 0 ///
+							& !missing(`SyS', `nS')
+
+						drop `SyS' `nS'
+					}
+				}
+				else if `__is_detrend' {
+					* --------------------------------------------------------
+					* Detrending family: detrend / detrendq / detrendm
+					* --------------------------------------------------------
+					if "`rolling'" == "detrend" {
+						tempvar SyP StP SttP StyP nP denomP bP aP fitP
+
+						* Pre-treatment totals for each unit.
+						if `pre' > 0 {
+							local g_pre_lo = `g' - `pre'
 							tempvar cy_w ct_w ctt_w cty_w cn_w
 							bys `id' (`tvar'): gen double `cy_w'  = sum(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `y',        0)) if `touse'
 							bys `id' (`tvar'): gen double `ct_w'  = sum(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `tvar',     0)) if `touse'
@@ -1563,7 +1630,6 @@ program define lwdid_large, eclass
 							bys `id': egen double `nP'   = max(cond(`tvar' < `g', `cn',  .)) if `touse'
 						}
 
-						* Slope and intercept from the selected pre-treatment sample
 						gen double `denomP' = `nP' * `SttP' - (`StP')^2 if `touse'
 						gen double `bP' = .
 						replace `bP' = (`nP' * `StyP' - `StP' * `SyP') / `denomP' ///
@@ -1573,28 +1639,79 @@ program define lwdid_large, eclass
 						replace `aP' = (`SyP' - `bP' * `StP') / `nP' ///
 							if `touse' & `nP' > 1 & !missing(`bP')
 
-						* One fixed fitted pre-trend for all periods
 						gen double `fitP' = .
 						replace `fitP' = `aP' + `bP' * `tvar' ///
 							if `touse' & !missing(`aP', `bP')
 
-						* Apply the same detrending transformation to both pre and post periods
 						replace `yvarname_`g'' = `y' - `fitP' ///
 							if `touse' & `yobs' & !missing(`fitP')
 
 						drop `SyP' `StP' `SttP' `StyP' `nP' `denomP' `bP' `aP' `fitP'
 					}
+					else {
+						* Seasonal detrending.  Use the FWL reduced form for
+						* y = season FE + b*t on the pre-treatment sample.
+						* This avoids one regression per unit/cohort.
+						local __svar `__qvar'
+						if "`rolling'" == "detrendm" local __svar `__mvar'
+
+						tempvar preS SyS StS SttS StyS nS ssxyS ssxxS tagS ///
+							numB denB bP ybarS tbarS fitP
+
+						gen byte `preS' = 0 if `touse'
+						if `pre' > 0 {
+							local g_pre_lo = `g' - `pre'
+							replace `preS' = (`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs') if `touse'
+						}
+						else {
+							replace `preS' = (`tvar' < `g' & `yobs') if `touse'
+						}
+
+						bys `id' `__svar': egen double `SyS'  = total(cond(`preS', `y',          0)) if `touse'
+						bys `id' `__svar': egen double `StS'  = total(cond(`preS', `tvar',       0)) if `touse'
+						bys `id' `__svar': egen double `SttS' = total(cond(`preS', `tvar'^2,     0)) if `touse'
+						bys `id' `__svar': egen double `StyS' = total(cond(`preS', `tvar'*`y',   0)) if `touse'
+						bys `id' `__svar': egen double `nS'   = total(cond(`preS', 1,            0)) if `touse'
+
+						gen double `ssxyS' = .
+						replace `ssxyS' = `StyS' - (`StS'*`SyS'/`nS') if `touse' & `nS' > 0
+						gen double `ssxxS' = .
+						replace `ssxxS' = `SttS' - (`StS'^2/`nS') if `touse' & `nS' > 0
+
+						bys `id' `__svar': gen byte `tagS' = (_n==1) if `touse'
+						bys `id': egen double `numB' = total(cond(`tagS'==1 & `nS'>0, `ssxyS', 0)) if `touse'
+						bys `id': egen double `denB' = total(cond(`tagS'==1 & `nS'>0, `ssxxS', 0)) if `touse'
+
+						gen double `bP' = .
+						replace `bP' = `numB'/`denB' if `touse' & `denB' > 0 & !missing(`denB')
+
+						gen double `ybarS' = .
+						replace `ybarS' = `SyS'/`nS' if `touse' & `nS' > 0
+						gen double `tbarS' = .
+						replace `tbarS' = `StS'/`nS' if `touse' & `nS' > 0
+
+						gen double `fitP' = .
+						replace `fitP' = (`ybarS' - `bP'*`tbarS') + `bP'*`tvar' ///
+							if `touse' & `nS' > 0 & !missing(`bP', `ybarS', `tbarS')
+
+						replace `yvarname_`g'' = `y' - `fitP' ///
+							if `touse' & `yobs' & !missing(`fitP')
+
+						drop `preS' `SyS' `StS' `SttS' `StyS' `nS' `ssxyS' `ssxxS' ///
+							`tagS' `numB' `denB' `bP' `ybarS' `tbarS' `fitP'
+					}
+				}
 					label var `yvarname_`g'' "(rolling=`rolling') Residualized outcome cohort g=`g' "
 
 					* --- Anchor period used internally for estimation/output
 					* If ydot is requested, saved y`g'd variables are set to missing at the anchor below.
 					
-					if "`rolling'" == "demean" {
+					if `__is_demean' {
 						* anchor = r = -1 only (the period just before treatment)
 						replace `yvarname_`g'' = 0 if `touse' & !missing(`yvarname_`g'') ///
 							& (`tvar' - `g' == -1)
 					}
-					else if "`rolling'" == "detrend" {
+					else if `__is_detrend' {
 						* anchor = r = -1 and r = -2 (two periods just before treatment)
 						replace `yvarname_`g'' = 0 if `touse' & !missing(`yvarname_`g'') ///
 							& inlist(`tvar' - `g', -2, -1)
@@ -2014,10 +2131,10 @@ program define lwdid_large, eclass
 			tempfile WATT_point WATT_weights AVG_point AVG_weights
 			preserve
 			use "`ATTfile'", clear
-			if ("`rolling'" == "demean") {
+			if `__is_demean' {
 				drop if missing(att)
 			}
-	else if ("`rolling'" == "detrend") {
+	else if `__is_detrend' {
 				replace att = 0 if inlist(ryear,-1,-2)
 				drop if missing(att) & !inlist(ryear,-1,-2)
 			}
@@ -2033,10 +2150,10 @@ program define lwdid_large, eclass
 
 			preserve
 			use "`ATTfile'", clear
-			if ("`rolling'" == "demean") {
+			if `__is_demean' {
 				drop if missing(att)
 			}
-	else if ("`rolling'" == "detrend") {
+	else if `__is_detrend' {
 				replace att = 0 if inlist(ryear,-1,-2)
 				drop if missing(att) & !inlist(ryear,-1,-2)
 			}
@@ -2060,10 +2177,10 @@ program define lwdid_large, eclass
 			use "`ATTfile'", clear
 			drop if missing(att)
 			gen byte avg_type = .
-			if ("`rolling'" == "demean") {
+			if `__is_demean' {
 				replace avg_type = 1 if ryear < -1
 			}
-			else if ("`rolling'" == "detrend") {
+			else if `__is_detrend' {
 				replace avg_type = 1 if ryear < -2
 			}
 			replace avg_type = 2 if ryear >= 0
@@ -2207,7 +2324,7 @@ program define lwdid_large, eclass
                 WATT_plot = WATT_pmat[,2]
                 BS_plot   = BS_star
 
-                if ("`rolling'" == "demean") {
+                if (`__is_demean') {
 				* --- r = -1 is anchored at 0
                     for (rv=1; rv<=n_vr; rv++) {
                         if (WATT_pmat[rv,1] == -1) {
@@ -2216,7 +2333,7 @@ program define lwdid_large, eclass
                         }
                     }
                 }
-                else if ("`rolling'" == "detrend") {
+                else if (`__is_detrend') {
 			* --- r = -1 and r = -2 are anchored at 0
                     for (rv=1; rv<=n_vr; rv++) {
                         if (WATT_pmat[rv,1] == -1 | WATT_pmat[rv,1] == -2) {
@@ -2321,7 +2438,7 @@ program define lwdid_large, eclass
 					qui replace upper_band_plot = `hi_band_`col''      if ryear == `rv_`col''
 			}
 
-			if "`rolling'" == "detrend" {
+			if `__is_detrend' {
 					qui replace watt_plot       = 0 if inlist(ryear,-1,-2)
 					qui replace lower_ci_plot   = 0 if inlist(ryear,-1,-2)
 					qui replace upper_ci_plot   = 0 if inlist(ryear,-1,-2)
@@ -2336,7 +2453,7 @@ program define lwdid_large, eclass
 			qui replace lower_band = lower_band_plot
 			qui replace upper_band = upper_band_plot
 
-        if "`rolling'" == "demean" {
+        if `__is_demean' {
             qui su watt if ryear == -1, meanonly
             local base = r(mean)
 			qui replace base_rminus1    = `base'
@@ -2442,8 +2559,8 @@ program define lwdid_large, eclass
 			tempvar anchor watt_disp se_disp t_disp p_disp lo_disp hi_disp
 
 			qui gen byte `anchor' = is_avg == 0 & ( ///
-				("`rolling'" == "demean"  & ryear == -1) | ///
-				("`rolling'" == "detrend" & inlist(ryear, -2, -1)) ///
+				(`__is_demean'  & ryear == -1) | ///
+				(`__is_detrend' & inlist(ryear, -2, -1)) ///
 			)
 
 			qui gen double `watt_disp' = watt
@@ -2475,7 +2592,7 @@ program define lwdid_large, eclass
 			_col(38) "t" ///
 			_col(50) "P>|t|" ///
 			_col(60) "`interval_header'" ///
-			_col(85) "N cells"
+			_col(85) "N cohorts"
 		di as txt "{hline 93}"
 
 		quietly count
@@ -2560,17 +2677,36 @@ program define lwdid_large, eclass
                 local ymargin = max(0.02, (`yhi' - `ylo') * 0.05)
                 local yhi = `yhi' + `ymargin'
                 local ylo = `ylo' - `ymargin'
-                local raw_step = (`yhi' - `ylo') / 6
-                local ystep = 1
-                foreach s in 0.01 0.02 0.05 0.1 0.2 0.25 0.5 1 2 5 10 {
-                    if `raw_step' <= `s' {
-                        local ystep = `s'
-                        continue, break
+                * robust y-axis ticks for both small and large effect scales
+                local y_max_ticks = 6
+                local y_min_step  = 0.1
+                local yrange = `yhi' - `ylo'
+
+                if (`yrange' <= 0) {
+                    local ystep = `y_min_step'
+                    local ymin = `ylo' - 5*`ystep'
+                    local ymax = `yhi' + 5*`ystep'
+                }
+                else {
+                    local raw  = max(`yrange'/`y_max_ticks', `y_min_step')
+                    local k    = floor(log10(`raw'))
+                    local base = 10^`k'
+                    local frac = `raw'/`base'
+                    local nice = cond(`frac'<=1, 1, cond(`frac'<=2, 2, cond(`frac'<=5, 5, 10)))
+                    local ystep = max(`nice'*`base', `y_min_step')
+                    local ymin = `ystep'*floor(`ylo'/`ystep')
+                    local ymax = `ystep'*ceil(`yhi'/`ystep')
+
+                    local nticks = floor((`ymax' - `ymin')/`ystep') + 1
+                    local guard = 0
+                    while (`nticks' > `y_max_ticks' & `guard' < 10) {
+                        local ystep = `ystep'*2
+                        local ymin = `ystep'*floor(`ylo'/`ystep')
+                        local ymax = `ystep'*ceil(`yhi'/`ystep')
+                        local nticks = floor((`ymax' - `ymin')/`ystep') + 1
+                        local guard = `guard' + 1
                     }
                 }
-                if `ystep' < 0.1 local ystep = 0.1
-                local ymin = floor(`ylo'/`ystep')*`ystep'
-                local ymax = ceil(`yhi'/`ystep')*`ystep'
 
                 * mono scheme detection
                 local mono = strpos("`scheme'","mono")
@@ -2588,10 +2724,10 @@ program define lwdid_large, eclass
                 }
 
                 local yttl "WATT(r)"
-                if "`rolling'" == "demean" {
+                if `__is_demean' {
                     local yttl "WATT(r)"
                 }
-                else if "`rolling'" == "detrend" {
+                else if `__is_detrend' {
                     local yttl "WATT(r)"
                 }
 
@@ -2613,7 +2749,7 @@ program define lwdid_large, eclass
                     ytitle("`yttl'") ///
                     title(`"`title'"') ///
                     xlabel(`xmin'(`xstep')`xmax' 0, labsize(small)) ///
-                    ylabel(`ymin'(`ystep')`ymax', format(%5.2f)) ///
+                    ylabel(`ymin'(`ystep')`ymax', format(%9.2f)) ///
                     legend(off) ///
                     scheme(`scheme') ///
                     `gopts'
@@ -2678,11 +2814,11 @@ program define lwdid_large, eclass
 						}
 						gen double y`g'd = `yvarname_`g''
 						label var y`g'd "(rolling=`rolling') Residualized outcome cohort g=`g' "
-						if "`rolling'" == "demean" {
+						if `__is_demean' {
 							replace y`g'd = . if `touse' & !missing(y`g'd) ///
 								& (`tvar' - `g' == -1)
 						}
-						else if "`rolling'" == "detrend" {
+						else if `__is_detrend' {
 							replace y`g'd = . if `touse' & !missing(y`g'd) ///
 								& inlist(`tvar' - `g', -2, -1)
 						}

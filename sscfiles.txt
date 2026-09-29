@@ -15252,6 +15252,7 @@ fmwww.bc.edu/repec/bocode/q/qrbreak_core_macosx_arm64.plugin
 fmwww.bc.edu/repec/bocode/q/qqvalue.sthlp
 fmwww.bc.edu/repec/bocode/q/qqcauseplot.ado
 fmwww.bc.edu/repec/bocode/q/qnardl_graph.ado
+fmwww.bc.edu/repec/bocode/q/qrpdmcmc.pkg
 fmwww.bc.edu/repec/bocode/q/quasicoint_example.do
 fmwww.bc.edu/repec/bocode/q/qsm.hlp
 fmwww.bc.edu/repec/bocode/q/qardl_graph.ado
@@ -15293,12 +15294,14 @@ fmwww.bc.edu/repec/bocode/q/qqr.pkg
 fmwww.bc.edu/repec/bocode/q/qweibull.hlp
 fmwww.bc.edu/repec/bocode/q/qregplot.ado
 fmwww.bc.edu/repec/bocode/q/qenvchi2.sthlp
+fmwww.bc.edu/repec/bocode/q/qregpd2.ado
 fmwww.bc.edu/repec/bocode/q/qpfit.pkg
 fmwww.bc.edu/repec/bocode/q/qregplot.sthlp
 fmwww.bc.edu/repec/bocode/q/qhapipf.pkg
 fmwww.bc.edu/repec/bocode/q/qnardl.ado
 fmwww.bc.edu/repec/bocode/q/qqcompare.pkg
 fmwww.bc.edu/repec/bocode/q/qenv_mata9.do
+fmwww.bc.edu/repec/bocode/q/qrpdmcmc.sthlp
 fmwww.bc.edu/repec/bocode/q/qardl_boot.ado
 fmwww.bc.edu/repec/bocode/q/qic.pkg
 fmwww.bc.edu/repec/bocode/q/qlognorm.hlp
@@ -15437,6 +15440,7 @@ fmwww.bc.edu/repec/bocode/q/qgamma.html
 fmwww.bc.edu/repec/bocode/q/qsim.ado
 fmwww.bc.edu/repec/bocode/q/qddml.sthlp
 fmwww.bc.edu/repec/bocode/q/qregpd.pkg
+fmwww.bc.edu/repec/bocode/q/qrpdmcmc.ado
 fmwww.bc.edu/repec/bocode/q/qap.html
 fmwww.bc.edu/repec/bocode/q/qbplot.sthlp
 fmwww.bc.edu/repec/bocode/q/qvar_example.do

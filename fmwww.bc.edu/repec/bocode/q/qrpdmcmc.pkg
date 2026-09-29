@@ -1,0 +1,37 @@
+d 'QRPDMCMC': module to provide Multi-Chain Adaptive Markov Chain Monte Carlo (MCMC) Estimation and Diagnostics for Quantile Regression for Panel Data with Non-Additive Fixed Effects 
+d
+d  qrpdmcmc extends the adaptive Markov Chain Monte Carlo (MCMC)
+d optimization method in qregpd, the command that implements
+d Quantile Regression for Panel Data with Non-Additive Fixed
+d Effects (Powell, 2022, Empirical Economics). qrpdmcmc complements
+d qregpd by providing an integrated environment for multi-chain
+d MCMC estimation and convergence assessment. Users can specify
+d multiple chains with independent seeds, combine retained draws
+d across chains, and assess convergence, sampling efficiency, and
+d draw behavior. The command provides graphical and numerical
+d diagnostics, including summary statistics, density, trace, and
+d running-average plots, autocorrelation functions, Effective
+d Sample Size (ESS), Monte Carlo Standard Errors (MCSE),
+d Gelman–Rubin R-hat statistics, Geweke diagnostics, and
+d parameter cross-correlations. MCMC draws can be retained from the
+d sampling process, saved to disk, and subsequently reloaded,
+d allowing diagnostics to be performed without re-estimation and
+d supporting reproducible workflows. 
+d
+d KW: quantile regression
+d KW: panel data
+d KW: adaptive fixed effects
+d
+d Requires: Stata version 15,1 and moremama, amcmc from SSC (q.v.)
+d
+d Distribution-Date: 20260928
+d
+d Author: Kamilla Kosheeva,  Friedrich-Alexander-University Erlangen-Nuremberg (FAU)
+d Support: email kamilla.kosheeva@@fau.de
+d
+d Author: Michail Liatos,  Friedrich-Alexander-University Erlangen-Nuremberg (FAU)
+d Support: email michail.liatos@@fau.de
+d
+f qrpdmcmc.ado
+f qregpd2.ado
+f qrpdmcmc.sthlp

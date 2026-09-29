@@ -17,9 +17,9 @@ d KW: ARDL
 d KW: cross-section
 d KW: robust
 d
-d Requires: Stata version 19
+d Requires: Stata version 17 and xtdcce2 from SSC (q.v.)
 d
-d Distribution-Date: 20260927
+d Distribution-Date: 20260928
 d
 d Author:  Zehra Yalnız,  Kocaeli University
 d Support: email zehrayalnizz41@@gmail.com

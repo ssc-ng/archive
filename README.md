@@ -30,7 +30,7 @@ where the date `2021-12-21` corresponds to an existing tag. Also see [`ssc2`](ht
 
 ```
 * ssc2 may be installed directly from GitHub
-net install ssc2, all replace from("https://raw.githubusercontent.com/ssc-ng/ssc2")
+net install ssc2, all replace from("https://raw.githubusercontent.com/ssc-ng/ssc2/latest")
 ```
 
 ## How to clone this repository

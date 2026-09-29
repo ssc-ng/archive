@@ -26,11 +26,11 @@ global sscmirror "raw.githubusercontent.com/ssc-ng/archive/$sscdate/"
 net install a2reg, from(https://${sscmirror}fmwww.bc.edu/repec/bocode/a) all
 ```
 
-where the date `2021-12-21` corresponds to an existing tag. Also see [`ssc2`](https://github.com/labordynamicsinstitute/stata-ssc2/) for more streamlined functionality:
+where the date `2021-12-21` corresponds to an existing tag. Also see [`ssc2`](https://ssc-ng.net/ssc2/) for more streamlined functionality:
 
 ```
 * ssc2 may be installed directly from GitHub
-net install ssc2, all replace from("https://raw.githubusercontent.com/labordynamicsinstitute/stata-ssc2/master")
+net install ssc2, all replace from("https://raw.githubusercontent.com/ssc-ng/ssc2")
 ```
 
 ## How to clone this repository

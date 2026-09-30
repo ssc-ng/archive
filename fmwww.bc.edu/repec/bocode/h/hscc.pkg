@@ -1,0 +1,25 @@
+d 'HSCC': module to provide Heterogeneous-Slope SCC (HSCC) estimator for panel data
+d
+d    HSCC provides a data-driven joint partial-pooling framework
+d between conventional pooled/SCC estimation and fully
+d heterogeneous Mean Group approaches. The method jointly models
+d systematic and residual slope heterogeneity and applies an
+d adaptive penalty to residual slope deviations. For inference, it
+d uses an HC3-adjusted Driscoll–Kraay/SCC covariance estimator.
+d The current version also allows common time fixed effects through
+d the timefe option. 
+d
+d KW: panel data
+d KW: heterogeneous slope
+d KW: partial pooling
+d
+d Requires: Stata version 17
+d
+d Distribution-Date: 20260928
+d
+d Author:  Zehra Yalnız,  Kocaeli University
+d Support: email zehrayalnizz41@@gmail.com
+d
+f hscc.ado
+f hscc.sthlp
+f hscc_example.do

@@ -279,6 +279,7 @@ p sriinei module to download microdata modules from Peru's INEI official statist
 p srslogit module to perform Logit regression with secondary ridit splines
 p srtree module to implement regression trees via optimal pruning, bagging, random forests, and boosting methods
 p ssaggregate module to create shock-level aggregates for shift-share IV
+p ssc2 module providing access to the Next Generation SSC Archive
 p ssccount module to download ssc hits over time for user-written packages
 p ssci module to compute Short and Simple Confidence Interval
 p sscpax module to describe, install, or uninstall a list of SSC packages

@@ -7,10 +7,10 @@
 * r(table) used for p-values, row count computed from actual step,
 * excel export option fixed, validation fails fast.
 
+version 16.0
+
 cap program drop rctable
 program define rctable
-
-version 16.0
 
     *---------------------------------------------------------------------
     * Syntax
@@ -229,6 +229,8 @@ version 16.0
             replace `P' = `p' if _n == `count'
             local ++count
         }
+		cap which qqvalue
+        if _rc ssc install qqvalue
 		}
         if !mi("`quiet'") {
 		quiet qqvalue `P', method(`qvalue') qvalue(`Q')

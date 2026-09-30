@@ -8,6 +8,7 @@ p factortest module to perform tests for appropriateness of factor analysis
 p factref module to insert new observations with reference values for factors
 p factsheetplot module to apply standardized factsheet styling to graphs
 p fagan module for Fagan's Bayesian nomoigram
+p failsafe module for postestimation statistical diagnostic linting
 p fairlie module to generate nonlinear decomposition of binary outcome differentials
 p far5 module to compute floating absolute risk for Cox and conditional logit regression
 p fastcd module to automate changing directories

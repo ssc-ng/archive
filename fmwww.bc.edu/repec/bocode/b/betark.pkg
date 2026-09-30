@@ -1,4 +1,4 @@
-d 'BETARK': module for computing Beta regression with autoregressive-corrected errors for proportion outcomes, by joint conditional maximum likelihood.
+d 'BETARK': module for computing Beta regression with autoregressive-corrected errors for proportion outcomes, by joint conditional maximum likelihood
 d
 d   betark fits a beta regression model for a continuous proportion
 d or rate outcome strictly bounded on (0,1), with autoregressive
@@ -14,9 +14,9 @@ d
 d KW: Beta regression
 d KW: autoregressive errors
 d
-d Requires: Stata version 14
+d Requires: Stata version 11
 d
-d Distribution-Date: 20260710
+d Distribution-Date: 20260929
 d
 d Author: Ariel Linden, Linden Consulting Group, LLC
 d Support: email alinden@@lindenconsulting.org

@@ -1,0 +1,33 @@
+d 'FAILSAFE': module for postestimation statistical diagnostic linting
+d
+d  failsafe is a read-only postestimation command that inspects
+d fitted Stata models for metadata and statistical conditions that
+d may warrant review. It reports estimation-sample information,
+d omitted terms, convergence status, variance-covariance problems,
+d user-specified cluster-count thresholds, binary-outcome event
+d counts, categorical cell structure, estimator-reported
+d perfect-prediction metadata, and estimator-native Cox and
+d Fine–Gray event counts when available. The command emits stable
+d signal codes but does not refit models, select specifications,
+d apply a generic events-per-variable rule, or declare a model
+d valid or invalid. 
+d
+d KW: postestimation
+d KW: diagnostics
+d KW: model checking
+d KW: logistic regression
+d KW: survival analysis
+d KW: competing risks
+d KW: clustered standard errors
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20260929
+d
+d Author:  Christina Laternser ,  Ann & Robert H. Lurie Children’s Hospital of Chicago
+d Support: email christina.laternser.research@@gmail.com
+d
+f failsafe.ado
+f failsafe.sthlp
+f failsafe_examples.do
+f failsafe_public_validation.do

@@ -90,6 +90,7 @@ p hplogit module to estimate Poisson-logit hurdle regression
 p hplot module to generate horizontal plots
 p hprescott module to implement Hodrick-Prescott filter for timeseries data
 p hrimvol module providing simple option implied volatility calculator
+p hscc module to provide Heterogeneous-Slope SCC (HSCC) estimator for panel data
 p hshaz module to estimate discrete time (grouped data) proportional hazards models
 p hsmode module to calculate half-sample modes
 p hte module to perform heterogeneous treatment effect analysis

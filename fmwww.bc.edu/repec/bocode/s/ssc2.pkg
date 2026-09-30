@@ -1,0 +1,24 @@
+d 'SSC2': module providing access to the Next Generation SSC Archive
+d
+d  Thie routine provides access to the Next Generation SSC Archive.
+d  It is a drop-in replacement for the system-provided ssc command,
+d allowing installation of date-specific snapshots of packages from
+d a mirror of the SSC archive. It adds a date() option that selects
+d a snapshot of SSC as of that date, and a from() option to point
+d at an alternative mirror. Where nothing snapshot-specific is
+d requested, ssc2 executes the official ssc command. 
+d
+d KW: community-contributed software
+d KW: snapshot
+d KW: SSC archive
+d KW: reproducibility
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20260929
+d
+d Author: Lars Vilhuber,  Cornell University
+d Support: email lars.vilhuber@@cornell.edu
+d
+f ssc2.ado
+f ssc2.sthlp

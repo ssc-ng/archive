@@ -1,24 +1,35 @@
-d 'XTIE2': module to provide Interactive Panel Data Estimation with automatic pairwise interactions
+d 'XTIE2': module to provide Fixed-effects panel interactions, conditional effects, and Johnson–Neyman regions
 d
-d  xtie2 estimates a fixed-effects panel model including all
-d pairwise interactions among the explanatory variables. The first
-d variable is treated as the dependent variable. The first two
-d explanatory variables define the primary interaction used for
-d marginal-effect analysis. The command reports the interaction
-d coefficient, its standard error, t statistic and p value. It also
-d calculates marginal effects and marginal-effect zero-crossing
-d critical values. 
-d
+d     xtie2 fits xtreg, fe with all pairwise interactions among the
+d explanatory variables. By default the first two explanatory	
+d variables are the focal pair. pair() selects any two explanatory
+d variables and internally places them first; the fitted model	 
+d is unchanged by this ordering. All explanatory variables are
+d treated as continuous. For the focal conditional effects, the   
+d remaining explanatory variables enter through their interactions
+d with the focal variables and are held at their   
+d estimation-sample means. Declare the panel with xtset first. This
+d command does not estimate Hansen-type panel thresholds.    For a
+d model with x1, x2 and additional variables zk, the effect of x1
+d at x2=v, holding each zk at its estimation-sample mean,    is b1
+d + b12*v + sum_k b1k*mean(zk). The effect of x2 is analogous.
+d Standard errors use the full covariance matrix of these   
+d coefficients. No causal interpretation is implied by the command. d
 d KW: panel data
 d KW: interactions
 d KW: marginal effects
 d
-d Requires: Stata version 18
+d Requires: Stata version 17
 d
-d Distribution-Date: 20260924
+d Distribution-Date: 20260929
 d
 d Author:  Zehra Yalnız,   Kocaeli University, Türkiye
 d Support: email zehrayalnizz41@@gmail.com
 d
+d Author:  Figen Büyükakın,   Kocaeli University, Türkiye
+d Support: email NA
+d
 f xtie2.ado
 f xtie2.sthlp
+f xtie2_example.do
+f xtie2_validation.do

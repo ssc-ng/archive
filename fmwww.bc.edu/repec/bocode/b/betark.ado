@@ -1,7 +1,8 @@
+*! 1.1.0	Ariel Linden 29Sep2026	// changed version to 11.0; fixed sort ordering
 *! 1.0.0	Ariel Linden 27Jun2026
 
 program define betark, eclass
-	version 14.0
+	version 11.0
 
 	if replay() {
 		if "`e(cmd)'" != "betark" {
@@ -186,6 +187,13 @@ program define Estimate, eclass
 	local k2_est = `k2_est' + 1		// scale always has _cons in v0.1.0
 
 	// starting values: static betareg fit (rho = 0), on the reduced
+	// sample. Sorted by panel/time first so the fit -- and therefore the
+	// starting values passed to betark_main() -- no longer depends on
+	// whatever physical row order the data happened to arrive in. This
+	// sort is intentionally left in place (not restored) when Estimate
+	// exits, so the data remain in proper tsset order for predict's
+	// L./L2. operators afterward.
+	sort `panvar' `timevar'
 	tempname b0
 	if "`scale_est'" != "" local scaleopt "scale(`scale_est')"
 	else                   local scaleopt ""
@@ -399,7 +407,7 @@ real matrix function betark_getsegs(real colvector panid, real colvector tvec)
 // joint conditional log-likelihood for the beta-AR(k) model
 void function betark_lf(transmorphic M, real rowvector b, real colvector lnf)
 {
-	real colvector y, eta, lnphi, seg_start, seg_end
+	real colvector y, eta, lnphi, seg_start, seg_end, perm
 	real colvector eta_seg, y_seg, lnphi_seg
 	real rowvector rho
 	real scalar    p, nsegs, gg, r1, r2, ns, t_loc, kk
@@ -409,9 +417,10 @@ void function betark_lf(transmorphic M, real rowvector b, real colvector lnf)
 	seg_start = moptimize_util_userinfo(M, 2)
 	seg_end   = moptimize_util_userinfo(M, 3)
 	p         = moptimize_util_userinfo(M, 4)
+	perm      = moptimize_util_userinfo(M, 5)
 
-	eta   = moptimize_util_xb(M, b, 1)
-	lnphi = moptimize_util_xb(M, b, 2)
+	eta   = moptimize_util_xb(M, b, 1)[perm]
+	lnphi = moptimize_util_xb(M, b, 2)[perm]
 
 	rho = J(1, p, .)
 	for (kk=1; kk<=p; kk++) {
@@ -469,7 +478,7 @@ void function betark_main(string scalar yvar,
                            real   scalar showlog)
 {
 	real matrix      data, allsegs
-	real colvector   y, panid, tvec, seg_start, seg_end
+	real colvector   y, panid, tvec, seg_start, seg_end, p_order
 	real rowvector   b0
 	real scalar      nobs, converged, ll, nexcl, jj
 	string matrix    allvars
@@ -480,19 +489,21 @@ void function betark_main(string scalar yvar,
 	else                allvars = (tousename, timevar, yvar)
 
 	data = st_data(., allvars)
-	data = data[selectindex(data[.,1] :== 1), .]
+	data = select(data, data[.,1] :== 1)
 
 	if (panelvar != "") {
-		data  = data[order(data[|1,1 \ rows(data),3|], (2,3)), .]
-		panid = data[., 2]
-		tvec  = data[., 3]
-		y     = data[., 4]
+		p_order = order(data[|1,1 \ rows(data),3|], (2,3))
+		data    = data[p_order, .]
+		panid   = data[., 2]
+		tvec    = data[., 3]
+		y       = data[., 4]
 	}
 	else {
-		data  = data[order(data[.,2], 1), .]
-		panid = J(rows(data), 1, 1)
-		tvec  = data[., 2]
-		y     = data[., 3]
+		p_order = order(data[.,2], 1)
+		data    = data[p_order, .]
+		panid   = J(rows(data), 1, 1)
+		tvec    = data[., 2]
+		y       = data[., 3]
 	}
 
 	nobs    = rows(y)
@@ -526,6 +537,7 @@ void function betark_main(string scalar yvar,
 	moptimize_init_userinfo(M, 2, seg_start)
 	moptimize_init_userinfo(M, 3, seg_end)
 	moptimize_init_userinfo(M, 4, p)
+	moptimize_init_userinfo(M, 5, p_order)
 
 	moptimize_init_conv_maxiter(M, maxiter)
 	moptimize_init_conv_ptol(M, tol)
@@ -553,6 +565,7 @@ void function betark_main(string scalar yvar,
 	nexcl = 0
 	for (jj=1; jj<=rows(seg_start); jj++) {
 		if (seg_end[jj]-seg_start[jj]+1 > p) nexcl = nexcl + p
+		else                                 nexcl = nexcl + (seg_end[jj]-seg_start[jj]+1)
 	}
 
 	st_matrix("r(b)", moptimize_result_coefs(M))

@@ -1,7 +1,8 @@
+*! 1.1.0	Ariel Linden 29Sep2026	// changed version to 11.0; fixed sort ordering
 *! 1.0.0	Ariel Linden 27Jun2026
 
 program define betark_p
-	version 14.0
+	version 11.0
 	if `"`e(cmd)'"' != "betark" {
 		error 301
 	}

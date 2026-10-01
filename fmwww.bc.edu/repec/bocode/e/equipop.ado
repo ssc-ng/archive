@@ -1,0 +1,916 @@
+*! equipop v1.48.2  -  k-nearest neighbour context variables via EquiPop
+*! Machine 1 (Counts and Shares). Adds, per requested k:
+*!   N_<k>, Dist_<k>, and per treatment variable v: T_<v>_<k>, R_<v>_<k>
+*! row-aligned to the dataset in memory. Radii r() give the same
+*! columns named _r<r>. treat() is optional; without it you get the
+*! neighbourhood size and reach alone.
+*!
+*! Requires Stata 17+, Python configured (python query), and the
+*! Python package installed in THAT Python. See help equipop.
+*!
+*! Behaves like a Stata command: [if] [in], native [fweight=],
+*! returned results in r(), and prefix(). -equipop doctor- reports on
+*! the Python itself; -equipop setup- installs or updates the engine.
+
+program define equipop, rclass
+    version 17
+
+    * ---- -equipop doctor- --------------------------------------
+    * A read-only report on the Python Stata is using
+    * and the libraries EquiPop needs. This is the FIRST thing the
+    * program does, for two reasons: it has to work on a machine
+    * where nothing else does, and it must not be made to supply
+    * x() and y(), which the syntax line below makes mandatory.
+    *
+    * The two failures it exists for both happen BEFORE any EquiPop
+    * code is reached, so neither can produce an EquiPop error: a
+    * library built for the wrong processor, and
+    * two copies of one maths library in a process (Stata plus
+    * Anaconda on Windows, 1.35).
+    gettoken eqp_sub eqp_rest : 0, parse(" ,")
+    if `"`eqp_sub'"' == "doctor" {
+        _equipop_doctor
+        exit
+    }
+    if `"`eqp_sub'"' == "setup" {
+        _equipop_setup `eqp_rest'
+        exit
+    }
+
+    * A bare word that is not a subcommand. Without this it falls
+    * through to the syntax line below, Stata reads it as a variable
+    * list, and the user is told "varlist not allowed" - which is true
+    * and useless. John hit this in the field running -equipop setup-
+    * against an .ado that predated the subcommand.
+    *
+    * The test is safe because every REAL first token is punctuation
+    * or a Stata keyword: a comma, an [fweight=...], -if- or -in-.
+    * A bare alphabetic word can only be a mistaken subcommand.
+    if regexm(`"`eqp_sub'"', "^[a-zA-Z][a-zA-Z0-9_]*$")               ///
+       & !inlist(`"`eqp_sub'"', "if", "in") {
+        display as error `"unknown subcommand: `eqp_sub'"'
+        display as text "  equipop doctor  - report on the Python " ///
+            "this Stata is using"
+        display as text "  equipop setup   - install or update the " ///
+            "calculating engine"
+        display as text ""
+        display as text "  If you typed one of those and Stata does " ///
+            "not know it, the"
+        display as text "  command files here are older than the " ///
+            "subcommand. Update them:"
+        * v1.48.2. THIS USED TO NAME A RAW GITHUB URL ONLY, and it is
+        * printed at the exact moment a confused user is reading
+        * carefully. SSC is where a Stata user expects to update from,
+        * and adoupdate only knows about packages installed from a
+        * site - so SSC goes first. The GitHub line stays as the
+        * development route, and as the answer while an SSC update is
+        * still propagating.
+        display as text "     ssc install equipop, replace"
+        display as text "  or, for the development version:"
+        display as text `"     net install equipop, from("https://raw.githubusercontent.com/GeoJohnSwe/EquiPop/main/stata") replace"'
+        display as text "  and then restart Stata."
+        display as text ""
+        display as text "  To analyse data, the variables go in " ///
+            "options, after a comma:"
+        display as text "     equipop, x(X) y(Y) k(25)"
+        exit 198
+    }
+
+    syntax [fweight] [if] [in], X(varname numeric) Y(varname numeric) ///
+           [TREAT(varlist numeric) ///
+            K(numlist integer >0) R(numlist >0) ///
+            Unit(real 100) POP(varname numeric) PREFIX(string) ///
+            SELFpot(real 1) PROJect EPSG(integer 0) ///
+            TREATmode(string) MISSing(numlist) ///
+            DECAY(string) HALFlife(real 0) HALFlifevar(varname numeric) ///
+            SELFPOTName(string) ///
+            BINS(integer 10) OVERshoot(string) ///
+            ORIGINrule(string) CALibration(string) REPLACE]
+
+    * ---- projection -------------------------------------------
+    * Design rule: a professional spatial analyst has their
+    * own routines and does not need this. It is for the economist or
+    * statistician who has lat/long and has never been asked to think
+    * past it - for whom being forced to project first is a blocker
+    * that stops them using the method at all.
+    *
+    * So: one automatic, defensible choice, and the run SAYS which one
+    * it made. epsg() is the escape hatch for anyone who wants a
+    * particular zone.
+    if `epsg' != 0 & "`project'" == "" {
+        display as error "epsg() sets which projection to use, so it " ///
+            "needs -project- as well"
+        exit 198
+    }
+
+    * ---- the sample -------------------------------------------
+    * Design rule: [if] and [in] restrict the ROWS THAT GET
+    * RESULTS. They do NOT restrict who counts as a neighbour - that
+    * is the reference-population ladder's job and it is a different
+    * question. `equipop if urban==1` computes for urban origins,
+    * and rural people still fill their neighbourhoods.
+    *
+    * novarlist matters: without it marksample also drops any row
+    * with a missing value among the variables, which would quietly
+    * shrink the population. Missing handling is EquiPop's own
+    * and the two must not fight. The rule is: use
+    * Stata's own commands where we can, not where it jeopardises
+    * our code - this is the seam between the two.
+    * zeroweight matters for the same reason. Without it, marksample
+    * drops every row whose [fweight=] is 0 - and in John's field data
+    * that was 109 places with no residents, which then received no
+    * results at all while pop() gave them results. A place with no
+    * people still HAS a neighbourhood around it, and the two routes
+    * into the same idea must not disagree at the boundary. John's
+    * ruling, 1.40.4: "they shall have results". It is the same
+    * principle as a case blanked by missing() - it is still the
+    * placeholder for results, it just contributes nothing itself.
+    marksample touse, novarlist zeroweight
+
+    * ---- weights ----------------------------------------------
+    * fweight is the honest Stata reading of an EquiPop weight:
+    * "this row stands for N identical observations" IS a population
+    * count in a cell. Stata validates it for us. But fweight demands
+    * whole numbers and EquiPop supports fractional population on
+    * purpose (WorldPop; machine 2 taking part of a cell), so pop()
+    * remains for that case.
+    local wvar ""
+    if "`weight'" != "" {
+        if "`pop'" != "" {
+            display as error "give either [fweight=varname] or " ///
+                "pop(varname), not both - they mean the same thing"
+            exit 198
+        }
+        local wvar = trim(subinstr("`exp'", "=", "", 1))
+    }
+    else if "`pop'" != "" {
+        local wvar "`pop'"
+    }
+
+    * ---- distance decay ----------------------------------------
+    * Words, not numbers, throughout: a do-file read
+    * six months later has to say what it did.
+    if "`decay'" != "" {
+        * The five the engine actually implements. The door may not
+        * import the package to learn its own vocabulary (78/105), so
+        * this list is duplicated on purpose and pinned by
+        * tests/test_stata_boxes.py against equipop.decay.MODELS.
+        if !inlist("`decay'", "negexp", "expnormal", "expsqrt",       ///
+                   "lognormal", "power") {
+            display as error "decay() must be negexp, expnormal, " ///
+                "expsqrt, lognormal or power"
+            exit 198
+        }
+        if `halflife' <= 0 & "`halflifevar'" == "" {
+            display as error "decay() needs a half-life: the distance " ///
+                "at which a neighbour counts half as much"
+            display as text "  halflife(#)      one distance for " ///
+                "everybody, in map units"
+            display as text "  halflifevar(var) a variable, so each " ///
+                "place carries its own bandwidth"
+            exit 198
+        }
+        if `halflife' > 0 & "`halflifevar'" != "" {
+            display as error "give halflife() or halflifevar(), " ///
+                "not both"
+            exit 198
+        }
+    }
+    else if `halflife' > 0 | "`halflifevar'" != "" {
+        display as error "halflife() sets the bandwidth for decay(), " ///
+            "so it needs decay() as well"
+        exit 198
+    }
+
+    * ---- what the half-life MEANS  (BACKLOG 317) ---------------
+    * Östh, Lyhagen and Reggiani (2016) name two readings and
+    * advocate the first; old EquiPop used it, and 1.30-1.47 had
+    * silently switched to the second. halflife is the default again.
+    *   halflife  half of all trips are shorter than halflife()
+    *             - use for a survey median
+    *   halfprob  a neighbour at halflife() counts half as much
+    * They coincide for negexp. power has no half-life, only halfprob.
+    local calibration = lower(strtrim("`calibration'"))
+    if "`calibration'" != "" {
+        if "`decay'" == "" {
+            display as error "calibration() says what halflife() " ///
+                "means, so it needs decay() as well"
+            exit 198
+        }
+        if inlist("`calibration'", "halflife", "half-life", "hl", "life", "median") {
+            local calibration "half-life"
+        }
+        else if inlist("`calibration'", "halfprob", "half-probability", "hp", "probability") {
+            local calibration "half-probability"
+        }
+        else {
+            display as error "calibration() must be halflife or halfprob"
+            display as text "  halflife  half of all trips are shorter " ///
+                "than halflife() - use for a survey median (default)"
+            display as text "  halfprob  a neighbour at halflife() " ///
+                "counts half as much"
+            exit 198
+        }
+    }
+    else if "`decay'" != "" {
+        local calibration "half-life"
+    }
+
+    * ---- the overshoot: the ring of cells that crosses k ---------
+    * `sampled` is REFUSED BY NAME rather than ignored.
+    * John's reason: it exists only to reproduce old EquiPop versions,
+    * so it is not a Stata concern at all. Refusing it by name also
+    * drops the need for a seed option, since sampled is the one mode
+    * that makes a run irreproducible without one.
+    if "`overshoot'" == "sampled" {
+        display as error "overshoot(sampled) is not available in Stata"
+        display as text "  It exists to reproduce older versions of " ///
+            "EquiPop, and it draws cells in a random order, so a run " ///
+            "cannot be repeated exactly without carrying a seed."
+        display as text "  Use overshoot(proportional) for the " ///
+            "expected value of it, or run it in QGIS or ArcGIS Pro."
+        exit 198
+    }
+    if !inlist("`overshoot'", "", "whole", "proportional") {
+        display as error "overshoot() must be whole or proportional"
+        exit 198
+    }
+
+    * ---- is the origin its own neighbour? (BACKLOG 290) ----------
+    * John's ruling, 1.47: two rules, and `include` stays the default
+    * because it is the rule EVERY PUBLISHED EquiPop number used -
+    * his own 2015 Geographical Analysis paper included. Flipping it
+    * silently would change results with no message saying why.
+    *
+    * Accepted here in the two spellings a Stata user reaches for.
+    * "i=j" cannot be typed as an option value without quoting, so
+    * the words are what the help documents.
+    if "`originrule'" == "i=j" | "`originrule'" == "i==j" {
+        local originrule "include"
+    }
+    if "`originrule'" == "i!=j" | "`originrule'" == "i ne j" {
+        local originrule "exclude"
+    }
+    if !inlist("`originrule'", "", "include", "exclude") {
+        display as error "originrule() must be include or exclude"
+        display as text "  include (the default) counts the origin's " ///
+            "own cell as part of its neighbourhood, as every " ///
+            "published EquiPop result does."
+        display as text "  exclude leaves it out - the w(ii)=0 " ///
+            "convention that spatial regression needs. Results " ///
+            "under the two are NOT comparable."
+        exit 198
+    }
+
+    * ---- what treat() CONTAINS ---------------------------------
+    * The help and both GIS doors said treat() holds the group's
+    * PERSON COUNT, while the bridge applied the legacy 0/1-flag rule.
+    * A user who followed the help got a group three times larger than
+    * the neighbourhood containing it. Counts are the default now,
+    * matching the help and the GIS doors; flags stay available by
+    * name so nothing already written breaks.
+    if "`treatmode'" == "" local treatmode "counts"
+    if !inlist("`treatmode'", "counts", "flags") {
+        display as error "treatmode() must be counts or flags"
+        display as text "  counts - treat() holds the NUMBER OF " ///
+            "PEOPLE of the group at this point (the default)"
+        display as text "  flags  - treat() holds 0 or 1, a share " ///
+            "of the row's population"
+        exit 198
+    }
+
+    * ---- cell size ---------------------------------------------
+    * Fractional cell sizes are REFUSED, because the core
+    * converts cell centres to integers - a requested 2.5 gives centres
+    * 1, 3, 6, so the spacings come out 2 and 3 and neither is 2.5.
+    * QGIS and Pro have refused this since 1.29.8. Stata did not, and
+    * a rule enforced at some doors and not others is how 172 happened.
+    * The rule itself lives in the package, so a fourth door inherits
+    * it rather than reimplementing it.
+    if `unit' <= 0 {
+        display as error "unit() is the cell size and must be " ///
+            "greater than zero"
+        exit 198
+    }
+    if `unit' != int(`unit') {
+        display as error "unit() must be a whole number - the cell " ///
+            "grid is built on integer centres, so a fractional size " ///
+            "would not give evenly spaced cells"
+        exit 198
+    }
+
+    * ---- self-potential: three rungs, or any number between ------
+    * The GIS doors offer three named rungs. Stata kept a bare number,
+    * which is how the doors drifted apart. Both now work: the names
+    * are the ladder, the number is the escape hatch, and the engine
+    * still receives a float either way.
+    if "`selfpotname'" != "" {
+        if "`selfpotname'" == "none"       local selfpot = 0
+        if "`selfpotname'" == "median"     local selfpot = 1/sqrt(2)
+        if "`selfpotname'" == "full"       local selfpot = 1
+        if !inlist("`selfpotname'", "none", "median", "full") {
+            display as error "selfpotname() must be none, median or full"
+            display as text "  none   - no distance at all; Dist_k " ///
+                "can come out as zero"
+            display as text "  median - half of what your cell holds " ///
+                "is nearer than this"
+            display as text "  full   - the radius at which k of it " ///
+                "is reached (the default)"
+            exit 198
+        }
+    }
+    if `selfpot' < 0 | `selfpot' > 1 {
+        display as error "selfpot() must lie between 0 and 1"
+        exit 198
+    }
+    if "`k'" == "" & "`r'" == "" {
+        display as error "give k() and/or r()"
+        exit 198
+    }
+    if "`prefix'" != "" {
+        capture confirm name `prefix'N_1
+        if _rc {
+            display as error "prefix() must begin a legal Stata " ///
+                "variable name"
+            exit 198
+        }
+    }
+
+    * ---- drop what we are about to write ----------------------
+    if "`replace'" != "" {
+        if "`k'" != "" {
+            foreach kk of numlist `k' {
+                capture drop `prefix'N_`kk'
+                capture drop `prefix'Dist_`kk'
+                * treat() became optional in 1.36, and an empty
+                * -varlist- loop is a syntax error, not an empty loop.
+                * So -equipop, x() y() k(25) replace- failed on exactly
+                * the combination that ruling created.
+                if "`treat'" != "" {
+                    foreach v of varlist `treat' {
+                        capture drop `prefix'T_`v'_`kk'
+                        capture drop `prefix'R_`v'_`kk'
+                    }
+                }
+            }
+        }
+        if "`r'" != "" {
+            foreach rr of numlist `r' {
+                * `rl' is the underscore-safe name -
+                * r=1.5 becomes r1_5, because a dot cannot appear in
+                * a Stata variable name.
+                local rl : subinstr local rr "." "_", all
+                capture drop `prefix'N_r`rl'
+                if "`treat'" != "" {
+                    foreach v of varlist `treat' {
+                        capture drop `prefix'T_`v'_r`rl'
+                        capture drop `prefix'R_`v'_r`rl'
+                    }
+                }
+            }
+        }
+    }
+
+    * ---- WARN ABOUT LONG NAMES BEFORE COMPUTING ANYTHING -------
+    * John's run finished 646,766 cells, three widened passes and two
+    * k values before stopping on a 33-character name. The engine
+    * cannot be reached from here to know every column it will make,
+    * but the LONGEST one is predictable: prefix + the longest treat
+    * variable + "_" + the largest k. Saying so first costs nothing
+    * and saves the run.
+    if "`treat'" != "" {
+        local _longest = 0
+        foreach v of varlist `treat' {
+            if length("`v'") > `_longest' local _longest = length("`v'")
+        }
+        local _bigk = 0
+        foreach kk of numlist `k' {
+            if `kk' > `_bigk' local _bigk = `kk'
+        }
+        local _need = length("`prefix'") + 2 + `_longest' ///
+            + 1 + length("`_bigk'")
+        if `_need' > 32 {
+            display as text "[equipop] names will exceed Stata's 32 " ///
+                "characters (about `_need') and will be SHORTENED - " ///
+                "every rename is listed when the variables are made."
+        }
+    }
+
+    * Every option is passed BY NAME, and the receiving
+    * function is keyword-only. Up to v1.34 this was a positional
+    * call, and that is how the door broke for eleven releases: an
+    * option was added to the syntax line and to the call, and the
+    * def never heard of it. A named call cannot be got wrong by
+    * ORDER and names a mistake out loud. Same medicine as 169.
+    python: _equipop_machine1(x="`x'", y="`y'", treat="`treat'",     ///
+        k="`k'", r="`r'", unit=`unit', weight="`wvar'",              ///
+        selfpot=`selfpot', touse="`touse'", prefix="`prefix'",       ///
+        project="`project'", epsg=`epsg', treatmode="`treatmode'",  ///
+        missing="`missing'", decay="`decay'", halflife=`halflife',   ///
+        halflifevar="`halflifevar'", bins=`bins',                    ///
+        overshoot="`overshoot'", originrule="`originrule'",           ///
+        calibration="`calibration'")
+
+    * ---- returned results -------------------------------------
+    * r(varlist) is the one that changes how the
+    * command can be used: -regress y `r(varlist)'- and loops over
+    * several k stop needing hand-written variable names.
+    local created "`eqp_varlist'"
+    quietly count if `touse'
+    local n_origins = r(N)
+    local n_missing = 0
+    if "`created'" != "" {
+        local first : word 1 of `created'
+        quietly count if missing(`first') & `touse'
+        local n_missing = r(N)
+    }
+
+    display as result "equipop: done - " ///
+        "`: word count `created'' new variables, " ///
+        "`n_origins' rows in sample, `n_missing' without results"
+
+    return local cmd     "equipop"
+    return local cmdline `"equipop `0'"'
+    return local varlist "`created'"
+    return local treat   "`treat'"
+    return local k       "`k'"
+    return local r       "`r'"
+    return scalar unit      = `unit'
+    return scalar selfpot   = `selfpot'
+    * BACKLOG 317: which kernel actually ran, so a do-file can check
+    * it rather than a reader having to trust the log. calibration is
+    * what was APPLIED - power asked for halflife still reports
+    * half-probability, because that is what it used.
+    if "`decay'" != "" {
+        return local decay       "`decay'"
+        return local calibration "`eqp_calibration'"
+        return scalar halflife   = `halflife'
+        return scalar beta       = `eqp_beta'
+    }
+    return scalar N_origins = `n_origins'
+    return scalar N_missing = `n_missing'
+    if "`eqp_crs'" != "" {
+        return local crs "`eqp_crs'"
+        return scalar epsg = `eqp_epsg'
+    }
+end
+
+
+* -equipop doctor- lives in its own program so that it carries no
+* syntax of its own and can be called before anything is parsed.
+* -equipop setup- installs the calculating engine into the Python
+* Stata is using. The .ado files arrive by net install; the engine
+* only ever arrives by pip, and getting it into the RIGHT Python is
+* the step that goes wrong. This does it from inside Stata, so the
+* interpreter cannot be guessed at.
+program define _equipop_setup
+    version 17
+    syntax [, REPAIR]
+    * BACKLOG 196. The ado's own version goes IN, so setup can ask for
+    * an engine at least as new as the commands calling it. Maintained
+    * by tools/bump_version.py, which replaces every line matching
+    * this pattern - so this string and the doctor's below always
+    * agree.
+    local eqp_ado_version "1.48.2"
+    python: _equipop_setup_py("`repair'", "`eqp_ado_version'")
+    * AND A FAILURE IS NOW A FAILURE. It used to print "PIP FAILED"
+    * and return normally, so a scripted or institutional install had
+    * no code to act on.
+    if "`eqp_setup_failed'" != "" {
+        exit 601
+    }
+end
+
+program define _equipop_doctor
+    version 17
+    * The .ado files' own version, so the doctor can notice when the
+    * commands and the Python engine have drifted apart - the single
+    * most frequent field failure this project has. This is a SEVENTH
+    * place a version string lives; tests/test_stata_ado.py asserts it
+    * against line 1 of this file and against pyproject.toml.
+    local eqp_ado_version "1.48.2"
+    python: _equipop_doctor_py("`eqp_ado_version'")
+end
+
+version 17
+python:
+# --- thin sfi glue; all computation lives in equipop.stata_bridge ----
+# Keep this block as SMALL as possible. Code in here can only be run
+# by Stata, so the Python test suite cannot reach it - which is how
+# and 173 survive. Everything that can live in the package does.
+# What must stay here is READ by tests/test_stata_ado.py.
+from sfi import Data, Macro, SFIToolkit
+import sys
+import numpy as np
+
+
+def _wrap_for_stata(text, width=72):
+    words, line, out = text.split(), "", []
+    for w in words:
+        if len(line) + len(w) + 1 > width:
+            out.append(line)
+            line = w
+        else:
+            line = f"{line} {w}".strip()
+    if line:
+        out.append(line)
+    return out
+
+
+def _decay_spec(model, half_life, calibration=""):
+    """Build the engine's Decay object, or None for no decay.
+
+    A variable bandwidth passes its own half-life per row, so the
+    single number here is only the fixed case; the engine takes the
+    model AND THE CALIBRATION from this object either way - the bin
+    loop copies both (BACKLOG 317).
+    """
+    if not model:
+        return None
+    from equipop.decay import Decay
+    return Decay(model=model,
+                 half_life_m=(float(half_life) if half_life > 0
+                              else 1.0),
+                 calibration=calibration or None)
+
+
+def _report_calibration(dec, halflife, halflifevar):
+    """Say which kernel runs, and show BOTH betas (BACKLOG 317).
+
+    Printed so it lands in a `log using` file - John's ruling on Stata
+    provenance - and handed back as locals so the ado can return them.
+    Showing both betas makes the difference between the two readings
+    visible even to a user who never set calibration().
+    """
+    SFIToolkit.displayln(
+        "{txt}decay: {res}" + dec.model + "{txt}, calibration "
+        "{res}" + dec.calibration)
+    if halflifevar:
+        SFIToolkit.displayln(
+            "{txt}  the half-life varies by row ({res}" + halflifevar +
+            "{txt}); every bin uses " + dec.calibration + ".")
+    elif halflife and halflife > 0:
+        hl, hp = dec.both_betas()
+        SFIToolkit.displayln(
+            "{txt}  at halflife({res}%g{txt}):" % float(halflife))
+        if hl is None:
+            SFIToolkit.displayln(
+                "{txt}    half-life         {res}not defined{txt} - "
+                "power has no median")
+        else:
+            SFIToolkit.displayln(
+                "{txt}    half-life         beta = {res}%.6g" % hl
+                + ("{txt}   <- used" if dec.calibration == "half-life"
+                   else ""))
+        SFIToolkit.displayln(
+            "{txt}    half-probability  beta = {res}%.6g" % hp
+            + ("{txt}   <- used" if dec.calibration == "half-probability"
+               else ""))
+    Macro.setLocal("eqp_calibration", dec.calibration)
+    Macro.setLocal("eqp_beta", repr(float(dec.beta)))
+
+
+def _col(v):
+    a = np.array(Data.get(v), dtype=float)
+    a[a > 8.9e307] = np.nan          # Stata missings arrive huge
+    return a
+
+
+def _equipop_machine1(*, x, y, treat, k="", r="", unit=100.0,
+                      weight="", selfpot=1.0, touse="", prefix="",
+                      project="", epsg=0, treatmode="counts",
+                      missing="", decay="", halflife=0.0,
+                      halflifevar="", bins=10, overshoot="",
+                      originrule="", calibration=""):
+    # KEYWORD-ONLY on purpose: a positional call raises TypeError
+    # rather than quietly meaning something else.
+    try:
+        from equipop.stata_bridge import (knn_to_rows, to_stata_values,
+                                          project_for_stata,
+                                          degrees_warning,
+                                          zone_span_warning)
+    except ImportError:
+        SFIToolkit.errprintln(
+            "equipop is not installed in Stata's Python. Check which "
+            "Python with -python query-, then install into THAT one. "
+            "See help equipop.")
+        SFIToolkit.error(198)
+        return
+
+    xs, ys = _col(x), _col(y)
+
+    # Projection happens HERE, on the way in: the engine below receives
+    # metric coordinates and knows nothing about degrees.
+    if project:
+        try:
+            east, north, code, crs = project_for_stata(
+                xs, ys, epsg=(int(epsg) or None))
+        except Exception as exc:
+            SFIToolkit.errprintln(str(exc).splitlines()[0])
+            SFIToolkit.error(198)
+            return
+        # Computed on the DEGREES, so it must happen before xs and ys
+        # are replaced by the projected values.
+        span_note = zone_span_warning(xs, ys, epsg=code)
+        xs, ys = east, north
+        print(f"equipop: projected to {crs}")
+        if span_note:
+            SFIToolkit.displayln("")
+            for line in _wrap_for_stata(span_note):
+                SFIToolkit.displayln(line)
+            SFIToolkit.displayln("")
+        Macro.setLocal("eqp_epsg", str(code))
+        Macro.setLocal("eqp_crs", crs)
+    else:
+        warning = degrees_warning(xs, ys)
+        if warning:
+            SFIToolkit.displayln("")
+            for line in _wrap_for_stata(warning):
+                SFIToolkit.displayln(line)
+            SFIToolkit.displayln("")
+
+    treats = {v: _col(v) for v in treat.split()} if treat.strip() else None
+    ks = [int(t) for t in k.split()] or None
+    rs = [float(t) for t in r.split()] or None
+    w = _col(weight) if weight else None
+
+    # A refusal from the bridge is a MESSAGE, not a traceback. An
+    # uncaught exception here shows a Python stack to a Stata user,
+    # who cannot act on it and cannot tell our fault from theirs.
+    try:
+        dec = _decay_spec(decay, halflife, calibration)
+        if dec is not None:
+            _report_calibration(dec, halflife, halflifevar)
+        res = knn_to_rows(xs, ys, ks, treat=treats, weight=w,
+                          unit_size=float(unit), r_values=rs,
+                          self_potential=float(selfpot),
+                          treat_are_counts=(treatmode != "flags"),
+                          missing_codes=[float(c)
+                                         for c in missing.split()],
+                          decay=dec,
+                          decay_half_life=(_col(halflifevar)
+                                           if halflifevar else None),
+                          decay_bins=int(bins),
+                          overshoot_mode=(overshoot or None),
+                          self_rule=(originrule or None))
+    except ValueError as exc:
+        for line in _wrap_for_stata(str(exc)):
+            SFIToolkit.errprintln(line)
+        SFIToolkit.error(198)
+        return
+
+    # [if] [in]: computed for everyone, REPORTED for the sample.
+    keep = _col(touse) > 0 if touse else None
+
+    existing = [Data.getVarName(i) for i in range(Data.getVarCount())]
+
+    # PREFLIGHT. Every intended name is
+    # checked BEFORE any variable is created. Until 1.38 the check ran
+    # inside the writing loop, so a collision or an over-long name on
+    # the tenth variable left nine already in the dataset - a run that
+    # stopped with an error and changed the data anyway. prefix() was
+    # only tested against "N_1", which proves nothing about
+    # T_<longvariablename>_100.
+    wanted = [prefix + name for name in res]
+
+    # SHORTEN RATHER THAN REFUSE. John's run finished 646,766 cells,
+    # three widened passes and both k values, and THEN stopped because
+    # T_h72004_africanamericanalone_100 is 33 characters. The
+    # arithmetic was done; only the label was too long. Refusing
+    # threw away the work and told him to rename his data.
+    # WHAT IS SHORTENED IS THE MIDDLE. The prefix says which measure
+    # it is and the tail says which k - both carry meaning and both
+    # are short. The variable's own name is the only part with room.
+    # EVERY RENAME IS ANNOUNCED. A silently renamed column is how
+    # somebody publishes the wrong variable.
+    def _shorten(full, taken):
+        if len(full) <= 32:
+            return full
+        head, _, tail = full.rpartition("_")
+        tail = "_" + tail
+        room = 32 - len(prefix) - len(tail)
+        if room < 3:
+            return None                 # prefix and k alone too long
+        stem = head[len(prefix):]
+        cand = prefix + stem[:room] + tail
+        n = 0
+        while cand in taken:
+            n += 1
+            mark = str(n)
+            cand = prefix + stem[:room - len(mark)] + mark + tail
+            if n > 99:
+                return None
+        return cand
+
+    renamed, taken, final, use = [], set(existing), [], {}
+    for key, full in zip(res, wanted):
+        got = _shorten(full, taken)
+        if got is not None and got != full:
+            renamed.append((full, got))
+        final.append(got if got is not None else full)
+        # THE MAPPING MUST REACH THE WRITER. The first version of
+        # this computed the shortened names, ANNOUNCED them, and then
+        # the writing loop rebuilt the name from res and created the
+        # ORIGINAL - so Stata refused with "invalid varname" after
+        # the rename had been printed. The names were right on screen
+        # and wrong in the data.
+        use[key] = got if got is not None else full
+        if got is not None:
+            taken.add(got)
+    if renamed:
+        SFIToolkit.displayln("")
+        SFIToolkit.displayln("{txt}[equipop] Stata allows 32 "
+                             "characters, so these were shortened:")
+        for was, now in renamed:
+            SFIToolkit.displayln(f"{{txt}}    {was} -> {now}")
+        SFIToolkit.displayln("{txt}[equipop] the prefix and the k are "
+                             "kept; only the variable name is cut.")
+    wanted = final
+
+    problems = []
+    for name in wanted:
+        if len(name) > 32:
+            problems.append(
+                f"{name} is {len(name)} characters and cannot be "
+                f"shortened - prefix() and the k suffix already take "
+                f"{len(name) - len(name.rpartition('_')[0]) + len(prefix)}"
+                " of the 32. Use a shorter prefix().")
+        elif name in existing:
+            problems.append(
+                f"{name} already exists - use option replace")
+    seen = set()
+    for name in wanted:
+        if name in seen:
+            problems.append(f"{name} would be created twice")
+        seen.add(name)
+    if problems:
+        SFIToolkit.errprintln("no variables were created:")
+        for line in problems[:10]:
+            for part in _wrap_for_stata("  " + line):
+                SFIToolkit.errprintln(part)
+        if len(problems) > 10:
+            SFIToolkit.errprintln(f"  ... and {len(problems) - 10} more")
+        SFIToolkit.error(110)
+        return
+
+    made = []
+    for key, arr in res.items():
+        name = use[key]
+        vals = np.asarray(arr, dtype=float)
+        if keep is not None:
+            vals = np.where(keep, vals, np.nan)
+        Data.addVarDouble(name)
+        Data.store(name, None, to_stata_values(vals))
+        made.append(name)
+
+    Macro.setLocal("eqp_varlist", " ".join(made))
+
+
+def _equipop_setup_py(repair="", ado_version=""):
+    # Standard library ONLY, and deliberately so: this runs BEFORE the
+    # package exists, on a machine where the whole point is that
+    # nothing is installed yet. It must not import the thing it is
+    # about to install.
+    import subprocess
+    import sys
+
+    # BACKLOG 319. --user IS REFUSED INSIDE A VIRTUAL ENVIRONMENT:
+    # "Can not perform a '--user' install. User site-packages are not
+    # visible in this virtualenv." A colleague on a Mac had pointed
+    # Stata at ~/StataPython/bin/python - a venv made for Stata, which
+    # is a sensible thing to do - and setup would have failed on
+    # exactly the users careful enough to do that. In a venv the
+    # ordinary install IS the user install, so --user is not merely
+    # unnecessary, it is wrong.
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    args = ["--upgrade"] if in_venv else ["--user", "--upgrade"]
+    if repair:
+        # The Mac case, and the Anaconda case: the libraries are
+        # present but built for the wrong processor, or shadowed by
+        # another copy. --no-cache-dir is not decoration - without it
+        # pip reuses the wrong wheel it already downloaded and the
+        # repair appears not to work.
+        args += ["--force-reinstall", "--no-cache-dir",
+                 "--only-binary=:all:", "numpy", "scipy", "pandas"]
+    # BACKLOG 196. A FLOOR, NOT A PIN. Unpinned, a 1.40 command file
+    # could pull whatever PyPI has today; doctor then reports a
+    # mismatch that SETUP created. Exact pinning would be worse in the
+    # other direction - it would stop an older ado ever receiving a
+    # bug-fixed engine.
+    # THE REAL INVARIANT: the ado is the caller and the engine is the
+    # library, so THE LIBRARY MUST BE AT LEAST AS NEW AS THE CALLER.
+    # A floor permits fixes and forbids the case that actually breaks -
+    # an ado calling something its engine does not have.
+    # THIS MATTERS MORE FROM SSC THAN IT DID FROM GITHUB. There the
+    # two arrived together from one set of instructions; on SSC they
+    # sit on separate update tracks - adoupdate for the commands,
+    # `equipop setup` for the engine - so drift is the normal state
+    # rather than an accident.
+    if ado_version:
+        args.append("equipop>=" + ado_version)
+    else:
+        args.append("equipop")
+    cmd = [sys.executable, "-m", "pip", "install"] + args
+
+    print("EquiPop setup")
+    if ado_version:
+        print("  these command files are version " + ado_version +
+              ", so the engine asked for is equipop>=" + ado_version)
+    if in_venv:
+        print("  this Python is a virtual environment, so --user is "
+              "not used")
+    print("  installing into the Python Stata is using:")
+    print("     " + sys.executable)
+    print("  command:")
+    print("     " + " ".join(cmd))
+    print("")
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    except Exception as exc:
+        print("  could not run pip at all: " + str(exc).splitlines()[0])
+        Macro.setLocal("eqp_setup_failed", "1")      # BACKLOG 196
+        return
+    tail = (p.stdout or "").strip().splitlines()[-12:]
+    for line in tail:
+        print("  " + line)
+    if p.returncode != 0:
+        print("")
+        Macro.setLocal("eqp_setup_failed", "1")      # BACKLOG 196
+        print("  PIP FAILED. The message above is pip's own:")
+        for line in (p.stderr or "").strip().splitlines()[-8:]:
+            print("     " + line)
+        # BACKLOG 319. THIS USED TO PRINT THE SAME ADVICE WHATEVER PIP
+        # SAID. For "No module named pip" it sent the user to replace
+        # their entire Python when the fix is one line, and they
+        # believed it, because the message sounded certain. Advise on
+        # WHAT PIP ACTUALLY SAID, and when it says something we do not
+        # recognise, quote it and stop rather than guess.
+        low = ((p.stderr or "") + (p.stdout or "")).lower()
+        if "no module named pip" in low:
+            print("  That Python has no pip. It is otherwise fine, and "
+                  "one line fixes it:")
+            print("     " + sys.executable + " -m ensurepip --upgrade")
+            print("  Run that in a Terminal or Command Prompt, then run "
+                  "-equipop setup- again.")
+            print("  If THAT says there is no ensurepip either, the "
+                  "Python was built")
+            print("  without it - install a plain Python from "
+                  "python.org instead.")
+        elif "externally managed" in low:
+            print("  This is Apple's or the system's own Python and is "
+                  "not ours to change.")
+            print("  Install a plain Python from python.org, point "
+                  "Stata at it with")
+            print("     python set exec \"THE_PATH_TO_THAT_PYTHON\", "
+                  "permanently")
+            print("  restart Stata, and run -equipop setup- again.")
+        elif "--user" in low and ("virtualenv" in low or "venv" in low):
+            print("  That Python is a virtual environment, which "
+                  "refuses a --user install.")
+            print("  This version should not have asked for one - "
+                  "please report it. Meanwhile:")
+            print("     " + sys.executable + " -m pip install --upgrade "
+                  "equipop")
+        elif "no matching distribution" in low or "could not find" in low:
+            print("  pip could not reach PyPI, or could not find a "
+                  "build for this Python.")
+            print("  Check the network and any proxy, and that this "
+                  "Python is 3.10 or newer:")
+            print("     " + sys.executable + " --version")
+        else:
+            print("  We do not recognise that message, so we will not "
+                  "guess at it.")
+            print("  It is pip's own, and it is the thing to search for "
+                  "or to send on.")
+        return
+
+    print("")
+    print("  Done. Now QUIT STATA COMPLETELY, start it again, and run:")
+    print("     equipop doctor")
+    # NOT run here on purpose. Python starts once per Stata session and
+    # keeps whatever it loaded first, so after an upgrade the doctor
+    # would report the version that is still in memory - the OLD one -
+    # and say everything matches when it does not.
+
+
+def _equipop_doctor_py(ado_version=""):
+    # The report prints itself, line by line, flushing as it goes.
+    # That is deliberate: if a compiled library takes the whole Stata
+    # process down mid-report - which is what a second copy of the
+    # maths library does on Windows - the lines already on screen are
+    # the only evidence there will be.
+    #
+    # Since 1.37 the package no longer loads numpy, pandas or scipy on
+    # import, so this report can still be produced on a machine where
+    # those three are exactly what is broken. That was not possible
+    # before, and it is the case the doctor was written for.
+    try:
+        from equipop.doctor import run
+    except Exception as exc:
+        print("EquiPop doctor could not load the package:")
+        print("   " + str(exc).splitlines()[0])
+        print("   Python running Stata: " + sys.executable)
+        print("   Install equipop into THAT Python, then restart Stata.")
+        return
+    run(ado_version=ado_version)
+end

@@ -1,0 +1,56 @@
+d 'EASI': module to estimate the Exact Affine Stone Index demand system
+d
+d  easi estimates the Exact Affine Stone Index (EASI) implicit
+d Marshallian demand system of Lewbel and Pendakur (2009) within
+d Stata and Mata, by iterated linear three-stage least squares with
+d Slutsky symmetry imposed. It reports expenditure, compensated and
+d uncompensated price, and demographic elasticities for the
+d households, the individuals, or the market, with standard errors
+d from the influence functions of the whole procedure; sampling
+d weights, robust, cluster and survey-design (svyset) variance, and
+d a design bootstrap. The households that do not buy some goods are
+d handled by imputing their missing prices (pimpute) and by the
+d Shonkwiler-Yen correction for censoring (selection), both carried
+d into the standard errors. easidiag diagnoses the data before
+d estimation; predict and estat engel give the Engel curves; tables
+d with significance stars can be written to Word, LaTeX, Excel, CSV
+d or Markdown; a dialog box and help examples run from clickable
+d links are included. sr_easi is kept as a backward-compatible
+d wrapper. A technical note documents the model, the estimator and
+d the validation of the standard errors; it is included as an
+d ancillary file (easi_technical_note.pdf) 
+d
+d KW: demand system
+d KW: EASI
+d KW: Exact Affine Stone Index
+d KW: price elasticities
+d KW: household survey
+d KW: censoring
+d KW: survey design
+d KW: three-stage least squares
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20260930
+d
+d Author: Abdelkrim Araar,  Universite Laval 
+d Support: email aabd@@ecn.ulaval.ca
+d
+f easi.ado
+f easi.dlg
+f easi.sthlp
+f easi_estat.ado
+f easi_examples.ado
+f easi_p.ado
+f easidiag.ado
+f easidiag.sthlp
+f ../s/sr_easi.ado
+f ../s/sr_easi_estat.ado
+f ../_/_easi_pimpute.ado
+f ../_/_easi_tabstars.ado
+f easi_technical_note.pdf
+f easi_tour.do
+f ../h/hixdata.dta
+f ../h/hixdata_for_dialog.do
+f ../m/mex_bench.dta
+f ../m/mex_tour.do

@@ -1,5 +1,6 @@
 p eaalogit module to estimate endogenous attribute attendance models
 p eacf module to compute Extended Sample Autocorrelation Function
+p easi module to estimate the Exact Affine Stone Index demand system
 p eba module to perform extreme bound analysis
 p ebalance module to perform entropy reweighting to create balanced samples
 p ebalfit module to perform entropy balancing
@@ -70,6 +71,7 @@ p epresent module to present non-linear relationships in regression models with 
 p epsigr module to save graph in EPSF format in UNIX environment
 p eqprhistogram module for equal probability histogram
 p equation module to Output The Equation of a Regression
+p equipop module to construct individualized population-based spatial contexts
 p er module to compute Esteban and Ray measure of polarization
 p erate module to import up-to-date exchange rates for any currency pairs
 p ereplace module to extend egen and egenmore to permit replacing

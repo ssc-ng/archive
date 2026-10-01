@@ -1,0 +1,36 @@
+d 'EQUIPOP': module to construct individualized population-based spatial contexts
+d
+d  equipop constructs individualized, or bespoke, spatial contexts
+d around every observation in a georeferenced dataset. Its
+d distinctive feature is that neighbourhood size can be set by
+d accumulated reference population rather than by a fixed number of
+d rows or a common geographical radius: an observation representing
+d 600 people contributes 600 towards a requested k, so the distance
+d needed to reach k varies with local density. The command returns
+d that geographical reach together with contextual population
+d totals and, when requested, group counts and shares. Several
+d population thresholds and fixed radii may be evaluated in one
+d call. Optional distance decay supports negative-exponential,
+d exponential-normal, exponential-square-root, log-normal and power
+d families, with a common bandwidth or one that varies across
+d observations. Further options control grid resolution, treatment
+d of the origin cell, allocation of population at the neighbourhood
+d boundary and coordinate projection. 
+d
+d KW: spatial contexts
+d KW: geography
+d KW: nearest neighbors
+d
+d Requires: Stata version 17 and Python package eqipop
+d
+d Distribution-Date: 20260930
+d
+d Author: John Östh,  Oslo Metropolitan University
+d Support: email johnosth@@oslomet.no
+d
+f equipop.ado
+f equipop_knn.ado
+f equipop_run.ado
+f equipop.sthlp
+f equipop_example.do
+f equipop_test_data.dta

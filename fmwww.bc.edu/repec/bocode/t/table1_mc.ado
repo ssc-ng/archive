@@ -1,4 +1,7 @@
-*! -table1_mc- version 3.5 Mark Chatfield    2024-12-19
+*! -table1_mc- version 3.6 Mark Chatfield    2026-09-30
+* varlabplus option gave the wrong labels - row % <-> column %. Now fixed.
+
+* -table1_mc- version 3.5 Mark Chatfield    2024-12-19
 * varlabplus option added
 
 * -table1_mc- version 3.4 Mark Chatfield    2023-11-07
@@ -139,12 +142,11 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 	if "`slashN'" == "slashN" local n "`n'/total"
 	local percentage "%"
 	if "`catrowperc'" != "" {
-		local percentage2 "`percentage'"
-		local percentage2 "column `percentage'"
+		local percentage2 "row `percentage'"
 		if "`percent_n'" == "percent_n" & "`percent'"=="" local percfootnote2 "`percentage2' (`n')" 
 		if "`percent_n'" != "percent_n" & "`percent'"=="" local percfootnote2 "`n' (`percentage2')" 
 		if "`percent'"=="percent" local percfootnote2 "`percentage2'" 
-		local percentage "row `percentage'"
+		local percentage "column `percentage'"
 	}
 	if "`percent_n'" == "percent_n" & "`percent'"=="" local percfootnote "`percentage' (`n')" 
 	if "`percent_n'" != "percent_n" & "`percent'"=="" local percfootnote "`n' (`percentage')" 
@@ -256,7 +258,8 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 			local varlab: variable label `varname'
 			if "`varlab'"=="" local varlab `varname'
 	
-			* continuous, normally distributed variable
+	
+			*** continuous, normally distributed variable
 			if "`vartype'"=="contn" {
 				preserve
 				qui keep if `touse'
@@ -345,7 +348,8 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 				restore
 			}
 
-			* continuous, log normally distributed variable
+			
+			*** continuous, log normally distributed variable
 			if "`vartype'"=="contln" {
 				preserve
 				qui keep if `touse'
@@ -438,8 +442,9 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 				qui save "`resultstable'", replace
 				restore
 			}
-						
-			* continuous, skewed variable
+			
+			
+			*** continuous, skewed variable
 			if "`vartype'"=="conts" {
 				preserve
 				qui keep if `touse'
@@ -537,7 +542,7 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 				restore
 			}
 			
-			* categorical variable
+			*** categorical variable
 			if "`vartype'"=="cat" | "`vartype'"=="cate" {
 				preserve
 				qui keep if `touse'
@@ -727,7 +732,8 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 				restore
 			}
 	
-			* binary variable
+	
+			*** binary variable
 			if "`vartype'"=="bin" | "`vartype'"=="bine" {
 				preserve
 				qui keep if `touse'
@@ -1026,23 +1032,7 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 	if regexm("`vars' ", " bin ") == 1 | regexm("`vars' ", " bine ") == 1 local ybin "1"
 	if regexm("`vars' ", " cat ") == 1 | regexm("`vars' ", " cate ") == 1 local ycat "1" 
 	if "`ycat'" == "1" | "`ybin'" == "1" local ycatbin "1"
-	/*
-	local n "n"
-	if "`slashN'" == "slashN" local n "`n'/total"
-	local percentage "%"
-	if "`catrowperc'" != "" & "`ycat'" == "1" {
-		local percentage2 "`percentage'"
-		local percentage2 "column `percentage'"
-		if "`percent_n'" == "percent_n" & "`percent'"=="" local percfootnote2 "`percentage2' (`n')" 
-		if "`percent_n'" != "percent_n" & "`percent'"=="" local percfootnote2 "`n' (`percentage2')" 
-		if "`percent'"=="percent" local percfootnote2 "`percentage2'" 
-		local percentage "row `percentage'"
-	}
-	if "`percent_n'" == "percent_n" & "`percent'"=="" local percfootnote "`percentage' (`n')" 
-	if "`percent_n'" != "percent_n" & "`percent'"=="" local percfootnote "`n' (`percentage')" 
-	if "`percent'"=="percent" local percfootnote "`percentage'" 
-	*/
-	*if "`ycat'" == "1" | "`ybin'" == "1" local ycat "`percfootnote'"
+
 	if regexm("`vars' ", " contn ") == 1  local ycontn "1"
 	if regexm("`vars' ", " contln ") == 1  local ycontln "1" 
 	if regexm("`vars' ", " conts ") == 1  local yconts "1"
@@ -1053,10 +1043,17 @@ local gmeanSD : display "geometric mean"`gsdleft'"GSD"`gsdright'  // 2024 it was
 	if "`ycontn'" == "1" & "`ycontln'" == "" & "`yconts'" == "" local ycont "`meanSD'"
 	if "`ycontn'" == "" & "`ycontln'" == "1" & "`yconts'" == "" local ycont "`gmeanSD'"
 	if "`ycontn'" == "" & "`ycontln'" == "" & "`yconts'" == "1" local ycont "median (IQR)"
-	if "`ycont'" != "" & "`ycatbin'" !="" local ymix "`ycont' for continuous measures, and `percfootnote' for categorical measures"
+	
 	if "`ycont'" != "" & "`ycatbin'" =="" local ymix "`ycont'"
-	if "`ycont'" == "" & "`ycatbin'" !="" local ymix "`percfootnote'"
-	if "`catrowperc'" != "" & "`ycat'" == "1" & "`ybin'" == "1" local ymix "`ymix' and `percfootnote2' for binary measures"
+	if "`ycont'" == "" & "`ycatbin'" !="" local ymix "`percfootnote2'"
+	if "`ycont'" != "" & "`ycatbin'" !="" local ymix "`ycont' for continuous measures, and `percfootnote2' for categorical measures"
+
+	if "`catrowperc'" != "" & "`ycat'" != "1" & "`ybin'" == "1" & "`ycont'" == ""  local ymix "`percfootnote'"	
+	if "`catrowperc'" != "" & "`ycat'" == "1" & "`ybin'" == "1" & "`ycont'" == ""  local ymix "`ymix' for categorical measures, and `percfootnote' for binary measures on one row"
+	if "`catrowperc'" != "" & "`ycat'" == "1" & "`ybin'" == "1" & "`ycont'" != ""  local ymix "`ymix', and `percfootnote' for binary measures on one row"
+	if "`catrowperc'" != "" & "`ycat'" != "1" & "`ybin'" == "1" & "`ycont'" != ""  local ymix "`ycont' for continuous measures, and `percfootnote' for binary measures"		
+
+	
 	if `"`varlabplus'"' == "" local Dapa "Data are presented as `ymix'."
 	if `"`varlabplus'"' == "" display "`Dapa'"
 	sreturn local Dapa "`Dapa'"	

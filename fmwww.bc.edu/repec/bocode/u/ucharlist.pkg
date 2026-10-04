@@ -1,0 +1,18 @@
+d 'UCHARLIST': module to list Unicode characters present in a string Variable
+d
+d  ucharlist is a Stata program that lists Unicode characters
+d present in a string Variable. 
+d
+d KW: string variables
+d KW: characters
+d KW: Unicode
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261003
+d
+d Author: Dejin Xie,  School of Economics and Management, Nanchang University
+d Support: email xiedejin@@ncu.edu.cn
+d
+f ucharlist.ado
+f ucharlist.sthlp

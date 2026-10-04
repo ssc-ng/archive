@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0  24sep2026}{...}
+{* *! version 1.0.1  02oct2026}{...}
 {vieweralsosee "ctoclient" "help ctoclient"}{...}
 {vieweralsosee "cto_form_data" "help cto_form_data"}{...}
 {viewerjumpto "Syntax" "cto_form_data_attachment##syntax"}{...}

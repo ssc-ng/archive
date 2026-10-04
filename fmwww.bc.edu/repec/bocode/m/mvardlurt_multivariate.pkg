@@ -12,13 +12,21 @@ d KW: cointegration
 d
 d Requires: Stata version 14
 d
-d Distribution-Date: 20260913
+d Distribution-Date: 20261003
 d
 d Author:  Yusuf Toyin Yusuf,  Kwara State University
 d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
 d
 f mvardlurt_multivariate.ado
-f mvardlurt_multivariate_bootstrap.ado
-f mvardlurt_multivariate_diag.ado
-f mvardlurt_multivariate_graph.ado
 f mvardlurt_multivariate.sthlp
+f mvardlurt_multivariate_diag.ado
+f mvardlurt_multivariate_example.do
+f mvardlurt_multivariate_graph.ado
+f mvardlurt_multivariate_p.ado
+f ../_/_mvardlurt_multivariate_bmata.ado
+f ../_/_mvardlurt_multivariate_boot.ado
+f ../_/_mvardlurt_multivariate_display.ado
+f ../_/_mvardlurt_multivariate_load.ado
+f ../_/_mvardlurt_multivariate_mata.ado
+f ../_/_mvardlurt_multivariate_save.ado
+f ../_/_mvardlurt_multivariate_stars.ado

@@ -1,0 +1,52 @@
+d 'EQUAIDS': module to estimate AIDS and QUAIDS demand systems with survey data
+d
+d  equaids estimates the almost ideal demand system (Deaton and
+d Muellbauer 1980) and its quadratic extension (Banks, Blundell and
+d Lewbel 1997), with demographics by Ray's scaling, by iterated
+d feasible generalized nonlinear least squares (Gauss-Newton with
+d an analytic Jacobian, in Mata). It reports the elasticities of
+d the households (the mean of the household elasticities, the
+d default), of the individuals (weights times household size), of
+d the market (aggregate) and of a reference household (at the
+d means), all with analytic standard errors from the exact
+d influence function of the whole procedure: robust, by cluster or
+d by survey design (svyset), or a bootstrap of the whole procedure.
+d The missing prices of the non-buyers are filled by group means
+d (pimpute), and the non-buyers are corrected for by the two-step
+d method of Shonkwiler and Yen (1999) (selection), with the probits
+d and the imputation in the standard errors. equaidsdiag and estat
+d diagnostics check the data and the fit; estat engel gives the
+d Engel curves; tables with significance stars can be written to
+d Word, LaTeX, Excel, CSV or Markdown; a dialog box and help
+d examples run from clickable links are included. A technical note
+d documents the model, the estimator and the validation of the
+d standard errors; it is included as an ancillary file
+d (equaids_technical_note.pdf). 
+d
+d KW: demand system
+d KW: AIDS
+d KW: QUAIDS
+d KW: price elasticities
+d KW: household survey
+d KW: censoring
+d KW: survey design
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20261003
+d
+d Author: Abdelkrim Araar,  Universite Laval 
+d Support: email aabd@@ecn.ulaval.ca
+d
+f equaids.ado
+f equaids.dlg
+f equaids.sthlp
+f equaidsdiag.ado
+f equaidsdiag.sthlp
+f ../_/_equaids_pimpute.ado
+f ../_/_equaids_tabstars.ado
+f equaids_estat.ado
+f equaids_examples.ado
+f equaids_nonbuyers.dta
+f equaids_technical_note.pdf
+f mexico_2014_cereals.dta

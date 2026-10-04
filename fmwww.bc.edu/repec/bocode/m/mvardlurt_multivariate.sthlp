@@ -1,234 +1,158 @@
 {smcl}
-{* * * 30 * * *}{hline}
-{title:Multivariate ARDL Unit Root Test}
-{title:Version 1.0.0 - September 9, 2026}
+{* *! version 1.1.2  03oct2026}{...}
+{hline}
+help for {hi:mvardlurt_multivariate}{right:Yusuf Toyin Yusuf (2026)}
 {hline}
 
-{pstd}
-{cmd:mvardlurt_multivariate} implements the multivariate ARDL unit root test
-proposed by {it:Sam, McNown, Goh and Goh (2024)}. This test extends the 
-standard ADF regression by including lagged levels of multiple covariates 
-to improve power, especially when cointegration exists.
+{title:Title}
 
-{pstd}
-The test estimates the following model:
+{p 4 8 2}
+{bf:mvardlurt_multivariate} {hline 2} Multivariate ARDL unit root test with two or more covariates
+(Sam, McNown, Goh and Goh, 2024), with residual-bootstrap critical values
 
-{p 8 12 2}
-Δy_t = α + π*y_{t-1} + Σ_{i=1}^k δ_i*x_{i,t-1} 
-       + Σ_{j=1}^{p-1} γ_j*Δy_{t-j} 
-       + Σ_{i=1}^k Σ_{j=1}^{q_i-1} θ_{i,j}*Δx_{i,t-j} + ε_t
-
-{pstd}
-Two hypotheses are tested:
-{break}
-1. {cmd:H0: π = 0} (y has a unit root) - using t-test
-{break}
-2. {cmd:H0: δ_1 = δ_2 = ... = δ_k = 0} (no cointegration) - using F-test
 
 {title:Syntax}
 
-{p 8 12 2}
-{cmd:mvardlurt_multivariate} {it:depvar} {it:indepvars} {ifin}
-[ {it:{weight}} ]
-[ {cmd:,} {cmdab:case(}{it:integer}{cmd:)}
-{cmdab:maxlag:}({it:integer}{cmd:)}
-{cmdab:reps:}({it:integer}{cmd:)}
-{cmdab:ic:}({it:string}{cmd:)}
-{cmdab:fixlag:}({it:numlist}{cmd:)}
-{cmdab:level:}({it:cilevel}{cmd:)}
-{cmdab:seed:}({it:integer}{cmd:)}
-{cmd:nograph}
-{cmd:diag}
-{cmd:notable}
-{cmd:noboot}
-{cmd:savepath:}({it:string}{cmd:})
-{cmd:nodisplay} ]
+{p 8 16 2}
+{cmd:mvardlurt_multivariate} {it:depvar} {it:indepvars} {ifin} [{cmd:,} {it:options}]
 
-{title:Options}
+{p 4 4 2}
+{it:indepvars} are the covariates (one or more). The data must be {helpb tsset}
+with no gaps in the estimation sample.
 
-{pstd}
-{cmdab:case(}{it:#}{cmd:)} specifies the deterministic component:
-{break}
-{cmd:1} = no deterministic terms
-{break}
-{cmd:3} = intercept only (default)
-{break}
-{cmd:5} = intercept and trend
+{synoptset 24 tabbed}{...}
+{synopthdr}
+{synoptline}
+{syntab:Model}
+{synopt:{opt c:ase(#)}}{cmd:1} none, {cmd:3} intercept (default), {cmd:5} intercept + trend{p_end}
+{synopt:{opt maxl:ag(#)}}largest lag searched, 0-12; default {cmd:4}{p_end}
+{synopt:{opt ic(string)}}{cmd:aic} (default) or {cmd:bic}{p_end}
+{synopt:{opt fixl:ag(numlist)}}fixed lags {it:p q} (common q) or {it:p q1 ... qk}; skips the search{p_end}
+{synopt:{opt cont:emp}}also include contemporaneous {bf:D.}{it:x}{p_end}
 
-{pstd}
-{cmdab:maxlag(}{it:#}{cmd:)} maximum lag length for lag selection.
-Default is {cmd:10}.
+{syntab:Inference}
+{synopt:{opt reps(#)}}bootstrap replications; default {cmd:1000}, minimum 100{p_end}
+{synopt:{opt seed(#)}}random-number seed; default {cmd:12345}{p_end}
+{synopt:{opt l:evel(#)}}decision level for the four-case table; default {cmd:95}{p_end}
+{synopt:{opt nob:oot}}no bootstrap: statistics only, no critical values or decision{p_end}
 
-{pstd}
-{cmdab:reps(}{it:#}{cmd:)} number of bootstrap replications.
-Default is {cmd:1000}. Minimum is {cmd:100}.
+{syntab:Reporting}
+{synopt:{opt star}}show significance stars (default){p_end}
+{synopt:{opt nos:tar}}suppress stars{p_end}
+{synopt:{opt not:able}}suppress the information-criterion table{p_end}
+{synopt:{opt nod:isplay}}suppress all tables{p_end}
+{synopt:{opt di:ag}}residual diagnostic tests{p_end}
+{synopt:{opt nog:raph}}suppress graphs{p_end}
+{synopt:{opt savepath(filename)}}export headline results to Excel{p_end}
+{synoptline}
 
-{pstd}
-{cmdab:ic(}{it:string}{cmd:)} information criterion for lag selection:
-{break}
-{cmd:aic} = Akaike Information Criterion (default)
-{break}
-{cmd:bic} = Bayesian Information Criterion
 
-{pstd}
-{cmdab:fixlag(}{it:numlist}{cmd:)} manual lag specification.
-First number is p (lags of Δy), subsequent numbers are q_i (lags of Δx_i).
-{break}
-Example: {cmd:fixlag(2 1 3)} sets p=2, q1=1, q2=3.
+{title:Description}
 
-{pstd}
-{cmdab:level(}{it:cilevel}{cmd:)} confidence level for critical values.
-Default is {cmd:95}.
+{p 4 4 2}
+The test estimates the ARDL (conditional error-correction) regression
 
-{pstd}
-{cmdab:seed(}{it:#}{cmd:)} random seed for reproducibility.
-Default is {cmd:12345}.
+{p 8 8 2}
+D.y = c1 + c2 t + b1 L.y + b2' L.x + sum_i phi_i L{it:i}D.y + sum_j Phi_j' L{it:j}D.x [+ w' D.x] + u
 
-{pstd}
-{cmd:nograph} suppresses graphical output.
+{p 4 4 2}
+where {it:x} holds all covariates. Two statistics are bootstrapped:
 
-{pstd}
-{cmd:diag} displays diagnostic tests (serial correlation, heteroskedasticity, normality).
+{p 8 12 2}- the {bf:t-test} on L.y, H0: b1 = 0 (lower tail){p_end}
+{p 8 12 2}- the {bf:F-test} on all lagged covariate levels, H0: b2 = 0 (upper tail){p_end}
 
-{pstd}
-{cmd:notable} suppresses the AIC/BIC selection table.
+{p 4 4 2}
+Decision rule (paper, section 3.2):
 
-{pstd}
-{cmd:noboot} skips bootstrap and uses approximate critical values (MacKinnon, 1996).
+{p 8 8 2}
+{bf:Case I}: neither rejects; nonstationary, no cointegration.{break}
+{bf:Case II}: t rejects, F does not; y is stationary I(0).{break}
+{bf:Case III}: t does not reject, F rejects; degenerate lagged y, possibly I(2).{break}
+{bf:Case IV}: both reject; cointegration (y is I(1) if the covariates are I(1)).
 
-{pstd}
-{cmdab:savepath(}{it:string}{cmd:)} saves results to Excel file at specified path.
+{p 4 4 2}
+The joint F-test is valid when the system has at most one cointegrating relation
+(no feedback from {it:y} to the covariates).
 
-{pstd}
-{cmd:nodisplay} suppresses all output (for programming use).
+
+{title:Bootstrap}
+
+{p 4 4 2}
+For the t-test the model is re-estimated with b1 = 0 imposed, for the F-test with
+b2 = 0 imposed. Residuals are centred, rescaled and resampled; y* is rebuilt
+recursively (covariates held at their observed values); the full ARDL is
+re-estimated and the statistic stored. The 10%, 5%, 2.5%, 1% and decision-level
+quantiles are reported. Bootstrap p-values are (1 + #extreme draws)/(B + 1).
+
+{p 4 4 2}
+{bf:Lag search.} All (p, q), p, q = 0..{cmd:maxlag}, are compared on one common sample,
+the same q being used for every covariate. The final model is re-estimated on the
+longest sample. Use {cmd:fixlag()} for covariate-specific lags. With many covariates
+keep {cmd:maxlag()} small.
+
+
+{title:Stars}
+
+{p 4 4 2}
+Compared with the bootstrap critical values: {bf:***} 1%, {bf:**} 2.5%, {bf:*} 5%, {bf:+} 10%.
+
+
+{title:Postestimation}
+
+{p 4 8 2}{cmd:mvardlurt_multivariate_diag} - Breusch-Godfrey(1), RESET, Breusch-Pagan (Koenker), ARCH(1), Jarque-Bera; matrix in {cmd:r(diag)}.{p_end}
+{p 4 8 2}{cmd:mvardlurt_multivariate_graph} [{cmd:, scheme(}{it:name}{cmd:) nocombine}] - levels, bootstrap distributions, residual plots, CUSUM; combined panel {cmd:mvu_panel}.{p_end}
+{p 4 8 2}{cmd:predict} {it:newvar} [{cmd:, xb residuals}] - fitted values / residuals of the D.y equation.{p_end}
+{p 4 8 2}{cmd:_mvardlurt_multivariate_display} - redisplay the tables.{p_end}
+
+{p 4 4 2}
+Diagnostics, graphs and {cmd:predict} use objects kept in Mata and stop working after
+{cmd:mata clear}; re-run the command to restore them.
+
+
+{title:Stored results}
+
+{p 4 4 2}{cmd:e(b)}, {cmd:e(V)}, {cmd:e(sample)} belong to the final ARDL regression of D.{it:y}.
+
+{synoptset 22 tabbed}{...}
+{p2col 5 22 26 2: Scalars}{p_end}
+{synopt:{cmd:e(N)}, {cmd:e(T)}}observations in the regression / before lags{p_end}
+{synopt:{cmd:e(tstat)}, {cmd:e(fstat)}}observed t and F statistics{p_end}
+{synopt:{cmd:e(p_t)}, {cmd:e(p_f)}}bootstrap p-values{p_end}
+{synopt:{cmd:e(B_t)}, {cmd:e(B_f)}}valid bootstrap draws{p_end}
+{synopt:{cmd:e(opt_p)}}lags of D.y{p_end}
+{synopt:{cmd:e(k)}, {cmd:e(case)}, {cmd:e(reps)}, {cmd:e(maxlag)}}settings{p_end}
+{synopt:{cmd:e(level)}, {cmd:e(alpha)}}decision level and size{p_end}
+{synopt:{cmd:e(r2)}, {cmd:e(r2_a)}, {cmd:e(rss)}, {cmd:e(rmse)}, {cmd:e(ll)}, {cmd:e(aic)}, {cmd:e(bic)}, {cmd:e(df_r)}}fit{p_end}
+
+{p2col 5 22 26 2: Macros}{p_end}
+{synopt:{cmd:e(cmd)}, {cmd:e(cmdline)}, {cmd:e(depvar)}, {cmd:e(indepvars)}}{p_end}
+{synopt:{cmd:e(opt_q)}}lags of D.x_i, one per covariate{p_end}
+{synopt:{cmd:e(casename)}, {cmd:e(ic)}, {cmd:e(t_start)}, {cmd:e(t_end)}}{p_end}
+
+{p2col 5 22 26 2: Matrices}{p_end}
+{synopt:{cmd:e(cv)}}2 x 5 critical values (rows t, F; columns 10%, 5%, 2.5%, 1%, decision level){p_end}
+{synopt:{cmd:e(ic_table)}}information criteria over (p, q) when lags were searched{p_end}
+
 
 {title:Examples}
 
-{pstd}
-Load sample data and run the test:
-{break}
-{cmd:. webuse lutkepohl2, clear}
-{break}
-{cmd:. mvardlurt_multivariate invest income consumption, case(3) maxlag(4)}
+{phang2}{cmd:. webuse lutkepohl2, clear}{p_end}
+{phang2}{cmd:. mvardlurt_multivariate ln_inv ln_inc ln_consump, maxlag(4) reps(999)}{p_end}
+{phang2}{cmd:. mvardlurt_multivariate ln_inv ln_inc ln_consump, case(5) fixlag(2 1) seed(7) nograph}{p_end}
+{phang2}{cmd:. mvardlurt_multivariate_diag}{p_end}
+{phang2}{cmd:. predict double ehat, residuals}{p_end}
 
-{pstd}
-With bootstrap and 500 replications:
-{break}
-{cmd:. mvardlurt_multivariate invest income consumption, case(3) maxlag(4) reps(500)}
+{p 4 4 2}More, including a simulated system with three covariates, in {cmd:mvardlurt_multivariate_example.do}.
 
-{pstd}
-Manual lag specification:
-{break}
-{cmd:. mvardlurt_multivariate invest income consumption, case(3) fixlag(2 1 1)}
-
-{pstd}
-Using BIC for lag selection:
-{break}
-{cmd:. mvardlurt_multivariate invest income consumption, case(3) ic(bic) maxlag(4)}
-
-{pstd}
-Skip bootstrap (quick test):
-{break}
-{cmd:. mvardlurt_multivariate invest income consumption, case(3) noboot}
-
-{pstd}
-Save results to Excel:
-{break}
-{cmd:. mvardlurt_multivariate invest income consumption, case(3) savepath("results.xlsx")}
-
-{pstd}
-With diagnostic tests:
-{break}
-{cmd:. mvardlurt_multivariate invest income consumption, case(3) diag}
-
-{title:Results}
-
-{pstd}
-The command displays four tables:
-
-{pstd}
-{cmd:Table 1: Coefficient Summary}
-{break}
-Reports coefficients, standard errors, and t-statistics for all variables.
-
-{pstd}
-{cmd:Table 2: Hypothesis Tests}
-{break}
-Reports t-statistic (H0: π = 0) and F-statistic (H0: δ = 0) with p-values.
-
-{pstd}
-{cmd:Table 3: Critical Values}
-{break}
-Displays bootstrap or approximate critical values for significance levels.
-
-{pstd}
-{cmd:Table 4: Decision Framework}
-{break}
-Classifies results into four cases:
-
-{p 8 12 2}
-{cmd:Case I}:   Reject H0:π=0 and Reject H0:δ=0 → Cointegration
-{cmd:Case II}:  Reject H0:π=0 and Accept H0:δ=0 → Degenerate case 1
-{cmd:Case III}: Accept H0:π=0 and Reject H0:δ=0 → Degenerate case 2
-{cmd:Case IV}:  Accept H0:π=0 and Accept H0:δ=0 → No cointegration
-
-{title:Stored Results}
-
-{pstd}
-{cmd:mvardlurt_multivariate} stores the following in {cmd:e()}: 
-
-{p 8 12 2}
-{cmd:e(tstat)}       t-statistic for unit root test
-{cmd:e(t_pvalue)}    p-value for t-statistic
-{cmd:e(fstat)}       F-statistic for cointegration test
-{cmd:e(fstat_p)}     p-value for F-statistic
-{cmd:e(pi_coef)}     coefficient on lagged dependent variable
-{cmd:e(pi_se)}       standard error of pi coefficient
-{cmd:e(opt_p)}       optimal lag order for Δy
-{cmd:e(case)}        case specification (1, 3, or 5)
-{cmd:e(T)}           number of observations
-{cmd:e(nobs)}        effective sample size
-{cmd:e(r2)}          R-squared
-{cmd:e(r2_a)}        adjusted R-squared
-{cmd:e(aic)}         Akaike Information Criterion
-{cmd:e(bic)}         Bayesian Information Criterion
-{cmd:e(t_cv10)}      10% critical value for t-statistic
-{cmd:e(t_cv05)}      5% critical value for t-statistic
-{cmd:e(t_cv01)}      1% critical value for t-statistic
-{cmd:e(f_cv10)}      10% critical value for F-statistic
-{cmd:e(f_cv05)}      5% critical value for F-statistic
-{cmd:e(f_cv01)}      1% critical value for F-statistic
-
-{title:Author}
-
-{pstd}
-YUSUF TOYIN YUSUF
-{break}
-Kwara State University
-{break}
-Email: YUSUF.YUSUF@KWASU.EDU.NG
-
-{pstd}
-Copyright (c) 2026 YUSUF TOYIN YUSUF. All Rights Reserved.
-Distributed under the MIT License.
 
 {title:References}
 
-{pstd}
-Sam, C. Y., McNown, R., Goh, S. K., & Goh, K. L. (2024).
-"A multivariate autoregressive distributed lag unit root test."
-{it:Studies in Economics and Econometrics}, 1-17.
+{p 4 8 2}Sam, C. Y., McNown, R., Goh, S. K. and Goh, K. L. (2024). A multivariate autoregressive distributed lag unit root test. {it:Studies in Economics and Econometrics}.{p_end}
+{p 4 8 2}McNown, R., Sam, C. Y. and Goh, S. K. (2018). Bootstrapping the autoregressive distributed lag test for cointegration. {it:Applied Economics} 50(13): 1509-1521.{p_end}
+{p 4 8 2}Pesaran, M. H., Shin, Y. and Smith, R. J. (2001). Bounds testing approaches to the analysis of level relationships. {it:Journal of Applied Econometrics} 16(3): 289-326.{p_end}
 
-{pstd}
-MacKinnon, J. G. (1996). "Numerical distribution functions for unit root 
-and cointegration tests." {it:Journal of Applied Econometrics}, 11(6), 601-618.
 
-{pstd}
-Pesaran, M. H., Shin, Y., & Smith, R. J. (2001). "Bounds testing approaches 
-to the analysis of level relationships." {it:Journal of Applied Econometrics}, 
-16(3), 289-326.
+{title:Author}
 
-{title:Also see}
-
-{psee}
-help dfuller, help pperron, help kpss, help vecrank, help ardl
+{p 4 4 2}Yusuf Toyin Yusuf, Kwara State University, Nigeria. yusuf.yusuf@kwasu.edu.ng{p_end}
+{p 4 4 2}Output layout and star convention follow Roudane's {cmd:mvardlurt} (2026), which handles a single covariate.{p_end}

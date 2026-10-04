@@ -1,4 +1,4 @@
-*! version 0.9.35  27sep2026  (FD/FOD-only companion predict program)
+*! version 0.9.38  29sep2026  (FD/FOD-only companion predict program)
 *!
 *! predict program for xtdpthresh: residuals, xb, regime, arresiduals.
 *!

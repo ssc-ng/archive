@@ -1,4 +1,4 @@
-*! version 1.0.0  24sep2026
+*! version 1.0.1  02oct2026
 *! cto_form_data: download SurveyCTO form data and load it into Stata
 *! Part of the ctoclient package
 *! Author: Gutama Girja Urago, Laterite (gurago@laterite.com)
@@ -67,16 +67,16 @@ program define cto_form_data, rclass
     }
     else local json "`pwd'/`form'.json"
 
-    * The API expects milliseconds. The default, 1 Jan 2000, returns all submissions
+	* date() is sent in seconds; the default (1 Jan 2000) returns all submissions
     * without the 5-minute limit that SurveyCTO applies to full (date=0) downloads.
-    local apidate = cond(`date' == 0, "0", "`date'000")
+    local apidate = cond(`date' == 0, "0", "`date'")
     local url  "https://`server'.surveycto.com/api/v2/forms/data/wide/json/`form'?date=`apidate'"
     local work "`pwd'/__cto_`form'"             // working files, deleted below
 
     * ---- 1. Download ------------------------------------------------------------
     di as txt _n "{bf:[1/3] Downloading `form'} from `server'.surveycto.com"
-    if `date' > 0 & `date' != 946684800 {
-        di as txt "      submissions after " %tc (`date' * 1000 + tc(01jan1970 00:00:00)) " UTC"
+    if `date' > 0 {
+		di as txt "      submissions after " %tcDD_Mon_CCYY_HH:MM (`date' * 1000 + tc(01jan1970 00:00:00)) " UTC"
     }
     capture noisily _ctofd_get, work(`"`work'"') url(`"`url'"') user(`"`user'"') ///
         password(`"`password'"') key(`"`key'"') server(`server') form(`form')
@@ -84,7 +84,7 @@ program define cto_form_data, rclass
 
     * ---- 2. Parse ---------------------------------------------------------------
     if !`rc' {
-        di as txt "{bf:[2/3] Parsing JSON}"
+        di as txt "{bf:[2/3] Parsing and importing JSON data}"
         clear
         capture noisily mata: _ctofd_parse(`"`work'.json"', `=("`allstring'" != "")')
         local rc = _rc

@@ -176,6 +176,7 @@ p dummify module to create indicator variables with automatic variable labels
 p duncan module to calculate dissimilarity index
 p dups module to identify and optionally remove duplicate observations
 p durbinh module to calculate Durbin's h test for serial correlation
+p duvm module to estimate Deaton's unit-value model
 p dyadid module to perform Dyad ID matching
 p dyads module to transform observations into dyads
 p dynamic_est module to visualize dynamic effects in TWFE models

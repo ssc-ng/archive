@@ -1,0 +1,21 @@
+d 'CRUCEANDINO': module to compute one-step multiway crosstabulation of an outcome by one to three categorical variables
+d
+d  This routine produces a one-step multiway crosstabulation of an
+d outcome by one to three categorical variables, producing a
+d coherent table (framework table/collect, exportable to
+d md/docx/html/tex) and a matching figure, with consistent labels
+d and percentages. 
+d
+d KW: crosstabulation
+d KW: categorical variables
+d KW: graphics
+d
+d Requires: Stata version 17
+d
+d Distribution-Date: 20261003
+d
+d Author: Juan Marcelo Gutierrez Miranda,  TodoEconometria
+d Support: email  juangutierrez@@todoeconometria.com
+d
+f cruceandino.ado
+f cruceandino.sthlp

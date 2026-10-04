@@ -1,4 +1,4 @@
-*! version 0.9.35  27sep2026
+*! version 0.9.38  29sep2026
 *! xtdpthresh -- dynamic panel threshold regression (Seo-Shin 2016; Gong-Seo 2026)
 *! Duy Chinh Nguyen (IU VNU-HCM) & Nhat Duy Lai (SGU, corresponding). See -help xtdpthresh-.
 
@@ -16,14 +16,39 @@ program define xtdpthresh, eclass sortpreserve
             local level = e(level)
             if missing(`level') local level = c(level)
         }
-        ereturn display, level(`level')
+        _xdpt_coeftab, level(`level')
         di as text "γ̂ = " as res %9.0g e(gamma) _c
         if !missing(e(gamma_lo)) & !missing(e(gamma_hi)) {
-            di as text "   threshold set hull (" as res e(level) as text "%) = [" ///
+            di as text "   " as res e(level) as text "% CI = [" ///
                as res %9.0g e(gamma_lo) as text ", " as res %9.0g e(gamma_hi) as text "]"
         }
         else di ""
         exit
+    }
+
+    // v0.9.38: mark [if] and [in] in the caller's row order, before the
+    // sort below; -in- ranges and conditions on _n refer to that order.
+    // A condition that needs sorted data (time-series operators) is
+    // evaluated after the sort.
+    tempvar ifin_mark
+    local ifin_late ""
+    local ifin_ok 0
+    capture syntax [anything] [if] [in] [, *]
+    if !_rc {
+        local ifin_ok 1
+        mark `ifin_mark' `in'
+        if `"`if'"' != "" {
+            gettoken ifin_kw ifin_exp : if
+            capture quietly replace `ifin_mark' = 0 if !(`ifin_exp')
+            if _rc local ifin_late `"`ifin_exp'"'
+        }
+    }
+
+    // v0.9.38: time-series operators in the varlists need the data in
+    // panel-time order; sortpreserve restores the user's order on exit
+    capture quietly xtset
+    if !_rc & !inlist("`r(panelvar)'", "", ".") & !inlist("`r(timevar)'", "", ".") {
+        sort `r(panelvar)' `r(timevar)'
     }
 
     // Capture the full command line BEFORE any parsing (the iv() sub-parser
@@ -49,6 +74,7 @@ program define xtdpthresh, eclass sortpreserve
         SEARCHMAX(integer -1)                       ///
         SEARCHTol(real 1e-8)                        ///
         GRIDCI(integer 100)                         ///
+        CITest(numlist max=1 min=1)                 ///
         GRIDType(string)                            ///
         MINREGime(integer 0)                        ///
         GRIDSample(string)                          ///
@@ -64,6 +90,7 @@ program define xtdpthresh, eclass sortpreserve
         NOWARN                                      ///
         EXPORTGMM                                   ///
         NOTEST                                      ///
+        CONTtest                                    ///
         VCE(string)                                 ///
         COEFCItype(string)                          ///
         COEFBoot(string)                            ///
@@ -321,6 +348,12 @@ program define xtdpthresh, eclass sortpreserve
         local iv `iv_vars'
     }
 
+    // v0.9.38: [if] and [in] were marked in the caller's order above
+    if `ifin_ok' & `"`if'`in'"' != "" {
+        if `"`ifin_late'"' != "" quietly replace `ifin_mark' = 0 if !(`ifin_late')
+        local if "if `ifin_mark'"
+        local in ""
+    }
     marksample touse, novarlist
 
     // === Option normalization & validation ===
@@ -359,8 +392,19 @@ program define xtdpthresh, eclass sortpreserve
         di as err "gridci() must be at least 10"
         exit 198
     }
-    if `_will_boot' & `gridci' < 100 & "`nowarn'" == "" {
-        di as txt "note: gridci(`gridci') uses a coarse CI-inversion grid; gridci(100) or larger is recommended for final threshold inference"
+    // v0.9.36: citest(#) runs the grid-bootstrap test of H0: gamma = # alone
+    // (a diagnostic: its rejection rate at the true threshold separates the
+    // size of the test from the discretization of the confidence set)
+    if "`citest'" != "" & !`_will_boot' {
+        di as err "citest() requires the grid bootstrap (remove noboot)"
+        exit 198
+    }
+    // v0.9.37: the continuity test is opt-in (conttest). Its statistic is
+    // Gong-Seo's (sec. 3.2, efficient weight); the article evaluates the
+    // threshold set and the linearity test, not this test.
+    if "`conttest'" != "" & (!`_will_boot' | `flag_notest') {
+        di as err "conttest requires the bootstrap tests (remove noboot and notest)"
+        exit 198
     }
     if missing(`trim') | `trim' < 0.01 | `trim' > 0.45 {
         di as err "trim must be in [0.01, 0.45]"
@@ -533,15 +577,10 @@ program define xtdpthresh, eclass sortpreserve
             if "`_tc'" == "`q_var'" local _qrhs 1
         }
         if !`_qrhs' {
-            di as text "{err}Warning:{txt} " as res "kink" as text " specified but " ///
-               as res "`q_var'" as text " is not a base regressor (indepvars, "       ///
-               as res "exogenous()" as text ", " as res "endogenous()" as text ", or " ///
-               as res "predetermined()" as text ")."
-            di as text "  This estimates a one-sided hinge (q-γ)·1(q>γ), not a" ///
-               as text " two-sided slope-kink in " as res "`q_var'" as text "."
-            di as text "  Add " as res "`q_var'" as text " to the RHS for the standard kink" ///
-               as text " model (" as res "nowarn" as text " hides this)."
-            di ""
+            di as text "{err}Warning:{txt} " as res "`q_var'" as text ///
+               " is not a regressor, so kink estimates the one-sided hinge"
+            di as text "  (q-γ)·1(q>γ); add " as res "`q_var'" as text ///
+               " to the regressors for the standard kink model."
         }
     }
 
@@ -552,9 +591,8 @@ program define xtdpthresh, eclass sortpreserve
     // gates fail closed when they do not.
     if `maxlag_hi' < 2 & (!`flag_static' | `k_endog' > 0) {
         if "`nowarn'" == "" {
-            di as text "Note: maxlag() supplies no internal lagged-level moments for"
-            di as text "L.`depvar' or endogenous() regressors; identification must come"
-            di as text "from exogenous/predetermined moments or external iv() variables."
+            di as text "Note: maxlag() leaves no lagged-level instruments for L.`depvar'"
+            di as text "or the endogenous() regressors."
         }
     }
 
@@ -716,11 +754,15 @@ program define xtdpthresh, eclass sortpreserve
     // no-op operators such as L0.q to q, so this test is exact.
     local _rhs_expanded "`indepvars' `exog_extra' `endog' `predet'"
     local _q_rhs : list q_var in _rhs_expanded
-    local flag_cont_test = cond(!`flag_kink' & `_q_rhs', 1, 0)
-    if !`flag_kink' & !`_q_rhs' & `_will_boot' & !`flag_notest' & "`nowarn'" == "" {
-        di as text "Note: continuity test omitted because " as res "`q_var'" ///
-            as text " is not a contemporaneous RHS regressor;"
-        di as text "the kink model would not be nested in the estimated jump model."
+    local flag_cont_test = cond(!`flag_kink' & `_q_rhs' & "`conttest'" != "", 1, 0)
+    if "`conttest'" != "" & `flag_kink' {
+        di as err "conttest is not allowed with kink: the fitted model is the kink model"
+        exit 198
+    }
+    if "`conttest'" != "" & !`_q_rhs' {
+        di as err "conttest requires `q_var' as a contemporaneous regressor;"
+        di as err "otherwise the kink model is not nested in the estimated jump model."
+        exit 198
     }
 
     // v0.7.13 (audit): duplicates WITHIN one group also survive -syntax-
@@ -749,7 +791,7 @@ program define xtdpthresh, eclass sortpreserve
     local _dv_hit : list depvar in _all_rhs
     if `_dv_hit' {
         di as err "the dependent variable may not appear in indepvars, exogenous(), endogenous(), predetermined(), or iv()"
-        di as err "  (the dynamic model adds L.`depvar' automatically; use static to suppress it)"
+        di as err "  (the dynamic model adds L.`depvar' automatically)"
         exit 198
     }
     if "`q_var'" == "`depvar'" {
@@ -815,7 +857,7 @@ program define xtdpthresh, eclass sortpreserve
                     }
                     if `_purelf' & `_netlag' == 1 {
                         di as err "L.`depvar' is added automatically in the dynamic model"
-                        di as err "  `_ul' is algebraically the same lag; remove it, or specify static"
+                        di as err "  `_ul' is algebraically the same lag; remove it"
                         exit 198
                     }
                 }
@@ -1175,19 +1217,13 @@ program define xtdpthresh, eclass sortpreserve
        as text "`restr_lab'"
     local reglist "`indepvars_lab' `exog_extra_lab'"
     local reglist : list clean reglist
-    if !`flag_static' local reglist "L.`depvar' (auto) `reglist'"
+    if !`flag_static' local reglist "L.`depvar' `reglist'"
     if `flag_td' local reglist "`reglist' (time-demeaned)"
     di as text "Regressors: " as res "`reglist'"
     if `k_endog'  > 0 di as text "Endogenous:    " as res "`endog_lab'"
     if `k_predet' > 0 di as text "Predetermined: " as res "`predet_lab'"
     if `k_inst'   > 0 di as text "Extra IVs:     " as res "`inst_extra_lab'"
-    // Run-time note on the theoretical status of non-FD methods (no ranking
-    // language: the choice of moments depends on the data, not a fixed tier).
-    if "`method'" != "fd" & "`nowarn'" == "" {
-        di as text "Note: for " as res "method(`method')" as text " the analytic VCE, Hansen J, AR"
-        di as text "diagnostics, and the threshold CI rely on Monte Carlo evidence rather than"
-        di as text "on the cited first-difference theorems of Seo-Shin (2016) / Gong-Seo (2026)."
-    }
+    // v0.9.38: the note on the theory behind FOD is in the help, not the output
     di ""
 
     // === Build regressor list for Mata: order matters ===
@@ -1235,9 +1271,9 @@ program define xtdpthresh, eclass sortpreserve
     local do_grid_ci = cond("`noboot'" == "", 1, 0)
     // v0.9.2: unit resampling is far slower than wild -- say so upfront.
     if `do_grid_ci' & `flag_boot_exact' & "`nowarn'" == "" {
-        di as txt "boottype(unit): VERIFICATION ONLY; not certified as exact Gong-Seo Algorithm 1."
-        di as txt "It uses unit-multiplicity resampling with fixed sample W1 and per-draw"
-        di as txt "recentered Omega/W2*; expect >= 50x the wild-bootstrap runtime."
+        di as txt "boottype(unit): unit-resampling bootstrap with the structure of Gong-Seo"
+        di as txt "Algorithm 1; the first step uses the sample's first-step weight. Expect"
+        di as txt "about 70 times the run time of boottype(wild)."
     }
 
     // Unique per-fit token generated by Stata (independent of Mata state and
@@ -1434,9 +1470,8 @@ program define xtdpthresh, eclass sortpreserve
             `search_s2_conv' == 1 & `est_2s' == 1)
         local search_incomplete = (`search_converged' == 0)
         if `search_incomplete' & "`nowarn'" == "" {
-            di as text "Note: adaptive threshold search did not certify stability within its requested cap (" ///
-                as res `searchmax_effective' as text " points);"
-            di as text "see e(search_incomplete), e(search_stage1_converged), and e(search_stage2_converged)."
+            di as text "Note: the adaptive threshold search did not converge within " ///
+                as res `searchmax_effective' as text " points."
         }
     }
     local ref_it = r(xdpt2_ref_it)
@@ -1468,6 +1503,13 @@ program define xtdpthresh, eclass sortpreserve
     cap matrix `ci_tab_m' = r(xdpt2_ci_grid)
     cap matrix `ci_seg_m' = r(xdpt2_ci_segments)
     local ci_unres = r(xdpt2_ci_unres)
+    tempname citest_m
+    local _has_citest 0
+    cap matrix `citest_m' = r(xdpt2_citest)
+    if !_rc {
+        if colsof(`citest_m') == 7 local _has_citest 1
+    }
+    local seed_citest = r(xdpt2_seed_citest)
     // v0.8.2 R11 (#7): grid/floor reproducibility metadata
     local minreg_def = r(xdpt2_minreg_def)
     local minreg_app = r(xdpt2_minreg_app)
@@ -1518,77 +1560,49 @@ program define xtdpthresh, eclass sortpreserve
                         st_numscalar("`p_sig'"), st_local("_p_cache_token"))
     qui gen byte `_esample_actual' = !missing(`_es_value')
 
-    // === Coefficient labels (match xthenreg convention) ===
-    local cnames ""
-    if !`flag_static' local cnames "Lag_y_b"
-    foreach v of local all_exog_lab {
-        local _cv = subinstr("`v'", ".", "_", .)
-        local _cv = subinstr("`_cv'", "/", "_", .)
-        local _cv = subinstr("`_cv'", "(", "", .)
-        local _cv = subinstr("`_cv'", ")", "", .)
-        local cnames "`cnames' `_cv'_b"
+    // === Coefficient labels ===
+    // v0.9.38: Stata equations. lower: the slopes below the threshold, named
+    // by their variables (L.depvar first in the dynamic model); change: the
+    // intercept shift (_cons) and the slope shifts above the threshold, or,
+    // under kink, the change in the slope of q. Up to 0.9.37 the names
+    // followed xthenreg (Lag_y_b, ..._b, cons_d, ..._d, kink_slope).
+    // A label that is not a valid (time-series) variable name is sanitized;
+    // names are cut to 32 characters and made unique within an equation.
+    local _cn_raw ""
+    if !`flag_static' local _cn_raw "L.`depvar'"
+    foreach v in `all_exog_lab' `endog_lab' `predet_lab' {
+        local _cn_raw "`_cn_raw' `v'"
     }
-    foreach v of local endog_lab {
-        local _cv = subinstr("`v'", ".", "_", .)
-        local _cv = subinstr("`_cv'", "/", "_", .)
-        local _cv = subinstr("`_cv'", "(", "", .)
-        local _cv = subinstr("`_cv'", ")", "", .)
-        local cnames "`cnames' `_cv'_b"
-    }
-    foreach v of local predet_lab {
-        local _cv = subinstr("`v'", ".", "_", .)
-        local _cv = subinstr("`_cv'", "/", "_", .)
-        local _cv = subinstr("`_cv'", "(", "", .)
-        local _cv = subinstr("`_cv'", ")", "", .)
-        local cnames "`cnames' `_cv'_b"
-    }
-    if !`flag_kink' {
-        local cnames "`cnames' cons_d"
-        if !`flag_static' local cnames "`cnames' Lag_y_d"
-        foreach v of local all_exog_lab {
-            local _cv = subinstr("`v'", ".", "_", .)
-            local _cv = subinstr("`_cv'", "/", "_", .)
-            local _cv = subinstr("`_cv'", "(", "", .)
-            local _cv = subinstr("`_cv'", ")", "", .)
-            local cnames "`cnames' `_cv'_d"
+    local _cn_low ""
+    foreach _c of local _cn_raw {
+        if !regexm("`_c'", "^([A-Za-z][A-Za-z0-9]*\.)?[A-Za-z_][A-Za-z0-9_]*$") {
+            local _c = subinstr("`_c'", ".", "_", .)
+            local _c = subinstr("`_c'", "/", "_", .)
+            local _c = subinstr("`_c'", "(", "", .)
+            local _c = subinstr("`_c'", ")", "", .)
+            if strlen("`_c'") > 32 local _c = substr("`_c'", 1, 32)
         }
-        foreach v of local endog_lab {
-            local _cv = subinstr("`v'", ".", "_", .)
-            local _cv = subinstr("`_cv'", "/", "_", .)
-            local _cv = subinstr("`_cv'", "(", "", .)
-            local _cv = subinstr("`_cv'", ")", "", .)
-            local cnames "`cnames' `_cv'_d"
-        }
-        foreach v of local predet_lab {
-            local _cv = subinstr("`v'", ".", "_", .)
-            local _cv = subinstr("`_cv'", "/", "_", .)
-            local _cv = subinstr("`_cv'", "(", "", .)
-            local _cv = subinstr("`_cv'", ")", "", .)
-            local cnames "`cnames' `_cv'_d"
-        }
-    }
-    else {
-        local cnames "`cnames' kink_slope"
-    }
-    // v0.7.0 (D3 fix): de-duplicate sanitized names — e.g. L.x and a variable
-    // literally named L_x both map to "L_x_b"; append "_" until unique.
-    local _cn_out ""
-    foreach _c of local cnames {
-        if strlen("`_c'") > 32 {
-            local _tail = substr("`_c'", strlen("`_c'") - 1, 2)
-            local _c2 = substr("`_c'", 1, 30) + "`_tail'"
-        }
-        else local _c2 "`_c'"
+        local _c2 "`_c'"
         local _dupno = 1
-        while `: list _c2 in _cn_out' {
+        while `: list _c2 in _cn_low' {
             local _suf "_`_dupno'"
-            local _keep = 32 - strlen("`_suf'")
-            local _c2 = substr("`_c'", 1, `_keep') + "`_suf'"
+            local _c2 = substr(subinstr("`_c'", ".", "_", .), 1, 32 - strlen("`_suf'")) + "`_suf'"
             local ++_dupno
         }
-        local _cn_out "`_cn_out' `_c2'"
+        local _cn_low "`_cn_low' `_c2'"
     }
-    local cnames : list clean _cn_out
+    local cnames ""
+    foreach _c of local _cn_low {
+        local cnames "`cnames' lower:`_c'"
+    }
+    if !`flag_kink' {
+        local cnames "`cnames' change:_cons"
+        foreach _c of local _cn_low {
+            local cnames "`cnames' change:`_c'"
+        }
+    }
+    else local cnames "`cnames' change:`q_var'"
+    local cnames : list clean cnames
 
     matrix colnames `b' = `cnames'
     matrix rownames `b' = y1
@@ -1608,12 +1622,8 @@ program define xtdpthresh, eclass sortpreserve
     // grids can admit different ranges, and the CI is inverted on the
     // former.
     // v0.9.2 R18 (user): surface silent per-point draw loss
-    if `do_grid_ci' & "`nowarn'" == "" & !missing(`ci_minB') & `ci_minB' < `boot' {
-        di as text "Note: some bootstrap draws were not valid (a statistic was not finite);"
-        di as text "the candidate thresholds concerned are unresolved. Smallest per-point"
-        di as text "valid count = " as res `ci_minB' as text " of " ///
-            as res `boot' as text " (see e(gridboot_min_draws))."
-    }
+    // v0.9.38: invalid draws leave candidate thresholds unresolved; the
+    // warning on an incomplete set below covers them
     // v0.9.5 R21: the old "may be understated" warning is superseded --
     // the inversion summary is withdrawn outright when incomplete (the main
     // display branch explains it), and _bwarn stays 0 automatically since
@@ -1639,51 +1649,36 @@ program define xtdpthresh, eclass sortpreserve
     if `do_grid_ci' & !missing(`ci_unres') & `ci_unres' > 0 {
         // v0.9.5 R21 (blocker): incomplete inversion -- no reported set.
         di as text "Threshold estimate:"
-        di as text "   γ̂ = " as res %9.0g `gam' ///
-           as text "   GMM obj = " as res %7.3f `obj'
+        di as text "   γ̂ = " as res %9.0g `gam'
         di ""
-        di as text "   {err}Grid-bootstrap inversion INCOMPLETE:{txt} " as res `ci_unres' ///
-            as text " gamma point(s) could not be"
-        di as text "   evaluated (status 4-6 in e(ci_grid)). Unevaluated is NOT rejected, so"
-        di as text "   no complete bootstrap inversion set is reported: e(gamma_lo)/e(gamma_hi)/"
-        di as text "   e(ci_empty)/e(ci_nseg) are missing and e(ci_incomplete) = 1."
-        di as text "   Acceptance runs over the evaluated points only are stored in"
-        di as text "   e(ci_segments_evaluated); inspect e(ci_grid) for the point-level detail."
-        di as text "   A larger boot() or a different gridci()/trim() may resolve the points."
+        di as text "   {err}Warning:{txt} " as res `ci_unres' as text " candidate threshold(s) could not be evaluated (e(ci_grid)),"
+        di as text "   so no confidence set is reported; try another gridci() or trim()."
     }
     else if `do_grid_ci' & `=`ci_empty'' == 1 {
         // v0.7.0 (B3 fix): an empty acceptance set is reported, not hidden
         // behind a degenerate point CI.
         di as text "Threshold estimate:"
-        di as text "   γ̂ = " as res %9.0g `gam' ///
-           as text "   GMM obj = " as res %7.3f `obj'
+        di as text "   γ̂ = " as res %9.0g `gam'
         di ""
-        di as text "   {err}Warning:{txt} grid bootstrap rejected ALL candidate γ at the " ///
-           as res "`level'%" as text " level."
-        di as text "   No bootstrap interval summary is reported: e(gamma_lo)/e(gamma_hi) are missing"
-        di as text "   and e(ci_empty) = 1. This usually signals weak identification of γ or"
-        di as text "   an unsuitable grid; re-run with different trim()/gridci() to check."
+        if `gci_adm' == 0 {
+            di as text "   {err}Warning:{txt} no candidate threshold in the CI grid is admissible"
+        }
+        else {
+            di as text "   {err}Warning:{txt} every candidate threshold is rejected at the " ///
+               as res "`level'%" as text " level"
+        }
+        di as text "   (e(ci_empty) = 1); check with another trim() or gridci()."
     }
     else if `do_grid_ci' {
-        local _ci_kind = cond(`flag_boot_exact', "verification-only unit-bootstrap", ///
-            "approximate wild-bootstrap")
-        di as text "Threshold estimate (" as res "`level'% `_ci_kind' interval summary" as text "):"
+        local _ci_kind = cond(`flag_boot_exact', "unit", "wild")
+        di as text "Threshold estimate and " as res "`level'%" ///
+           as text " confidence set (grid bootstrap, `_ci_kind'):"
         di as text "   γ̂ = " as res %9.0g `gam' ///
-           as text "   interval = [" as res %9.0g `gam_lo' ", " %9.0g `gam_hi' "]" ///
-           as text "   GMM obj = " as res %7.3f `obj'
+           as text "   CI = [" as res %9.0g `gam_lo' ", " %9.0g `gam_hi' "]"
 
-        // v0.7.0 (B3 fix): disconnected acceptance regions are flagged; the
-        // hull is still reported for continuity with earlier versions.
-        // v0.9.29: shown even under nowarn -- it describes the result (the
-        // hull covers rejected values), it is not a cautionary warning.
-        if !missing(`=`ci_nseg'') & `=`ci_nseg'' > 1 {
-            di ""
-            di as text "   {err}Note:{txt} bootstrap acceptance region is disconnected (" ///
-               as res `=`ci_nseg'' as text " segments);"
-            di as text "   the CI shown is its convex hull -- a SUMMARY that also covers"
-            di as text "   rejected or inadmissible gamma between segments. e(ci_segments)"
-            di as text "   lists the accepted segments; e(ci_grid) holds the full inversion table."
-        }
+        // v0.9.38: the CI is the convex hull of the accepted set, as in the
+        // Gong-Seo application and xthreg; the segments are in e(ci_nseg) and
+        // e(ci_segments), not in the output
 
         // Display warning unless nowarn set. e(boundary_warn) flag is always
         // ereturn'd below regardless of display suppression.
@@ -1692,32 +1687,26 @@ program define xtdpthresh, eclass sortpreserve
             di as text "   {err}Warning:{txt} CI " _c
             // v0.8.2 R11 (#3): report the CI-grid admitted span -- the
             // frame the pin was detected in -- not the nominal trim bounds.
+            local _glo = strtrim(string(`=`gci_lo'', "%9.0g"))
+            local _ghi = strtrim(string(`=`gci_hi'', "%9.0g"))
             if `_bwarn' == 3 {
-                di as text "BOTH bounds pin to the CI-grid edges [" ///
-                   as res %9.0g `=`gci_lo'' as text ", " ///
-                   as res %9.0g `=`gci_hi'' as text "]"
+                di as text "bounds at both edges of the CI grid [" ///
+                   as res "`_glo'" as text ", " as res "`_ghi'" as text "]."
             }
             else if `_bwarn' == 1 {
-                di as text "lower bound pins to the CI-grid lower edge (" ///
-                   as res %9.0g `=`gci_lo'' as text ")"
+                di as text "lower bound at the edge of the CI grid (" ///
+                   as res "`_glo'" as text ")."
             }
             else {
-                di as text "upper bound pins to the CI-grid upper edge (" ///
-                   as res %9.0g `=`gci_hi'' as text ")"
+                di as text "upper bound at the edge of the CI grid (" ///
+                   as res "`_ghi'" as text ")."
             }
-            di as text "   Possible causes: weak identification in the affected regime,"
-            di as text "   or grid edge at trim(" as res %4.2f `trim' as text ") cuts close to γ̂."
-            di as text "   Re-run with a different trim to check γ̂ / CI stability."
-            di as text "   Alternatives: a smaller trim() widens the grid; trim(0.20) with"
-            di as text "   gridtype(quantile) matches the p10-p90 grid of the Gong-Seo"
-            di as text "   application; trim(0.40) is the xthenreg default. Suppress this"
-            di as text "   warning with the " as res "nowarn" as text " option."
+            di as text "   Check with another trim()."
         }
     }
     else {
         di as text "Threshold estimate:"
-        di as text "   γ̂ = " as res %9.0g `gam' ///
-           as text "   GMM obj = " as res %7.3f `obj'
+        di as text "   γ̂ = " as res %9.0g `gam'
     }
     di ""
     di as text "Specification tests:"
@@ -1759,11 +1748,27 @@ program define xtdpthresh, eclass sortpreserve
             }
         }
     }
+    // v0.9.36: pointwise threshold test of citest(#)
+    if `_has_citest' {
+        local _ct_st = `citest_m'[1, 6]
+        local _ct_g = strtrim(string(`citest_m'[1, 1], "%9.0g"))
+        if inlist(`_ct_st', 1, 2) {
+            di as text "   Threshold test (H0: γ = " as res "`_ct_g'" ///
+               as text ")  D = " as res %7.3f `citest_m'[1, 2] ///
+               as text "  p = " as res %6.4f `citest_m'[1, 7] ///
+               as text "  " cond(`citest_m'[1, 4] == 1, "not rejected", "rejected")
+        }
+        else {
+            di as text "   Threshold test (H0: γ = " as res "`_ct_g'" ///
+               as text ") not evaluated (e(citest_status) = " as res `_ct_st' as text ")"
+        }
+    }
     // v0.9.10 R28: gamma-hat is grid-SELECTED and can be irregular under
-    // the null, so the chi-square reference for J is a conditional
-    // DIAGNOSTIC, not a fully standard specification test -- say so on the
-    // line itself (the last place the output still read like plain GMM).
-    di as text "   Diagnostic Hansen J (conditional on γ̂) = " as res %6.3f `hansen' ///
+    // the null, so the chi-square reference for J is a DIAGNOSTIC, not a
+    // fully standard specification test. v0.9.37: df = L - k - 1 counts
+    // gamma as an estimated parameter (regular identification), so the line
+    // no longer says "conditional on gamma-hat".
+    di as text "   Hansen J = " as res %6.3f `hansen' ///
        as text "  (df=" as res %2.0f `hansen_df' ///
        as text ")  p = " as res %6.4f `hansen_p'
     // v0.9.29: say why J is missing instead of printing a bare ".".
@@ -1775,24 +1780,16 @@ program define xtdpthresh, eclass sortpreserve
             di as text "   Hansen J not available: no overidentifying restrictions (df <= 0)."
         }
     }
-    if "`nowarn'" == "" {
-        di as text "   J is a diagnostic; its chi-square reference assumes regular identification."
-    }
-    di as text "   AR(1): m = " as res %6.3f `ar1' ///
+    di as text "   AR(1): z = " as res %6.3f `ar1' ///
        as text "  p = " as res %6.4f `ar1_p' ///
-       as text "    AR(2): m = " as res %6.3f `ar2' ///
+       as text "    AR(2): z = " as res %6.3f `ar2' ///
        as text "  p = " as res %6.4f `ar2_p'
     if "`nowarn'" == "" {
         if missing(`=`ar1'') | missing(`=`ar2'') {
-            di as text "   Note: a missing AR statistic means too few lag pairs or an"
-            di as text "   unavailable/nonpositive full Arellano-Bond variance; no simplified"
-            di as text "   T1-only p-value is substituted."
+            di as text "   A missing AR statistic means too few lag pairs or a nonpositive variance."
         }
-        if "`ar_joint'" == "1" {
-            di as text "   AR includes the estimation of γ̂; e(ar1_cond) and e(ar2_cond)"
-            di as text "   treat γ̂ as known."
-        }
-        else di as text "   AR p-values are conditional on the selected threshold."
+        // v0.9.38: noted only when the AR statistics do not include gamma-hat
+        if "`ar_joint'" != "1" di as text "   AR p-values are conditional on the selected threshold."
     }
     di ""
     // v0.8.0 (audit R5): display counts that match e(): equations = e(N)
@@ -1807,41 +1804,31 @@ program define xtdpthresh, eclass sortpreserve
     // against the initial grid and list refine() points apart
     local _grid_s1 = cond(missing(`search_s1_n'), `grid_eff', `search_s1_n')
     local _grid_ref = `grid_eff' - `_grid_s1' - ("`kink_refined'" == "1")
-    di as text "Sample: " ///
-       as text "equations = " as res %5.0f `n_used_raw' ///
-       as text "  complete-case rows = " as res %5.0f `n_raw'  ///
-       as text "  units = " as res %3.0f `n_units' ///
-       as text "  #IV = "   as res %4.0f `n_iv' ///
-       as text "  grid = " as res "`grid_adm'" as text "/" as res "`_grid_s1'" ///
-       as text " (req " as res "`grid_req'" as text ")" ///
+    local _grid_txt = cond(`grid_adm' == `_grid_s1', "`grid_adm'", "`grid_adm' of `_grid_s1'")
+    di as text "Sample: units = " as res `n_units' ///
+       as text "  equations = " as res `n_used_raw' ///
+       as text "  instruments = " as res `n_iv' ///
+       as text "  grid = " as res "`_grid_txt'" ///
        as text cond(`_grid_ref' > 0, " + `_grid_ref' refine", "")
     di as text "{hline 78}"
 
     // v0.9.30: shown even under nowarn, because the instrument set differs
     // from the declared one (as xtabond2's "dropped due to collinearity").
     if `iv_common' > 0 {
-        di as text "Note: " as res `iv_common' as text " instrument column(s) take one value for every unit in their"
-        di as text "      period and are linear combinations of the constant instrument"
-        di as text "      columns (one per period, or one under collapse); they add no moment"
-        di as text "      condition and were dropped (e(N_iv_common)); #IV counts the rest."
-        if `"`iv_common_vars'"' != "" {
-            di as text "      Variables common to all units in each period: " as res "`iv_common_vars'"
-        }
+        di as text "Note: " as res `iv_common' as text " instrument column(s) common to all units in a period were dropped"
+        di as text "      (e(N_iv_common))" as res cond(`"`iv_common_vars'"' != "", ": `iv_common_vars'", "")
     }
     // v0.9.34: shown even under nowarn, for the same reason
     // v0.9.35: "linear combinations" only when every dropped column is one up
     // to rounding on Z itself (e(N_iv_dep_near) = 0)
     if `iv_dep' > 0 & `iv_dep_near' == 0 {
-        di as text "Note: " as res `iv_dep' as text " instrument column(s) are linear combinations of other columns"
-        di as text "      (for example in a period with fewer units than instruments) and were"
-        di as text "      dropped (e(N_iv_dep)), as xtabond2's generalized inverse does."
+        di as text "Note: " as res `iv_dep' as text " instrument column(s) dropped as linear combinations of others"
+        di as text "      (e(N_iv_dep))."
     }
     else if `iv_dep' > 0 {
-        di as text "{err}Warning:{txt} " as res `iv_dep' as text " instrument column(s) dropped as numerically dependent"
-        di as text "      (e(N_iv_dep)); " as res `iv_dep_near' as text " are only nearly dependent (e(N_iv_dep_near))."
-        di as text "      Their directions are lost (largest relative residual " ///
-            as res strtrim(string(`iv_dep_res', "%9.2e")) as text ";"
-        di as text "      e(iv_dep_res)); estimates depend on how the instruments are written."
+        di as text "{err}Warning:{txt} " as res `iv_dep' as text " instrument column(s) dropped as dependent, " ///
+            as res `iv_dep_near' as text " of them only nearly"
+        di as text "      (e(N_iv_dep_near)); results depend on how the instruments are written."
     }
 
     // v0.7.12: post-estimation diagnostic warnings (respect nowarn).
@@ -1850,23 +1837,18 @@ program define xtdpthresh, eclass sortpreserve
         // at most #units - 1, so from #instruments = #units the second-step
         // weight is singular and the command falls back to one-step GMM.
         if `=`n_iv'' >= `=`n_units'' {
-            di as text "{err}Warning:{txt} #instruments (" as res `=`n_iv''      ///
-               as text ") is not below #units (" as res `=`n_units'' as text ")." ///
-               as text " The second-step weight is unreliable; use " as res "collapse" ///
-               as text " or a tighter " as res "maxlag()" as text "."
+            di as text "{err}Warning:{txt} " as res `=`n_iv'' as text " instruments for " ///
+               as res `=`n_units'' as text " units; the second-step weight is unreliable."
+            di as text "Use " as res "collapse" as text " or a tighter " as res "maxlag()" as text "."
         }
         if `est_2s' == 0 {
-            di as text "{err}Warning:{txt} the two-step search could not be completed (the"
-            di as text "second-step weight is singular or ill-conditioned, or no candidate"
-            di as text "threshold gives a usable two-step fit), so the reported estimates are"
-            di as text "ONE-STEP GMM with the first-step weight (e(estimator_twostep) = 0);"
-            di as text "Hansen J is not reported."
+            di as text "{err}Warning:{txt} the two-step fit failed; the estimates are one-step GMM"
+            di as text "(e(estimator_twostep) = 0)."
         }
         if `w1_fallback' > 0 {
-            di as text "{err}Warning:{txt} the Arellano-Bond first-step weight matrix is singular or"
-            di as text "ill-conditioned; " ///
-                cond(`w1_fallback' == 1, "(Z'Z)^-1", "the identity matrix") ///
-                " was used instead (e(W1_fallback) = " `w1_fallback' ")."
+            di as text "{err}Warning:{txt} singular first-step weight; " ///
+                cond(`w1_fallback' == 1, "(Z'Z)^-1", "the identity") ///
+                " used (e(W1_fallback) = " `w1_fallback' ")."
         }
         if `=`n_units'' < 30 {
             di as text "Note: few cross-sectional units (" as res `=`n_units''     ///
@@ -1876,14 +1858,7 @@ program define xtdpthresh, eclass sortpreserve
         // whose regime changes within their equations (v0.9.35: only it; the
         // slope changes also use units that stay in the upper regime)
         if !missing(`n_switch') & `n_switch' < 10 {
-            di as text "Note: only " as res `n_switch' as text                        ///
-               " units change regime at the estimated threshold (e(N_switch));"
-            di as text "  the change in the intercept rests on them."
-        }
-        if `do_grid_ci' & `boot' < 999 {
-            di as text "Note: " as res "boot(`boot')" as text                       ///
-               " is fine for exploration; " as res "999+" as text " reduces Monte Carlo"
-            di as text "error but does not certify the bootstrap design."
+            di as text "Note: only " as res `n_switch' as text " units change regime at γ̂ (e(N_switch))."
         }
         // v0.9.34: with (1 - level)(B + 1) < 1 no draw can reject
         if `do_grid_ci' & (1 - `level'/100)*(`boot' + 1) < 1 {
@@ -1892,60 +1867,29 @@ program define xtdpthresh, eclass sortpreserve
         }
         if `flag_vce_wind' & `wind_applied' == 0 {
             // v0.9.29: distinguish the two causes.
-            if `est_2s' == 0 {
-                di as text "Note: " as res "vce(windmeijer)" as text " requested but the estimator used the"
-                di as text "one-step fallback (no two-step weight); the cluster-robust paired"
-                di as text "sandwich is reported. See " as res "e(vce_applied)" as text "."
-            }
-            else {
-                di as text "Note: " as res "vce(windmeijer)" as text " requested but the corrected variance could"
-                di as text "not be computed or was not positive semidefinite; the cluster-robust"
-                di as text "sandwich is reported. See " as res "e(vce_applied)" as text "."
-            }
+            di as text "Note: the Windmeijer correction could not be applied; the cluster-robust"
+            di as text "variance is reported (e(vce_applied) = 0)."
         }
         if `wind_applied' & "`same_threshold'" == "0" {
-            di as text "Note: the Windmeijer correction is derived for a second-step weight built"
-            di as text "at the reported threshold; here W2 was built at the stage-1 threshold"
-            di as text "(e(gamma_stage1) != e(gamma)), so the corrected SEs are approximate"
-            di as text "(e(wind_same_threshold) = 0)."
+            di as text "Note: W2 was built at the stage-1 threshold, so the Windmeijer SEs are"
+            di as text "approximate (e(wind_same_threshold) = 0)."
         }
         // v0.8.0 (audit R5): make the conditioning of the analytic SEs explicit.
         // v0.9.29: the static-panel convention does not justify them here.
         // v0.9.32: under kink the SEs include the estimation error of gamma-hat.
         // v0.9.35: so do those of the jump model (kernel derivative).
+        // v0.9.38: the joint variance is named in the table header ("Joint
+        // with estimated threshold"); its bandwidth is in e(gamma_bw)
         if "`kink_joint'" == "1" {
-            if "`kink'" != "" {
-                di as text "Note: slope SEs include the estimation error of gamma-hat (joint variance);"
-                di as text "e(V_cond) is conditional on gamma-hat."
-            }
-            else {
-                di as text "Note: slope SEs include the estimation error of gamma-hat (joint variance;"
-                di as text "bandwidth " as res strtrim(string(`gamma_bw', "%9.4g")) ///
-                    as text ", e(gamma_bw)); e(V_cond) is conditional on gamma-hat."
-            }
             // v0.9.35: a discrete q has no density for the kernel derivative
             if "`kink'" == "" & !missing(`q_nvals_bw') & `q_nvals_bw' < 10 {
-                di as text "{err}Warning:{txt} q takes only " as res `q_nvals_bw' as text " distinct " cond(`q_nvals_bw' == 1, "value", "values") " within two bandwidths of gamma-hat"
-                di as text "(e(q_nvals_bw)); the joint variance and AR assume a continuous q (Seo and Shin"
-                di as text "2016, Assumption 2); e(V_cond), e(ar1_cond), and e(ar2_cond) do not."
+                di as text "{err}Warning:{txt} q takes " as res `q_nvals_bw' as text " distinct values near γ̂ (e(q_nvals_bw)); the joint"
+                di as text "variance assumes a continuous q. See e(V_cond), e(ar1_cond), e(ar2_cond)."
             }
         }
         else {
-            di as text "Note: analytic slope SEs are CONDITIONAL on the estimated threshold"
-            di as text "(gamma-hat treated as fixed). The GMM threshold estimator converges at"
-            di as text "rate sqrt(n) or slower, so they omit a first-order source of uncertainty."
-            if "`kink_joint'" == "0" {
-                di as text "The joint variance of the slopes and gamma-hat could not be computed"
-                di as text "(e(joint_vce) = 0)."
-            }
-        }
-        if `do_grid_ci' {
-            di as text "The threshold confidence set above is approximate and not certified as"
-            di as text "the exact Gong-Seo procedure; see e(ci_bootstrap_certified)."
-        }
-        if `wind_applied' & "`kink_joint'" != "1" {
-            di as text "      vce(windmeijer): Windmeijer-type correction CONDITIONAL on the"
-            di as text "      selected threshold (it does not add gamma-search variability)."
+            di as text "Note: the joint variance is not available; the slope SEs treat γ̂ as"
+            di as text "known (e(joint_vce) = 0)."
         }
         if `bci_valid' {
             di as text "      Threshold-search-aware bootstrap CIs for the slopes are in"
@@ -1964,8 +1908,7 @@ program define xtdpthresh, eclass sortpreserve
             }
             if `bci_skip' > 0 {
                 di as text "Note: the gamma* re-search skipped " as res `bci_skip' ///
-                    as text " estimation-grid point(s) lacking the fast path"
-                di as text "(see e(boot_grid_skipped))."
+                    as text " estimation-grid point(s) lacking the fast path."
             }
         }
     }
@@ -1993,19 +1936,19 @@ program define xtdpthresh, eclass sortpreserve
     // e(N) counts raw panel-time observations in the estimation sample;
     // e(N_stack) counts transformed-equation rows used by GMM.
     ereturn post `b' `V', obs(`n_used_raw') esample(`_esample_actual') depname("`depvar'")
-    ereturn scalar N_stack   = `=`nused''
+    ereturn hidden scalar N_stack   = `=`nused''
     ereturn local predict    "xtdpthresh_p"
+    // v0.9.38: predict returns cached statistics of the estimation rows, which
+    // do not respond to at() or to e(b); margins is not supported
+    ereturn hidden local marginsnotok "Residuals XB REGime ARResiduals"
     ereturn local cmdline    `"xtdpthresh `cmdline'"'
-    ereturn local cmdversion "0.9.35"
-    ereturn local searchmode "`searchmode'"
-    ereturn scalar searchtol = `searchtol'
-    ereturn scalar searchmax = `searchmax_effective'
-    ereturn scalar searchmax_specified = `searchmax_set'
-    ereturn scalar search_max_level = `search_max_level'
+    ereturn local cmdversion "0.9.38"
+    ereturn hidden scalar searchmax = `searchmax_effective'
+    ereturn hidden scalar searchmax_specified = `searchmax_set'
+    ereturn hidden scalar search_max_level = `search_max_level'
     ereturn local boottype "`boottype'"
-    if `flag_boot_exact' ereturn local boottype_status "verification-only"
-    else ereturn local boottype_status "supported"
-    ereturn local history "`history'"
+    ereturn hidden local boottype_status "supported"
+    ereturn hidden local history "`history'"
     // v0.8.0 (audit R5): explicit bootstrap metadata so users/scripts can
     // see WHICH bootstrap produced the CI without reading the help.
     // v0.9.2 R18 (#3): metadata SPLIT per inference object -- a single
@@ -2013,9 +1956,8 @@ program define xtdpthresh, eclass sortpreserve
     // boottype(unit) and invited "everything is exact" readings.
     if `do_grid_ci' {
         if `flag_boot_exact' {
-            ereturn local threshold_bootstrap   "verification-only unit-multiplicity resampling (Gong-Seo Alg. 1-oriented: unrestricted-residual DGP, fixed sample W1, per-draw recentered Omega/W2*; NOT certified as Algorithm 1)"
-            ereturn local threshold_resampling  "panel unit (iid with replacement, multiplicity weights)"
-            ereturn local threshold_recentering "explicit (sample moment at the reported theta-hat subtracted from every bootstrap moment)"
+            ereturn hidden local threshold_bootstrap   "unit resampling with the structure of Gong-Seo Alg. 1 (unrestricted-residual DGP, recentered moments, per-draw Omega/W2*); first step with the sample W1, where Gong-Seo use the identity"
+            ereturn hidden local threshold_resampling  "panel unit (iid with replacement, multiplicity weights)"
         }
         else {
             // v0.9.34 (C1): the criterion of the reported estimator, its
@@ -2023,36 +1965,24 @@ program define xtdpthresh, eclass sortpreserve
             // serves every candidate (O1)
             local _tbw = cond(`est_2s' == 1, "two-step criterion, second-step weight W2", ///
                                              "one-step criterion, first-step weight W1")
-            ereturn local threshold_bootstrap   "cluster wild residual (`_tbw' fixed; the same draws at every candidate; approximation of Gong-Seo Alg. 1)"
-            ereturn local threshold_resampling  "panel unit (multiplicative Mammen weights)"
-            ereturn local threshold_recentering "implicit (E*[eta]=0 centers wild moments at the restricted fit)"
+            ereturn hidden local threshold_bootstrap   "cluster wild residual (`_tbw' fixed; the same draws at every candidate; approximation of Gong-Seo Alg. 1)"
+            ereturn hidden local threshold_resampling  "panel unit (multiplicative Mammen weights)"
         }
         local _ccrit = cond(`flag_boot_exact' | `est_2s' == 1, "twostep", "onestep")
         ereturn local ci_criterion "`_ccrit'"
     }
     else {
-        ereturn local threshold_bootstrap   "none"
-        ereturn local threshold_resampling  "none"
-        ereturn local threshold_recentering "none"
+        ereturn hidden local threshold_bootstrap   "none"
+        ereturn hidden local threshold_resampling  "none"
     }
-    if `do_grid_ci' & !`flag_notest' {
-        if missing(`lin_valid') ereturn local linearity_bootstrap "requested cluster wild residual; sample statistic unavailable"
-        else ereturn local linearity_bootstrap "cluster wild residual"
-    }
-    else ereturn local linearity_bootstrap "none"
-    if `do_grid_ci' & !`flag_notest' & `flag_cont_test' {
-        if missing(`cont_valid') ereturn local continuity_bootstrap "requested cluster wild residual; sample statistic unavailable"
-        else ereturn local continuity_bootstrap "cluster wild residual"
-    }
-    else ereturn local continuity_bootstrap "none"
     if !`do_grid_ci' | "`coefboot'" == "none" {
-        ereturn local coefficient_bootstrap "none"
+        ereturn hidden local coefficient_bootstrap "none"
     }
     else if !`bci_valid' {
-        ereturn local coefficient_bootstrap "requested cluster wild residual replay; no coefficient interval delivered"
+        ereturn hidden local coefficient_bootstrap "requested cluster wild residual replay; no coefficient interval delivered"
     }
     else {
-        ereturn local coefficient_bootstrap "fixed-B cluster wild residual (threshold-search-aware replay; NOT the Gong-Seo coefficient bootstrap)"
+        ereturn hidden local coefficient_bootstrap "fixed-B cluster wild residual (threshold-search-aware replay; NOT the Gong-Seo coefficient bootstrap)"
     }
 
     ereturn local depvar     "`depvar'"
@@ -2074,7 +2004,7 @@ program define xtdpthresh, eclass sortpreserve
     // (joint variance; since 0.9.35 in both models) or treat it as fixed
     // (only when the joint variance could not be computed). Neither is
     // continuity-robust; threshold inference runs through the grid CI.
-    ereturn local vce_requested "`vce'"
+    ereturn hidden local vce_requested "`vce'"
     ereturn local vce        = cond(`wind_applied', "windmeijer", "robust")
     ereturn scalar vce_applied = `wind_applied'
     if "`kink_joint'" == "1" {
@@ -2083,69 +2013,24 @@ program define xtdpthresh, eclass sortpreserve
     }
     else ereturn local vcetype "Conditional on estimated threshold"
     // v0.9.35: the AR statistics include gamma-hat when e(ar_joint) = 1
-    if "`ar_joint'" == "1" ereturn local ar_vcetype "Joint with estimated threshold"
-    else ereturn local ar_vcetype "Conditional on estimated threshold"
+    if "`ar_joint'" == "1" ereturn hidden local ar_vcetype "Joint with estimated threshold"
+    else ereturn hidden local ar_vcetype "Conditional on estimated threshold"
     // v0.9.35: e(joint_vce) for both models; e(kink_joint_vce) kept for kink
     if "`kink_joint'" == "1" | "`kink_joint'" == "0" {
         ereturn scalar joint_vce = `kink_joint'
     }
     else ereturn scalar joint_vce = .
     if "`kink'" != "" & ("`kink_joint'" == "1" | "`kink_joint'" == "0") {
-        ereturn scalar kink_joint_vce = `kink_joint'
+        ereturn hidden scalar kink_joint_vce = `kink_joint'
     }
-    else ereturn scalar kink_joint_vce = .
+    else ereturn hidden scalar kink_joint_vce = .
     if "`kink'" == "" & "`gamma_bw'" != "" ereturn scalar gamma_bw = `gamma_bw'
     else ereturn scalar gamma_bw = .
-    ereturn scalar bwscale = `bwscale'
+    ereturn hidden scalar bwscale = `bwscale'
     // v0.9.35: distinct values of q within two bandwidths of gamma-hat
     ereturn scalar q_nvals_bw = `q_nvals_bw'
     if "`kink'" != "" & "`kink_refined'" != "" ereturn scalar kink_refined = `kink_refined'
     else ereturn scalar kink_refined = .
-    ereturn local hansen_reference "diagnostic chi-square; regular joint threshold rank not certified"
-    ereturn scalar gamma_regular_rank_certified = 0
-    if `refine' > 0 {
-        ereturn local threshold_search "fixed global profile grid; one W2 constructed after stage 1; final support refinement under that W2"
-    }
-    else if "`kink'" != "" {
-        ereturn local threshold_search "fixed discrete profile grid; one W2 constructed after the stage-1 pass; continuous minimization between the grid neighbours of the grid argmin"
-    }
-    else {
-        ereturn local threshold_search "fixed discrete profile grid; one W2 constructed after the stage-1 pass"
-    }
-    ereturn local continuity_kink_search "initial grid, as for the jump alternative"
-    if `do_grid_ci' & !`flag_notest' {
-        ereturn local linearity_statistic "profile GMM-distance (wild bootstrap; not Seo-Shin sup-Wald)"
-    }
-    else ereturn local linearity_statistic "not run"
-    if `flag_cont_test' {
-        if `do_grid_ci' & !`flag_notest' {
-            if !missing(`cont_common') & `cont_common' < 2 {
-                ereturn local continuity_test "unavailable: fewer than two jointly feasible kink/jump grid points"
-            }
-            else if missing(`=`pval_cont'') ereturn local continuity_test "nested common-grid comparison attempted; no p-value delivered"
-            else ereturn local continuity_test "nested profile GMM-distance on the common feasible grid (wild bootstrap; heuristic)"
-        }
-        else ereturn local continuity_test "nested comparison; not run"
-    }
-    else if `flag_kink' ereturn local continuity_test "not run; the fitted model is the kink model"
-    else ereturn local continuity_test "not run; q is not a contemporaneous regressor, so the kink model is not nested"
-    if `do_grid_ci' {
-        ereturn local threshold_bootstrap_conditioning "valid fixed-B solves only; unresolved points are withdrawn under the validity rule"
-    }
-    else ereturn local threshold_bootstrap_conditioning "not applicable"
-    if `do_grid_ci' & "`coefboot'" != "none" & `bci_att' > 0 {
-        if !`bci_valid' & `bci_B' >= 10 & `bci_B' >= ceil(.9*`boot') {
-            ereturn local coef_bootstrap_conditioning "successful replay draws; interval construction failed finite-value checks"
-        }
-        else ereturn local coef_bootstrap_conditioning = cond(`bci_fb' > 0, ///
-            "quantiles condition on successful fixed-B solves; see e(boot_coef_fail_rate)", ///
-            "no numerical failures observed")
-    }
-    else ereturn local coef_bootstrap_conditioning "not applicable"
-    // Neither implemented resampling scheme is certified as the exact
-    // Gong-Seo algorithm; this flag prevents numerical completeness from
-    // being mistaken for theoretical certification.
-    ereturn scalar ci_bootstrap_certified = 0
     // v0.8.0/0.8.1 (#2): threshold-search-aware cluster wild bootstrap CIs
     // for the slopes (rows lo/hi, columns follow e(b)). They complement the
     // conditional analytic SEs by adding gamma-search variability; their
@@ -2157,45 +2042,40 @@ program define xtdpthresh, eclass sortpreserve
     if `bci_valid' {
         matrix colnames `bci_mat' = `cnames'
         matrix rownames `bci_mat' = lo hi
-        ereturn matrix b_bootci = `bci_mat'
+        ereturn hidden matrix b_bootci = `bci_mat'
     }
-    ereturn scalar boot_coef_B = `bci_B'
+    ereturn hidden scalar boot_coef_B = `bci_B'
     // v0.8.3 R12 (#5): attempted = draws actually attempted (999 attempts
     // with 0 successes is NOT "attempted 0"); success = successful draws
     // (B_eff, informative even when < 10 and no CI is produced); valid =
     // a CI matrix exists. boot_coef_B kept as the legacy success count.
     // v0.8.5 R14: under -noboot- nothing was requested of the coefficient
     // bootstrap (the boot() default would otherwise masquerade as a request)
-    ereturn scalar boot_coef_requested = cond(`do_grid_ci' & "`coefboot'" != "none", `boot', 0)
-    ereturn scalar boot_coef_attempted = `bci_att'
-    ereturn scalar boot_coef_success   = `bci_B'
-    ereturn scalar boot_coef_valid     = `bci_valid'
+    ereturn hidden scalar boot_coef_requested = cond(`do_grid_ci' & "`coefboot'" != "none", `boot', 0)
+    ereturn hidden scalar boot_coef_attempted = `bci_att'
     // Failed fixed-B draws are discarded, never replaced or mixed in.
-    ereturn scalar boot_coef_failed    = `bci_fb'
-    ereturn scalar boot_coef_fail_rate = `bci_rate'
+    ereturn hidden scalar boot_coef_failed    = `bci_fb'
     // v0.8.1 R7 (#4.2/#4.3): composition of the bootstrap distribution and
     // grid coverage, so users can see when the CI mixes estimators or the
     // gamma* re-search ran on a strict subset of the estimation grid.
-    ereturn scalar boot_coef_twostep  = `bci_2s'
+    ereturn hidden scalar boot_coef_twostep  = `bci_2s'
     // (boot_coef_fallback removed v0.9.3: no fallback draws exist)
-    ereturn scalar boot_grid_skipped  = `bci_skip'
     // v0.8.2 R11 (#4): sizes of the two replay search spaces (stage 2 may
     // exceed stage 1 when points fail under W1 but solve under W2).
-    ereturn scalar boot_grid_stage1 = `bci_g1'
-    ereturn scalar boot_grid_stage2 = `bci_g2'
-    ereturn local coefcitype "`coefcitype'"
+    ereturn hidden scalar boot_grid_stage1 = `bci_g1'
+    ereturn hidden scalar boot_grid_stage2 = `bci_g2'
     // v0.8.1 R8 (#5): e(coefboot) reports what the bootstrap ACTUALLY
     // replayed -- on the one-step sample fallback a twostep request is
     // downgraded (sample-level, not a draw-level failure). The request is
     // preserved separately, and the sample estimator's own mode is stored.
-    ereturn local coefboot_requested "`coefboot'"
+    ereturn hidden local coefboot_requested "`coefboot'"
     // v0.9.4 R20 (#1): under coefboot(none) nothing replayed anything --
     // reporting "onestep" contradicted e(coefficient_bootstrap)="none".
     if !`do_grid_ci' | "`coefboot'" == "none" | `bci_att' == 0 {
-        ereturn local coefboot "none"
+        ereturn hidden local coefboot "none"
     }
     else {
-        ereturn local coefboot = cond(`est_2s' == 1 & "`coefboot'" == "twostep", "twostep", "onestep")
+        ereturn hidden local coefboot = cond(`est_2s' == 1 & "`coefboot'" == "twostep", "twostep", "onestep")
     }
     ereturn scalar estimator_twostep = `est_2s'
     // v0.9.29: first-step weight actually used (0 = as documented) and, for
@@ -2211,7 +2091,7 @@ program define xtdpthresh, eclass sortpreserve
     ereturn scalar N_iv_dep_near = `iv_dep_near'
     ereturn scalar iv_dep_res = `iv_dep_res'
     ereturn local iv_common = cond(`iv_common' > 0, "`iv_common_vars'", "")
-    ereturn local td_mode    = cond(`flag_td_fwl', "fwl", "")
+    ereturn hidden local td_mode    = cond(`flag_td_fwl', "fwl", "")
     ereturn local panelvar   "`panelvar'"
     ereturn local timevar    "`timevar'"
     ereturn scalar gamma     = `gam'
@@ -2219,33 +2099,29 @@ program define xtdpthresh, eclass sortpreserve
     ereturn scalar gamma_lo  = `gam_lo'
     ereturn scalar gamma_hi  = `gam_hi'
     ereturn scalar pval_lin  = `pval_lin'
-    ereturn scalar pval_cont = `pval_cont'
+    ereturn hidden scalar pval_cont = `pval_cont'
     // v0.9.4 R20 (#6): per-test bootstrap accounting
-    ereturn scalar boot_threshold_requested = cond(`do_grid_ci', `boot', 0)
-    ereturn scalar boot_linearity_requested  = cond(`do_grid_ci' & !`flag_notest', `boot', 0)
-    ereturn scalar boot_linearity_valid      = `lin_valid'
-    ereturn scalar boot_continuity_requested = cond(`do_grid_ci' & !`flag_notest' & `flag_cont_test', `boot', 0)
-    ereturn scalar boot_continuity_valid     = `cont_valid'
-    ereturn scalar continuity_common_grid    = `cont_common'
+    ereturn hidden scalar boot_linearity_requested  = cond(`do_grid_ci' & !`flag_notest', `boot', 0)
+    ereturn hidden scalar boot_linearity_valid      = `lin_valid'
+    ereturn hidden scalar boot_continuity_requested = cond(`do_grid_ci' & !`flag_notest' & `flag_cont_test', `boot', 0)
+    ereturn hidden scalar boot_continuity_valid     = `cont_valid'
     if `do_grid_ci' & "`rseed'" != "" {
         ereturn scalar rseed = `rseed'
     }
     else ereturn scalar rseed = .
-    ereturn local rng "`c(rng_current)'"
-    ereturn scalar seed_threshold   = `seed_threshold'
-    ereturn scalar seed_linearity   = `seed_linearity'
-    ereturn scalar seed_continuity  = `seed_continuity'
-    ereturn scalar seed_coefficient = `seed_coefficient'
     ereturn scalar ci_empty  = `ci_empty'
     ereturn scalar ci_nseg   = `ci_nseg'
     // v0.7.11: effective-sample trim bounds (the gamma grid domain), for
     // scripts and tests asserting gamma-hat and the CI lie inside them.
     ereturn scalar q_lo      = `q_lo'
     ereturn scalar q_hi      = `q_hi'
-    ereturn scalar N_raw     = `n_raw'
-    ereturn scalar N_trans   = `n_trans'
+    ereturn hidden scalar N_trans   = `n_trans'
     ereturn scalar N_iv      = `n_iv'
     ereturn scalar N_units   = `n_units'
+    // v0.9.37: the VCE, Hansen J and the wild bootstrap cluster on the panel
+    // unit; N_clust counts the units with a transformed equation.
+    ereturn scalar N_clust   = `n_units'
+    ereturn local clustvar "`panelvar'"
     ereturn scalar N_switch  = `n_switch'
     ereturn scalar hansen    = `hansen'
     ereturn scalar hansen_df = `hansen_df'
@@ -2257,107 +2133,75 @@ program define xtdpthresh, eclass sortpreserve
     ereturn scalar ar_joint  = `ar_joint'
     ereturn scalar ar1_cond  = `ar1_cond'
     ereturn scalar ar2_cond  = `ar2_cond'
-    ereturn scalar ar1_b0    = `ar1_b0'
-    ereturn scalar ar1_T1    = `ar1_T1'
-    ereturn scalar ar1_TT    = `ar1_TT'
-    ereturn scalar ar2_b0    = `ar2_b0'
-    ereturn scalar ar2_T1    = `ar2_T1'
-    ereturn scalar ar2_TT    = `ar2_TT'
-    ereturn scalar p_serial  = `p_serial'
-    ereturn scalar p_cache_sig = `p_sig'
-    ereturn local p_cache_token `"`_p_cache_token'"'
+    ereturn hidden scalar ar1_b0    = `ar1_b0'
+    ereturn hidden scalar ar1_T1    = `ar1_T1'
+    ereturn hidden scalar ar1_TT    = `ar1_TT'
+    ereturn hidden scalar ar2_b0    = `ar2_b0'
+    ereturn hidden scalar ar2_T1    = `ar2_T1'
+    ereturn hidden scalar ar2_TT    = `ar2_TT'
+    ereturn hidden scalar p_serial  = `p_serial'
+    ereturn hidden scalar p_cache_sig = `p_sig'
+    ereturn hidden local p_cache_token `"`_p_cache_token'"'
     // v0.9.6 R22 (#5): predict-cache data signature
-    ereturn local p_dsig `"`_dsig'"'
-    ereturn local p_dsig_vars "`_dsvars'"
-    ereturn local p_dsig_type "rowsig2"
+    ereturn hidden local p_dsig `"`_dsig'"'
+    ereturn hidden local p_dsig_vars "`_dsvars'"
+    ereturn hidden local p_dsig_type "rowsig2"
 
-    // Signed AR pair counts: positive means the full AB (1991, eq. 8)
-    // variance was used; negative means that variance was unavailable and
-    // the statistic/p-value were deliberately left missing (no T1 fallback).
-    ereturn scalar ar1_np    = `ar1_np'
-    ereturn scalar ar2_np    = `ar2_np'
-    ereturn scalar ar1_N_clust = `ar1_nclust'
-    ereturn scalar ar2_N_clust = `ar2_nclust'
-    ereturn scalar k_exog    = `k_exog'
-    ereturn scalar k_endog   = `k_endog'
-    ereturn scalar k_predet  = `k_predet'
-    ereturn scalar k_inst    = `k_inst'
-    ereturn scalar flag_kink = `flag_kink'
-    ereturn scalar flag_static = `flag_static'
-    // e(balanced) describes the panel that actually enters the final GMM
-    // stack. Keep the pre-estimation xtset result separately for diagnostics.
-    ereturn scalar panel_balanced = `is_balanced'
-    ereturn scalar balanced       = `balanced_eff'
-    ereturn local balanced_definition "same transformed-equation time support across contributing units"
-    ereturn scalar flag_td   = `flag_td'
+    ereturn hidden scalar k_predet  = `k_predet'
+    ereturn hidden scalar flag_kink = `flag_kink'
+    ereturn hidden scalar flag_static = `flag_static'
+    ereturn hidden scalar flag_td   = `flag_td'
     ereturn scalar boundary_warn = `_bwarn'
     // v0.7.13 (audit): store the confidence level like standard estimation
     // commands, so a later -ereturn display- (e.g. after estimates restore)
     // reproduces the same CI level instead of reverting to c(level).
     ereturn scalar level     = `level'
-    // v0.8.2 R10 (#2/#4): the admitted search space (what the boundary
-    // warning and any endpoint interpretation must reference), plus the
-    // grid bookkeeping and the regime floor actually applied.
-    // v0.8.3 R12 (#4): stage-labeled spans. grid1 = the one-step search
-    // space (ok & fast_ok); grid2 = points solvable under W_n_2 (the
-    // two-step search space; missing on one-step-only paths). A reported
-    // two-step gamma-hat is selected over grid2, which can extend beyond
-    // grid1 -- so neither span alone bounds both estimators.
-    ereturn scalar gamma_grid1_lo  = `grid_lo'
-    ereturn scalar gamma_grid1_hi  = `grid_hi'
-    ereturn scalar gamma_grid2_lo  = `grid2_lo'
-    ereturn scalar gamma_grid2_hi  = `grid2_hi'
-    ereturn scalar grid_requested  = `grid_req'
-    ereturn scalar grid_effective  = `grid_eff'
+    // v0.8.3 R12 (#4): grid1 = the one-step search space (ok & fast_ok).
+    // v0.9.38: the other search and grid bookkeeping is hidden (tests only)
+    // or no longer posted.
+    ereturn hidden scalar gamma_grid1_lo  = `grid_lo'
+    ereturn hidden scalar gamma_grid1_hi  = `grid_hi'
+    ereturn hidden scalar grid_requested  = `grid_req'
+    ereturn hidden scalar grid_effective  = `grid_eff'
     ereturn scalar grid_admitted   = `grid_adm'
-    ereturn scalar grid_max_requested = `searchmax_effective'
-    ereturn scalar search_level1_points = `search_l1_n'
-    ereturn scalar search_level2_points = `search_l2_n'
-    ereturn scalar search_level3_points = `search_l3_n'
-    ereturn scalar search_stage1_level = `search_s1_level'
-    ereturn scalar search_stage2_level = `search_s2_level'
-    ereturn scalar search_stage1_points = `search_s1_n'
-    ereturn scalar search_stage2_points = `search_s2_n'
-    ereturn scalar search_stage1_same_split = `search_s1_same'
-    ereturn scalar search_stage2_same_split = `search_s2_same'
-    ereturn scalar search_stage1_rel_gain = `search_s1_gain'
-    ereturn scalar search_stage2_rel_gain = `search_s2_gain'
-    ereturn scalar search_stage1_converged = `search_s1_conv'
-    ereturn scalar search_stage2_converged = `search_s2_conv'
-    ereturn scalar search_converged = `search_converged'
+    ereturn hidden scalar grid_max_requested = `searchmax_effective'
+    ereturn hidden scalar search_level2_points = `search_l2_n'
+    ereturn hidden scalar search_level3_points = `search_l3_n'
+    ereturn hidden scalar search_stage1_level = `search_s1_level'
+    ereturn hidden scalar search_stage2_level = `search_s2_level'
+    ereturn hidden scalar search_stage1_points = `search_s1_n'
+    ereturn hidden scalar search_stage2_points = `search_s2_n'
+    ereturn hidden scalar search_stage1_same_split = `search_s1_same'
+    ereturn hidden scalar search_stage2_same_split = `search_s2_same'
+    ereturn hidden scalar search_stage1_rel_gain = `search_s1_gain'
+    ereturn hidden scalar search_stage2_rel_gain = `search_s2_gain'
+    ereturn hidden scalar search_stage1_converged = `search_s1_conv'
+    ereturn hidden scalar search_stage2_converged = `search_s2_conv'
+    ereturn hidden scalar search_converged = `search_converged'
     // Legacy adaptive-search fields are retained for one compatibility
     // release. They are non-applicable under the v0.9.26 fixed-grid contract.
-    ereturn scalar search_cap_exhausted = `search_hit_max'
-    ereturn scalar search_hit_max = `search_hit_max'
-    ereturn local search_hit_max_definition ///
-        "retired adaptive-search field; always 0 under the fixed-grid estimator"
-    ereturn scalar search_incomplete = `search_incomplete'
-    ereturn scalar search_W2_builds = `search_W2_builds'
-    ereturn scalar gamma_stage1 = `search_g1'
-    ereturn scalar obj_stage1 = `search_o1'
-    ereturn scalar gamma_stage2_global = `search_g2_global'
-    ereturn scalar obj_stage2_global = `search_o2_global'
-    // v0.8.2 R11 (#2): structural = ok-only (sample-size/rank) admission;
-    // twostep_admitted = solvable under W_n_2 (missing on one-step paths)
-    ereturn scalar grid_structural = `grid_struct'
-    ereturn scalar grid_twostep_admitted = `grid_adm2'
-    // v0.8.2 R11 (#3): CI-grid bookkeeping (the boundary warning's frame)
-    ereturn scalar gridci_requested = `gridci'
-    ereturn scalar gridci_effective = `gci_eff'
-    // "admitted" is retained for compatibility and means the sample-side
-    // solve succeeded; statuses 5/6 may still be bootstrap-unresolved.
-    ereturn scalar gridci_admitted        = `gci_adm'
-    ereturn scalar gridci_sample_admitted = `gci_adm'
-    ereturn scalar gridci_evaluated       = `gci_eval'
-    ereturn scalar gamma_ci_grid_lo = `gci_lo'
-    ereturn scalar gamma_ci_grid_hi = `gci_hi'
-    // v0.9.2 R18 (user): smallest per-gamma-point count of valid bootstrap
-    // replications behind the CI inversion (missing if no CI ran)
-    ereturn scalar gridboot_min_draws = `ci_minB'
+    ereturn hidden scalar search_cap_exhausted = `search_hit_max'
+    ereturn hidden scalar search_hit_max = `search_hit_max'
+    ereturn hidden scalar search_incomplete = `search_incomplete'
+    ereturn hidden scalar search_W2_builds = `search_W2_builds'
+    ereturn hidden scalar gamma_stage1 = `search_g1'
+    ereturn hidden scalar gamma_stage2_global = `search_g2_global'
+    ereturn hidden scalar obj_stage2_global = `search_o2_global'
     // v0.9.4 R20 (#3): unresolved gamma points (status 4-6) and the
     // incompleteness flag -- unresolved is NOT rejected.
-    ereturn scalar ci_unresolved = `ci_unres'
+    ereturn hidden scalar ci_unresolved = `ci_unres'
     ereturn scalar ci_incomplete = cond(missing(`ci_unres'), ., cond(`ci_unres' > 0, 1, 0))
+    // v0.9.36: citest(#) -- the pointwise grid-bootstrap test at gamma = #
+    if `_has_citest' {
+        ereturn scalar citest_gamma  = `citest_m'[1, 1]
+        ereturn scalar citest_D      = `citest_m'[1, 2]
+        ereturn scalar citest_crit   = `citest_m'[1, 3]
+        ereturn scalar citest_accept = `citest_m'[1, 4]
+        ereturn scalar citest_draws  = `citest_m'[1, 5]
+        ereturn scalar citest_status = `citest_m'[1, 6]
+        ereturn scalar citest_p      = `citest_m'[1, 7]
+        ereturn scalar seed_citest   = `seed_citest'
+    }
     // v0.9.3 R19 (#8): the confidence SET, not just its hull
     // v0.9.3 hotfix: -matrix X = r(name)- with a nonexistent r() matrix
     // silently creates a 1x1 missing matrix (the scalar-expression reading;
@@ -2367,14 +2211,10 @@ program define xtdpthresh, eclass sortpreserve
     if !_rc {
         if colsof(`ci_seg_m') == 2 {
             matrix colnames `ci_seg_m' = lower upper
-            // v0.9.5 R21 (blocker): only a COMPLETE inversion yields a
-            // complete inversion summary; otherwise the acceptance runs cover
-            // the evaluated points only and are stored under an explicitly
-            // non-formal name.
-            if !missing(`ci_unres') & `ci_unres' > 0 {
-                ereturn matrix ci_segments_evaluated = `ci_seg_m'
-            }
-            else {
+            // v0.9.5 R21 (blocker): only a COMPLETE inversion yields the
+            // set; e(ci_grid) holds the evaluated points otherwise (v0.9.38:
+            // e(ci_segments_evaluated) is no longer posted)
+            if missing(`ci_unres') | `ci_unres' == 0 {
                 ereturn matrix ci_segments = `ci_seg_m'
             }
         }
@@ -2386,40 +2226,138 @@ program define xtdpthresh, eclass sortpreserve
             ereturn matrix ci_grid = `ci_tab_m'
         }
     }
-    ereturn scalar minregime_requested = `minregime'
     // v0.9.10 R27: refinement bookkeeping
-    ereturn scalar refine_requested  = `refine'
-    ereturn scalar refine_iterations = `ref_it'
-    ereturn scalar refine_added      = `ref_add'
-    // Basin-pool accounting. Refined points enlarge the estimation grid and
-    // the unrestricted bootstrap searches; the separate CI candidate grid is
-    // still formed below from gridci() plus the relevant zero point(s).
-    ereturn scalar refine_pool      = `ref_pool'
-    ereturn scalar refine_remaining = `ref_rem'
-    ereturn scalar refine_exhausted = `ref_exh'
-    // v0.9.16 R35: these are the CONVEX HULL of the pooled coverage --
-    // with expand-only unions the covered basins need not be contiguous.
-    ereturn scalar refine_hull_lo = `ref_lo'
-    ereturn scalar refine_hull_hi = `ref_hi'
-    // v0.9.15 R34 (#1): completeness = pool consumed AND the final
-    // gamma-hat's neighbourhood fully evaluated -- exhausted alone says
-    // nothing about the second when gamma-hat migrates between basins.
-    ereturn scalar refine_final_in_initial_basin = `ref_inb'
-    ereturn scalar refine_neigh_unevaluated = `ref_nrem'
-    ereturn scalar refine_complete = `ref_comp'
-    ereturn scalar refine_obj_rel_gain = `ref_obj_gain'
-    ereturn local refine_stage = cond(`refine' > 0, "stage2_fixed_W2", "none")
-    // v0.8.2 R11 (#7): grid-config reproducibility without e(cmdline) parsing
-    ereturn scalar minregime_default = `minreg_def'
-    ereturn scalar minregime_applied = `minreg_app'
-    ereturn scalar trim = `trim'
-    ereturn local gridtype "`gridtype'"
-    ereturn local gridsample "`gridsample'"
+    ereturn hidden scalar refine_requested  = `refine'
+    ereturn hidden scalar refine_iterations = `ref_it'
+    ereturn hidden scalar refine_added      = `ref_add'
+    ereturn hidden local refine_stage = cond(`refine' > 0, "stage2_fixed_W2", "none")
 
     // Stamp e(cmd) last so an error while posting metadata cannot leave a
     // partial result set that falsely identifies itself as a valid fit.
+    // v0.9.38: the upper-regime slopes (lower + change) and their variance
+    // (none without slopes: a static jump model with no regressors)
+    tempname _bup _Vup
+    quietly _xdpt_upper
+    if r(n_upper) > 0 {
+        matrix `_bup' = r(b_upper)
+        matrix `_Vup' = r(V_upper)
+        ereturn matrix b_upper = `_bup'
+        ereturn matrix V_upper = `_Vup'
+    }
     ereturn local cmd "xtdpthresh"
-    ereturn display, level(`level')
+    _xdpt_coeftab, level(`level')
+end
+
+// v0.9.38: the upper-regime slopes from e(b) and e(V). Jump model: lower +
+// change for every slope (the intercept shift stays in change:_cons, since
+// the lower-regime intercept is absorbed by the unit effects). Kink model:
+// the slope of q above the threshold, lower:q + change:q (change:q alone when
+// q is not a regressor). Returns r(b_upper), r(V_upper), and r(A), with
+// r(b_upper) = e(b)*r(A)'.
+program define _xdpt_upper, rclass
+    tempname b V A bu Vu
+    matrix `b' = e(b)
+    matrix `V' = e(V)
+    local k = colsof(`b')
+    local cn : colfullnames `b'
+    local nlow 0
+    foreach c of local cn {
+        if substr("`c'", 1, 6) == "lower:" local ++nlow
+    }
+    local un ""
+    if e(flag_kink) != 1 & `nlow' == 0 {
+        return scalar n_upper = 0
+        exit
+    }
+    if e(flag_kink) == 1 {
+        // one-sided hinge (q not a regressor): the slope of q is 0 below the
+        // threshold, so the upper slope is change:q itself -- no upper block
+        local jq 0
+        local j 0
+        foreach c of local cn {
+            local ++j
+            if `j' <= `nlow' & "`c'" == "lower:`e(q_var)'" local jq `j'
+        }
+        if `jq' == 0 {
+            return scalar n_upper = 0
+            exit
+        }
+        matrix `A' = J(1, `k', 0)
+        matrix `A'[1, `k'] = 1
+        matrix `A'[1, `jq'] = 1
+        local un "upper:`e(q_var)'"
+    }
+    else {
+        matrix `A' = J(`nlow', `k', 0)
+        forvalues j = 1/`nlow' {
+            matrix `A'[`j', `j'] = 1
+            matrix `A'[`j', `nlow' + 1 + `j'] = 1
+            local w : word `j' of `cn'
+            local w = subinstr("`w'", "lower:", "upper:", 1)
+            local un "`un' `w'"
+        }
+    }
+    matrix `bu' = `b' * `A''
+    matrix `Vu' = `A' * `V' * `A''
+    matrix `Vu' = (`Vu' + `Vu'') / 2
+    matrix colnames `bu' = `un'
+    matrix rownames `bu' = y1
+    matrix colnames `Vu' = `un'
+    matrix rownames `Vu' = `un'
+    local nup = rowsof(`A')
+    return matrix b_upper = `bu'
+    return matrix V_upper = `Vu'
+    return matrix A = `A'
+    return local upper_names "`un'"
+    return scalar n_upper = `nup'
+end
+
+// v0.9.38: the coefficient table with three blocks -- lower, upper
+// (= lower + change, from _xdpt_upper), and change; e(b) holds lower and
+// change only. Falls back to -ereturn display- for results without the upper
+// block.
+program define _xdpt_coeftab
+    syntax [, Level(cilevel)]
+    local _mats : e(matrices)
+    if !`: list posof "b_upper" in _mats' {
+        ereturn display, level(`level')
+        exit
+    }
+    tempname b V A T b3 V3
+    matrix `b' = e(b)
+    matrix `V' = e(V)
+    quietly _xdpt_upper
+    matrix `A' = r(A)
+    local un "`r(upper_names)'"
+    local k = colsof(`b')
+    local cn : colfullnames `b'
+    local nlow 0
+    foreach c of local cn {
+        if substr("`c'", 1, 6) == "lower:" local ++nlow
+    }
+    local nch = `k' - `nlow'
+    // no lower block (kink without regressors): upper and change only
+    if `nlow' > 0 {
+        matrix `T' = (I(`nlow'), J(`nlow', `nch', 0)) \ `A' \ (J(`nch', `nlow', 0), I(`nch'))
+    }
+    else matrix `T' = `A' \ I(`nch')
+    matrix `b3' = `b' * `T''
+    matrix `V3' = `T' * `V' * `T''
+    local names ""
+    forvalues j = 1/`nlow' {
+        local w : word `j' of `cn'
+        local names "`names' `w'"
+    }
+    local names "`names' `un'"
+    forvalues j = `=`nlow' + 1'/`k' {
+        local w : word `j' of `cn'
+        local names "`names' `w'"
+    }
+    matrix colnames `b3' = `names'
+    matrix rownames `b3' = y1
+    matrix colnames `V3' = `names'
+    matrix rownames `V3' = `names'
+    _coef_table, bmatrix(`b3') vmatrix(`V3') level(`level')
 end
 
 
@@ -4675,8 +4613,8 @@ struct xdpt2_gamma_cache rowvector xdpt2_build_gamma_cache_t(
 // cluster wild residual bootstrap (unit-level Mammen weights, fixed W_first,
 // 1-step GMM per draw) — NOT the exact Gong-Seo (2026) Algorithm 1, which
 // resamples (x, z, resid) jointly at the unit level and recenters the
-// bootstrap moments. Gong-Seo validity is proved for the exact algorithm;
-// this scheme is supported by the Monte Carlo evidence in the paper.
+// bootstrap moments. Gong-Seo prove validity for their algorithm; the
+// finite-sample behaviour of this scheme is assessed by simulation.
 // The fixed W_first shared between sample and bootstrap sides keeps the
 // two statistics on the same criterion.
 void xdpt2_fast_gmm_boot(real colvector Y_boot,
@@ -6723,6 +6661,35 @@ void xdpt2_cache_w2(struct xdpt2_gamma_cache rowvector cache, real matrix W2)
     }
 }
 
+// v0.9.36: xdpt2_fast_gmm_boot with the fixed second-step weight when w2m = 1
+// (the solve C_g2 of xdpt2_cache_w2 and the objective n g'W2 g), else the
+// one-step pair (C_g, W1) exactly as xdpt2_fast_gmm_boot.
+void xdpt2_fast_gmm_boot_w(real colvector Y_boot,
+                            struct xdpt2_gamma_cache scalar gc,
+                            real scalar w2m, real matrix W2,
+                            real scalar ok, real colvector theta,
+                            real scalar obj)
+{
+    real colvector ZY, r, g
+    if (!w2m) {
+        xdpt2_fast_gmm_boot(Y_boot, gc, ok, theta, obj)
+        return
+    }
+    ok = 0
+    if (gc.ok == 0 | gc.fast2_ok != 1) return
+    if (rows(Y_boot) != gc.n_rows) return
+    ZY = (*gc.pZ)' * Y_boot / gc.n_rows
+    theta = gc.C_g2 * ZY
+    if (hasmissing(theta)) return
+    r = Y_boot - gc.dW * theta
+    if (hasmissing(r)) return
+    g = (*gc.pZ)' * r / gc.n_rows
+    if (hasmissing(g)) return
+    obj = gc.n_rows * (g' * W2 * g)
+    if (obj >= .) return
+    ok = 1
+}
+
 // Grid-bootstrap inversion. The default is an xthenreg-style cluster wild
 // residual approximation; boottype(unit) is an experimental unit-resampling
 // extension. Neither path is certified as the exact Gong-Seo Algorithm 1.
@@ -6746,7 +6713,8 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
                            real matrix ci_tab, real matrix ci_seg,
                            real scalar ci_unres,
                            struct xdpt2_stack_tpl scalar tpl_main,
-                           real scalar tpl_main_st)
+                           real scalar tpl_main_st,
+                           | real colvector D_out)
 {
     real scalar n_ci, l, b, ok_r, obj_r, D_sample, D_boot, crit, min_obj_b
     real scalar has_alt_b
@@ -6872,11 +6840,13 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
     external real scalar xdpt_verbose
     external real scalar xdpt_boot_exact
     if (xdpt_verbose) {
-        if (xdpt_boot_exact == 1) printf("  Grid bootstrap (B=%g, gridci=%g, EXPERIMENTAL unit resampling -- Alg. 1-oriented, not certified)...\n", n_boot, n_ci)
+        if (xdpt_boot_exact == 1) printf("  Grid bootstrap (B=%g, gridci=%g, unit resampling, Gong-Seo Alg. 1 structure)...\n", n_boot, n_ci)
         else printf("  Grid bootstrap (B=%g, gridci=%g, unit-level Mammen; cached)...\n", n_boot, n_ci)
     }
     else {
-        printf("  Grid bootstrap CI  (. per γ point, %g total)\n", n_ci)
+        // v0.9.38: the call of citest() (the draws argument) is labelled
+        if (args() == 32) printf("  Threshold test at γ = %g\n", gamma_ci_grid[1])
+        else printf("  Grid bootstrap CI  (. per γ point, %g total)\n", n_ci)
         printf("  ")
         displayflush()
     }
@@ -6884,6 +6854,8 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
     for (l = 1; l <= n_ci; l++) {
         if (!xdpt_verbose) {
             printf(".")
+            // v0.9.38: wrapped every 50 points, as the test loops
+            if (mod(l, 50) == 0 & l < n_ci) printf(" %g\n  ", l)
             displayflush()
         }
         // Sample: restricted at γ_ℓ — pull from cache
@@ -7000,6 +6972,7 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
         // slower (e.g., γ = 0 when q >= 0 is also a regressor, where
         // q*1(q > γ) equals q).
         D_vec = J(n_boot, 1, .)
+        if (args() == 32) D_out = J(0, 1, .)
         real scalar n_rows_r_b, use_batch_b
         real colvector fast_gb_b
         real matrix ETA_b, OBJ_b
@@ -7363,6 +7336,9 @@ void xdpt2_grid_bootstrap(struct xdpt2_unit rowvector units,
         ci_tab[l, 4] = accept[l]
         ci_tab[l, 5] = n_valid_b
         ci_tab[l, 6] = 1
+        // v0.9.36: the bootstrap statistics of the (last) point, for the
+        // p-value of citest()
+        if (args() == 32) D_out = D_vec
 
         if (xdpt_verbose) {
             printf("    γ_ℓ=%6.4f  D_n=%7.3f  crit=%7.3f  %s\n",
@@ -7462,7 +7438,8 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
                                     real scalar t_min, real scalar t_max,
                                     real scalar n_boot,
                                     real scalar valid_out,
-                                    real scalar common_out)
+                                    real scalar common_out,
+                                    real scalar bt2s, real matrix bA)
 {
     real scalar g_kink, obj_kink, T_sample, T_boot_b, count_exceed, valid_boot
     real scalar b, gl, ok, obj_cur, n_u, u, i, ok_b, obj_kink_b, obj_jump_b
@@ -7502,17 +7479,39 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
                                             t_max, q_supp, min_user, tpl_k,
                                             tpl_k_st, cache_jump)
 
+    // v0.9.36 (power): with a two-step fit both models are compared on the
+    // criterion of the reported estimator -- the fixed second-step weight W2
+    // of the jump fit (bA), common to the kink and jump solves so that the
+    // nesting (T >= 0) is kept -- as the threshold CI does since 0.9.34. The
+    // one-step weight used up to 0.9.35 (the MA(1) H-matrix under FD) is
+    // efficient only for homoskedastic serially uncorrelated errors; the
+    // distance statistic under it has a noisier null distribution and lower
+    // power against a jump. After a one-step fallback W1 is kept.
+    real scalar w2c
+    w2c = (bt2s == 1 & rows(bA) > 0)
+    if (w2c) {
+        xdpt2_cache_w2(cache_kink, bA)
+        xdpt2_cache_w2(cache_jump, bA)
+    }
+
     // The computational comparison is nested only where BOTH specifications
     // solve on the same row sample with the same one-step criterion. The jump
     // design has more columns and can fail rank/conditioning at gamma values
     // where the kink design succeeds. Selecting the restricted minimum from
     // those kink-only points and then clamping a negative distance to zero
     // silently turned a nonnested numerical comparison into a p-value.
+    // Gong-Seo (2026, eq. in sec. 2 and Theorem 4): the continuity statistic
+    // is the GMM distance under the efficient second-step weight. If that
+    // solve leaves fewer than two jointly feasible points the test is not
+    // reported; it is never recomputed under W1, a different statistic that
+    // their theory does not cover (v0.9.37 review).
     real colvector common_C
     common_C = J(0, 1, 0)
     for (gl = 1; gl <= min((cols(cache_kink), cols(cache_jump))); gl++) {
-        if (!cache_kink[gl].ok | cache_kink[gl].fast_ok != 1) continue
-        if (!cache_jump[gl].ok | cache_jump[gl].fast_ok != 1) continue
+        if (!cache_kink[gl].ok |
+            (w2c ? cache_kink[gl].fast2_ok : cache_kink[gl].fast_ok) != 1) continue
+        if (!cache_jump[gl].ok |
+            (w2c ? cache_jump[gl].fast2_ok : cache_jump[gl].fast_ok) != 1) continue
         if (cache_kink[gl].n_rows != cache_jump[gl].n_rows) continue
         if (any(cache_kink[gl].uid :!= cache_jump[gl].uid)) continue
         if (any(cache_kink[gl].times :!= cache_jump[gl].times)) continue
@@ -7530,11 +7529,11 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     common_eval_C = J(0, 1, 0)
     for (ci_C = 1; ci_C <= rows(common_C); ci_C++) {
         gl_1s = common_C[ci_C]
-        xdpt2_fast_gmm_boot(cache_kink[gl_1s].dY, cache_kink[gl_1s],
-                             ok_1s, theta_kcand, obj_kcand)
+        xdpt2_fast_gmm_boot_w(cache_kink[gl_1s].dY, cache_kink[gl_1s],
+                               w2c, bA, ok_1s, theta_kcand, obj_kcand)
         if (!ok_1s) continue
-        xdpt2_fast_gmm_boot(cache_kink[gl_1s].dY, cache_jump[gl_1s],
-                             ok_jmatch, theta_1s_dummy, obj_jmatch)
+        xdpt2_fast_gmm_boot_w(cache_kink[gl_1s].dY, cache_jump[gl_1s],
+                               w2c, bA, ok_jmatch, theta_1s_dummy, obj_jmatch)
         if (!ok_jmatch) continue
         common_eval_C = common_eval_C \ gl_1s
         // v0.9.14 R33 (#5): deterministic tie-break -- the selected kink
@@ -7572,16 +7571,47 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     count_exceed = 0
     valid_boot = 0
 
-    best_j_1s = .
+    // v0.9.37: jump entries that may enter the comparison are those on the
+    // kink rows (same uid, times and dY), not merely the same row count; the
+    // jump residuals of the bootstrap DGP come from one of them.
+    real colvector jalign
+    jalign = J(n1_t, 1, 0)
     for (gl_1s = 1; gl_1s <= n1_t; gl_1s++) {
         if (!cache_jump[gl_1s].ok) continue
         if (cache_jump[gl_1s].n_rows != rows(dY_k)) continue
-        xdpt2_fast_gmm_boot(dY_k, cache_jump[gl_1s],
-                             ok_1s, theta_1s_dummy, obj_cur)
-        if (!ok_1s) continue
-        if (best_j_1s == . | obj_cur < best_j_1s) best_j_1s = obj_cur
+        if (any(cache_jump[gl_1s].uid :!= uid_k)) continue
+        if (any(cache_jump[gl_1s].times :!= times_k)) continue
+        if (any(cache_jump[gl_1s].dY :!= dY_k)) continue
+        jalign[gl_1s] = 1
     }
-    if (best_k_1s == . | best_j_1s == .) return(.)
+
+    best_j_1s = .
+    real scalar idx_j
+    real colvector theta_jump_sample
+    idx_j = 0
+    for (gl_1s = 1; gl_1s <= n1_t; gl_1s++) {
+        if (!jalign[gl_1s]) continue
+        xdpt2_fast_gmm_boot_w(dY_k, cache_jump[gl_1s], w2c, bA,
+                               ok_1s, theta_1s_dummy, obj_cur)
+        if (!ok_1s) continue
+        if (best_j_1s == . | obj_cur < best_j_1s) {
+            best_j_1s = obj_cur
+            idx_j = gl_1s
+            theta_jump_sample = theta_1s_dummy
+        }
+    }
+    if (best_k_1s == . | best_j_1s == . | idx_j == 0) return(.)
+    // v0.9.36 (power): the bootstrap DGP is the restricted (kink) fit plus
+    // the UNRESTRICTED (jump) residuals, reweighted by cluster: restricted
+    // coefficients, unrestricted residuals, as in Gong-Seo Alg. 1 and the
+    // unit bootstrap of the CI. Under H0 both residual vectors estimate the
+    // same errors; under H1 the kink residuals also carry the omitted jump,
+    // delta*(1(q>gamma0) - kink fit), which inflated every bootstrap
+    // statistic and with it the critical value -- the continuity test lost
+    // power exactly where it should reject. dY and the row sample are the
+    // same for both models (rows aligned by jalign above).
+    r_kink = dY_k - cache_jump[idx_j].dW * theta_jump_sample
+    if (hasmissing(r_kink)) return(.)
     T_sample = best_k_1s - best_j_1s
     tol_nest = xdpt2_objtol(best_k_1s, best_j_1s, 1e-10)
     if (T_sample < -tol_nest) return(.)
@@ -7615,9 +7645,8 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
     fast_j_C = J(0, 1, 0)
     if (use_batch_C) {
         for (gl_j = 1; gl_j <= n1_t; gl_j++) {
-            if (!cache_jump[gl_j].ok) continue
-            if (cache_jump[gl_j].n_rows != n_rows_k) continue
-            if (cache_jump[gl_j].fast_ok != 1) continue
+            if (!jalign[gl_j]) continue
+            if ((w2c ? cache_jump[gl_j].fast2_ok : cache_jump[gl_j].fast_ok) != 1) continue
             fast_j_C = fast_j_C \ gl_j
         }
     }
@@ -7639,10 +7668,18 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
         // passed by its factors, r_kink and ETA_C[uid_draw, .]
         F_C = dW_k * theta_kink_sample
         // v0.7.9 (D): preallocated stacks; values and row order identical
-        OBJk_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
-                                           cache_kink, fast_k_C)
-        OBJj_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
-                                           cache_jump, fast_j_C)
+        if (w2c) {
+            OBJk_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
+                                               cache_kink, fast_k_C, bA)
+            OBJj_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
+                                               cache_jump, fast_j_C, bA)
+        }
+        else {
+            OBJk_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
+                                               cache_kink, fast_k_C)
+            OBJj_C = xdpt2_fast_obj_split_list(F_C, r_kink, uid_draw, ETA_C,
+                                               cache_jump, fast_j_C)
+        }
         // The restricted minimum may use a gamma only when the matching
         // unrestricted jump solve is finite in that draw. The unrestricted
         // minimum itself still uses its full feasible set.
@@ -7683,21 +7720,20 @@ real scalar xdpt2_continuity_test(struct xdpt2_unit rowvector units,
             min_obj_kink_b = .
             for (ci_C = 1; ci_C <= rows(common_C); ci_C++) {
                 gl = common_C[ci_C]
-                xdpt2_fast_gmm_boot(Y_boot, cache_kink[gl],
-                                     ok_b, theta_cur, obj_kcand)
+                xdpt2_fast_gmm_boot_w(Y_boot, cache_kink[gl], w2c, bA,
+                                       ok_b, theta_cur, obj_kcand)
                 if (!ok_b) continue
-                xdpt2_fast_gmm_boot(Y_boot, cache_jump[gl],
-                                     ok_jmatch, theta_cur, obj_jmatch)
+                xdpt2_fast_gmm_boot_w(Y_boot, cache_jump[gl], w2c, bA,
+                                       ok_jmatch, theta_cur, obj_jmatch)
                 if (!ok_jmatch) continue
                 if (obj_kcand < min_obj_kink_b) min_obj_kink_b = obj_kcand
             }
 
             min_obj_jump_b = .
             for (gl_j = 1; gl_j <= n1_t; gl_j++) {
-                if (!cache_jump[gl_j].ok) continue
-                if (cache_jump[gl_j].n_rows != rows(Y_boot)) continue
-                xdpt2_fast_gmm_boot(Y_boot, cache_jump[gl_j],
-                                     ok_b, theta_cur, obj_cur)
+                if (!jalign[gl_j]) continue
+                xdpt2_fast_gmm_boot_w(Y_boot, cache_jump[gl_j], w2c, bA,
+                                       ok_b, theta_cur, obj_cur)
                 if (!ok_b) continue
                 if (obj_cur < min_obj_jump_b) min_obj_jump_b = obj_cur
             }
@@ -8594,15 +8630,11 @@ void xtdpthresh_run(string scalar depvar_name,
                       rows(xdpt_teq)*cols(X_inst))
         }
         if (xdpt_collapse != 1 & est_wid > 1500) {
-            printf("{err}warning: ~%g instrument columns projected -- this will be slow and\n", est_wid)
-            printf("{err}         memory-heavy. The unlimited maxlag() default is a RISKY\n")
-            printf("{err}         choice on long panels, not a safe one: use maxlag(1 3) or\n")
-            printf("{err}         -collapse- unless the full lag ladder is intentional.\n")
+            printf("{err}Warning:{txt} about %g instrument columns; this will be slow. Consider\n", est_wid)
+            printf("maxlag() or collapse.\n")
         }
         else if (xdpt_collapse != 1 & est_wid > 300) {
-            printf("{txt}note: the uncollapsed instrument matrix may reach ~%g columns\n", est_wid)
-            printf("{txt}      (maxlag depth %g over %g observed periods); consider maxlag(1 3)\n", est_lag, rows(xdpt_teq))
-            printf("{txt}      or -collapse- to curb instrument proliferation.\n")
+            printf("{txt}Note: about %g instrument columns; consider maxlag() or collapse.\n", est_wid)
         }
     }
     units = xdpt2_build_units(y, Ly, X_exog, X_endog, X_predet, X_inst,
@@ -8835,8 +8867,7 @@ void xtdpthresh_run(string scalar depvar_name,
         errprintf("xtdpthresh: need >= 5 contributing units (got %g)\n", n_units_eff)
         exit(498)
     }
-    printf("  %g units built (n_obs=%g, T range [%g, %g])\n",
-           n_units_eff, rows(y), t_min, t_max)
+    // v0.9.38: the unit count is on the Sample line; no "units built" line
 
     // Grid search over γ
     // v0.7.13 (C3): estimation grid — uniform values (default) or empirical
@@ -8859,8 +8890,8 @@ void xtdpthresh_run(string scalar depvar_name,
     grid2_adm_lo = .
     grid2_adm_hi = .
 
-    printf("  Grid search over %g γ points in [%8.4f, %8.4f]...\n",
-           n_grid, q_lo, q_hi)
+    printf("  Grid search over %g γ points in [%s, %s]...\n",
+           n_grid, strofreal(q_lo, "%9.4g"), strofreal(q_hi, "%9.4g"))
     // v0.7.0 (D1): build the estimation-grid cache ONCE; it is shared by the
     // grid search, the grid-bootstrap CI, the linearity test, and (as the
     // jump cache) the continuity test below.
@@ -8982,8 +9013,7 @@ void xtdpthresh_run(string scalar depvar_name,
         grid_adm_lo = .
         grid_adm_hi = .
     }
-    printf("  Grid: initial %g, cached %g, structural %g, stage-1 admitted %g; span [%8.4f, %8.4f]\n",
-           n_grid, rows(gamma_grid), n_struct, rows(gamma_admitted), grid_adm_lo, grid_adm_hi)
+    // v0.9.38: the admitted count is on the Sample line
     if (search_mode == "adaptive") {
         printf("  Nested search: stage 1 level %g (%g points, converged=%g); stage 2 level %g (%g points, converged=%g); W2 builds=%g\n",
                search_s1_level, search_s1_n, search_s1_conv,
@@ -9012,14 +9042,14 @@ void xtdpthresh_run(string scalar depvar_name,
     if (xdpt_verbose) printf("  γ̂ = %8.4f, obj = %8.4f\n", best_gamma, best_obj)
 
     if (n_refine > 0) {
-        printf("  Final fixed-W2 refine: %g iteration(s), %g support point(s) added; complete=%g\n",
+        if (xdpt_verbose) printf("  Final fixed-W2 refine: %g iteration(s), %g support point(s) added; complete=%g\n",
                ref_it, ref_added, ref_complete)
         if (best_twostep != 1 & st_local("nowarn") == "") {
             printf("{err}warning: refine() was not applied because the estimator fell back to one step.\n")
         }
         else if (ref_complete != 1 & st_local("nowarn") == "") {
-            printf("{err}warning: final fixed-W2 refinement is incomplete; see e(refine_remaining)\n")
-            printf("{err}         and e(refine_neigh_unevaluated).\n")
+            printf("{err}warning: refine() stopped before the neighbourhood of γ̂ was fully searched;\n")
+            printf("{err}         increase refine().\n")
         }
         displayflush()
     }
@@ -9078,6 +9108,11 @@ void xtdpthresh_run(string scalar depvar_name,
     ci_tab_r = J(0, 0, .)
     ci_seg_r = J(0, 0, .)
     ci_unres_r = .
+    // v0.9.36: citest(#) result (gamma, D, crit, accept, draws, status, p)
+    real matrix cit_row
+    real scalar seed_citest
+    cit_row = J(0, 7, .)
+    seed_citest = .
     gam_hi = .
     pval_lin = .
     pval_cont = .
@@ -9208,7 +9243,8 @@ void xtdpthresh_run(string scalar depvar_name,
                                                     best_obj,
                                                     method, flag_static,
                                                     t_min, t_max, n_boot,
-                                                    cont_valid, cont_common)
+                                                    cont_valid, cont_common,
+                                                    best_twostep, best_A)
                 if (xdpt_verbose) printf("  Continuity p-value = %6.4f\n", pval_cont)
             }
         }
@@ -9231,6 +9267,40 @@ void xtdpthresh_run(string scalar depvar_name,
         }
         if (xdpt_verbose & bci_B > 0) {
             printf("  Coef bootstrap: B_eff = %g draws\n", bci_B)
+        }
+
+        // v0.9.36: citest(#), the grid-bootstrap test of H0: gamma = # with
+        // the statistic, bootstrap and weight of the confidence set. Run
+        // last, with its own component seed, so every other result is
+        // unchanged by it. p = (1 + #{D* >= D}) / (1 + B), the add-one rule
+        // whose "p > alpha" is exactly the set's "D <= crit".
+        real scalar cit_g, cit_un, cit_mb
+        real scalar cit_lo, cit_hi, cit_emp, cit_ns, cit_ad, cit_gl, cit_gh
+        real matrix cit_tab, cit_seg
+        real colvector cit_D
+        cit_g = strtoreal(st_local("citest"))
+        if (cit_g < .) {
+            seed_citest = xdpt2_component_seed(477377)
+            cit_mb = .
+            cit_D = J(0, 1, .)
+            xdpt2_grid_bootstrap(units, cache_main, gamma_grid, (cit_g),
+                                  q_eff, minreg_user,
+                                  ci_gmin, best_gamma,
+                                  method, flag_static, flag_kink,
+                                  t_min, t_max, n_boot, alpha,
+                                  cit_lo, cit_hi, cit_emp, cit_ns,
+                                  cit_ad, cit_gl, cit_gh,
+                                  best_twostep, best_A, resid_hat_v, cit_mb,
+                                  cit_tab, cit_seg, cit_un,
+                                  tpl_main, tpl_main_st, cit_D)
+            if (rows(cit_tab) == 1) {
+                cit_row = (cit_tab, .)
+                if (cit_tab[1, 6] == 2) cit_row[1, 7] = 1
+                else if (cit_tab[1, 6] == 1 & rows(cit_D) > 0) {
+                    cit_row[1, 7] = (1 + sum((cit_D :< .) :& (cit_D :>= cit_tab[1, 2]))) /
+                                    (1 + sum(cit_D :< .))
+                }
+            }
         }
     }
 
@@ -9635,6 +9705,8 @@ void xtdpthresh_run(string scalar depvar_name,
     if (rows(ci_tab_r) > 0) st_matrix("r(xdpt2_ci_grid)", ci_tab_r)
     if (rows(ci_seg_r) > 0) st_matrix("r(xdpt2_ci_segments)", ci_seg_r)
     st_numscalar("r(xdpt2_ci_unres)", ci_unres_r)
+    if (rows(cit_row) == 1) st_matrix("r(xdpt2_citest)", cit_row)
+    st_numscalar("r(xdpt2_seed_citest)", seed_citest)
     st_numscalar("r(xdpt2_ci_empty)", ci_empty)
     st_numscalar("r(xdpt2_ci_nseg)",  ci_nseg)
     st_numscalar("r(xdpt2_pval_lin)", pval_lin)
@@ -10848,6 +10920,134 @@ end
 *   settings at N = 1600: 7.8 to 2.6 seconds per fit.
 * ---------------------------------------------------------------------------
 
+* ---------------------------------------------------------------------------
+* v0.9.38 (29sep2026): shorter stored results and output. No computation
+* changes: estimates, variances, confidence sets and test statistics equal
+* 0.9.37 bit for bit.
+*   (a) e() holds the results documented in the help. Results read by predict,
+*   by the Monte Carlo harnesses or by the test suite are posted with
+*   -ereturn hidden- (absent from -ereturn list-, still readable); the other
+*   undocumented bookkeeping (search/grid/CI-grid counts, component seeds,
+*   descriptive strings of the bootstrap schemes, e(N_raw), e(k_exog), ...)
+*   is no longer posted.
+*   (b) Output: one header line for the threshold set ("CI" = the convex hull
+*   of the accepted set, as in the Gong-Seo application); the "not certified"
+*   and boot() notes are removed; shorter boundary, disconnected-set and
+*   refine() messages; the citest() line and its progress label; the Sample
+*   line fits 78 columns (complete-case rows no longer shown); the grid
+*   bookkeeping line only when grid points were not admitted; messages no
+*   longer point to e() results that are no longer posted.
+*   (c) The conttest error names q under quietly (the name was printed with
+*   -as res-, which quietly suppresses).
+*   (d) Coefficient names are Stata equations: lower (the slopes below the
+*   threshold, named by their variables: L.depvar, ...) and change (_cons, the
+*   intercept shift, and the slope shifts; under kink, the change in the slope
+*   of q, named by q). They replace the xthenreg-style names (Lag_y_b, ..._b,
+*   cons_d, ..._d, kink_slope); the order of the coefficients is unchanged.
+*   (e) The table also shows the upper-regime slopes (lower + change; under
+*   kink, the slope of q above the threshold) with their standard errors;
+*   they are stored in e(b_upper) and e(V_upper). e(b) and e(V) are unchanged.
+*   (f) Standing notes removed from the output (they are in the help): the
+*   FOD note, the J caveat line, the note on the AR statistics with gamma-hat,
+*   the joint-SE note, and the "units built" line. Conditional warnings and
+*   fallback notes stay. The CI line reports the convex hull of the accepted
+*   set; a disconnected set is no longer noted (e(ci_nseg), e(ci_segments)).
+*   (g) The threshold line no longer shows the GMM criterion (after two steps
+*   it equals the Hansen J statistic; it is in e(obj)); the AR statistics are
+*   labelled z, as in xtabond2.
+*   (h) No "(auto)" tag after L.depvar, no "Diagnostic" before Hansen J, and
+*   no grid-admission progress line (the count is on the Sample line).
+*   (i) Conditional warnings and notes shortened to one or two lines; the
+*   gridci() advice note is removed. Under kink with q not a regressor (the
+*   one-sided hinge) the table has no upper block (it would repeat change:q).
+*   (j) Review of 29sep: the incomplete-set warning suggests another gridci()
+*   or trim() (a larger boot() makes a failed draw more likely) and replaces
+*   the separate invalid-draw note; an empty set without admissible
+*   candidates says so; margins is refused (e(marginsnotok), hidden); a
+*   valid time-series name is never cut to 32 characters; e(V_upper) is
+*   exactly symmetric; the replay line reads "95% CI = [...]"; shorter
+*   instrument-width messages; the refine() progress line only under
+*   verbose; the grid range printed with %9.4g; the CI progress dots wrap
+*   every 50 points. The data are sorted by panel and time before parsing,
+*   so time-series operators work whatever the user's sort order (restored
+*   on exit by sortpreserve). [if] and [in] are marked before this sort, in
+*   the caller's row order, so -in- ranges and conditions on _n select the
+*   rows the caller named (external audit, 30sep2026: the first build
+*   applied them to the sorted data); a condition with time-series
+*   operators is evaluated after the sort. boottype(unit) is documented;
+*   its messages and e(threshold_bootstrap) state its one structural
+*   difference from Gong-Seo Algorithm 1 (the first-step weight).
+* ---------------------------------------------------------------------------
+
+* ---------------------------------------------------------------------------
+* v0.9.37 (28sep2026): continuity-test hardening (code review of 0.9.36).
+*   (a) The jump entries of the continuity comparison (its minimum, the
+*   batched and scalar bootstrap alternatives, and the source of the jump
+*   residuals) must lie on the kink rows -- same uid, times and dY -- not
+*   merely have the same row count. The rows do not depend on gamma by
+*   construction, so results are unchanged; the guard makes it explicit.
+*   (b) No fallback to the first-step weight when the fixed-W2 solve leaves
+*   fewer than two jointly feasible points: the test is then not reported.
+*   Gong-Seo's statistic (sec. 3.2) uses the efficient weight W_n and the
+*   limit of their Theorem 4 is built on Omega^{-1}; a W1 distance is a
+*   different statistic their theory does not cover (unchanged from 0.9.36).
+*   (c) The draws returned for citest() are reset at each point, so they can
+*   only belong to the point just evaluated.
+*   (d) The citest() line reads "rejected/not rejected at the 5% level"
+*   (was "reject at 95%").
+*   (e) The continuity test is opt-in: option -conttest-. Without it the
+*   test is not run and e(pval_cont) is missing; with it the statistic,
+*   seed and p-value are those of 0.9.36. conttest is an error with kink,
+*   noboot or notest, or when q is not a contemporaneous regressor (the
+*   note printed for that case is gone).
+*   (f) The Hansen J line no longer says "conditional on gamma-hat": its
+*   df = L - k - 1 counts gamma as an estimated parameter.
+*   (g) e(clustvar) (panel variable) and e(N_clust) (= e(N_units)) are
+*   posted: the VCE, Hansen J and the wild bootstrap cluster on the unit.
+*   Estimates, confidence sets, citest() and the linearity p-value equal
+*   0.9.36 (each bootstrap component has its own seed).
+*   (h) The help file documents only the procedures evaluated in Nguyen and
+*   Lai (2026) and td (partialling out time dummies, algebraically the
+*   dummy-variable specification). static, boottype(unit),
+*   coefboot()/coefcitype() and conttest remain in the code but are not
+*   documented; error messages no longer suggest them.
+* ---------------------------------------------------------------------------
+* v0.9.36 (28sep2026): continuity-test power; threshold-test diagnostic.
+*   (a) Continuity-test power. The bootstrap DGP used the restricted (kink)
+*   residuals; under a jump they carry the omitted discontinuity, which
+*   inflated every bootstrap statistic and the critical value. It now uses
+*   the kink fit plus the unrestricted (jump) residuals, as Gong-Seo Alg. 1
+*   and boottype(unit). With a two-step fit both models are compared under
+*   the fixed second-step weight W2 of the jump fit (the criterion of the
+*   reported estimator, as the threshold CI since 0.9.34) instead of the
+*   one-step weight; after a one-step fallback W1 is kept.
+*   (b) New diagnostic citest(#): the grid-bootstrap test of H0: gamma = #
+*   alone, with the statistic, bootstrap and weight of the confidence set,
+*   run last under its own component seed (other results unchanged). Returns
+*   e(citest_D), e(citest_crit), e(citest_accept), e(citest_p) (add-one
+*   bootstrap p-value; p > alpha iff accepted), e(citest_status) (status
+*   code of e(ci_grid)) and e(citest_draws). At the true threshold of a
+*   simulation its rejection rate is the size of the test that the set
+*   inverts; its acceptance rate is the coverage proved by Gong-Seo.
+*   (c) Coverage convention. Gong and Seo (2026, eq. 7 and Theorem 5) define
+*   the set as {gamma in the grid : accepted} and prove
+*   P(gamma0 in set) -> 1 - tau, i.e. acceptance of the test AT gamma0; their
+*   Monte Carlo (Table 1) scores exactly that, and the set may be convexified
+*   (the hull e(gamma_lo), e(gamma_hi)). Scoring coverage by the union of
+*   e(ci_segments) is not a coverage of the inference: a gamma0 between an
+*   accepted and a rejected grid point was never tested and counts as a miss.
+*   An independent prototype of the 0.9.35 wild procedure on the Gong-Seo
+*   benchmark (FD, T=6, 24 lag instruments, 46-point grid, R=300-400)
+*   accepts gamma0 in 94-96% of samples (kappa = 0, 1; N = 400, 800), with
+*   hull coverage 97-100% and union-of-segments coverage 85-94%. The wild
+*   threshold bootstrap is therefore kept and citest(#) scores the proved
+*   property directly. A boundary refinement of the set (extra test points
+*   where acceptance changes) was prototyped and dropped: union coverage
+*   91.7 -> 93.0% at three times the CI cost. The same prototype gives the
+*   continuity change of (a): size 1-2% (0.9.35: 3%) and power
+*   45 -> 66% at kappa = 2 and 74 -> 94% at kappa = 3 (N = 400); at kappa = 1
+*   no variant exceeds 15%, since a kink at gamma - kappa/delta3 reproduces
+*   the jump regime above gamma.
 * ---------------------------------------------------------------------------
 * v0.9.35 (27sep2026): joint variance of the slopes and gamma-hat in the jump
 * model.

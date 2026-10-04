@@ -1,5 +1,6 @@
 p ua module to provide prefix command for unicode utilities
 p ucgof module to perform univariate categorical goodness-of-fit tests
+p ucharlist module to list Unicode characters present in a string Variable
 p ucspsplit module to extract paradata from a string variable produced by the universal client-side paradata script
 p udiff module to estimate the generalized unidiff model for individual-level data
 p ueve module to compute unbiased errors-in-variables estimator and variants from grouped data

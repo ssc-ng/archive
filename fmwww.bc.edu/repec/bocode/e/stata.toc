@@ -70,6 +70,7 @@ p epiweek module to create epidemiological week and equivalent epidemiological y
 p epresent module to present non-linear relationships in regression models with log or logit-link
 p epsigr module to save graph in EPSF format in UNIX environment
 p eqprhistogram module for equal probability histogram
+p equaids module to estimate AIDS and QUAIDS demand systems with survey data
 p equation module to Output The Equation of a Regression
 p equipop module to construct individualized population-based spatial contexts
 p er module to compute Esteban and Ray measure of polarization

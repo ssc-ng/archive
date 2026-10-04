@@ -1,0 +1,56 @@
+d 'DUVM': module to estimate Deaton's unit-value model
+d
+d  duvm estimates the unit-value model of Deaton (1988, 1990, 1997
+d ch. 5): own -and cross-price elasticities of quantity,
+d expenditure elasticities and quality elasticities for a group of
+d goods, from the budget shares and the unit values that households
+d report, using the spatial variation of prices across clusters. It
+d follows the book, in closed form and in Mata: a within-cluster
+d first stage, a between-cluster second stage with the
+d errors-in-variables correction, the quality correction through
+d the separability parameter, the completion of the system with a
+d composite good and an approximate Slutsky symmetry. Standard
+d errors are linearized from the influence functions of both
+d stages, by cluster or by survey design (svyset), or come from a
+d design bootstrap of both stages. duvm also corrects the unit
+d values for the selection of the buyers (Heckman, the probit in
+d the standard errors), reports the elasticities of the household,
+d of the individual or of the market, and makes the household size
+d optional. duvmdiag and estat diagnostics check the price signal;
+d predict and estat engel give the Engel curves; tables with
+d significance stars can be written to Word, LaTeX, Excel, CSV or
+d Markdown; a dialog box and help examples run from clickable links
+d are included. Option compact reproduces the Stata code published
+d with Deaton (1997). A technical note documents the model, the
+d estimator and the validation of the variance; it is included as
+d an ancillary file (duvm_technical_note.pdf). 
+d
+d KW: unit values
+d KW: quality
+d KW: price elasticities
+d KW: demand
+d KW: household survey
+d KW: survey design
+d KW: Deaton
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20261003
+d
+d Author: Abdelkrim Araar,  Universite Laval 
+d Support: email aabd@@ecn.ulaval.ca
+d
+f duvm.ado
+f duvm.dlg
+f duvm.sthlp
+f duvmdiag.ado
+f duvmdiag.sthlp
+f duvm_estat.ado
+f duvm_examples.ado
+f duvm_p.ado
+f ../_/_duvm_engel.ado
+f ../_/_duvm_tabstars.ado
+f ../_/_duvm_uv.ado
+f duvm_technical_note.pdf
+f duvm_tour.do
+f ../m/mexico_2014_cereals.dta

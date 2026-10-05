@@ -1,5 +1,5 @@
 *! fbardl — Fourier Bootstrap ARDL Cointegration Test
-*! Version 1.3.0 — 2026-09-22
+*! Version 1.3.1 — 2026-09-22
 *! Author: Dr. Merwan Roudane (merwanroudane920@gmail.com)
 *! Independent Researcher
 *!
@@ -793,6 +793,18 @@ program define fbardl, eclass sortpreserve
 
     // Store estimation for later restoration after bootstrap
     estimates store _fbardl_main
+
+    // --- bootdiag support: keep the coefficient vector, its covariance
+    //     matrix and the regressor list so that post-estimation commands
+    //     can recover the estimated equation (matrices survive restore).
+    tempname _bd_b _bd_V
+    matrix `_bd_b' = e(b)
+    matrix `_bd_V' = e(V)
+    local _bd_vars  "`regvars'"
+    local _bd_dep   "D.`depvar'"
+    local _bd_kstar = `best_kstar'
+    local _bd_T     = `T'
+    local _bd_htr   = `hastrend'
 
     // Model F-statistic from the active (possibly robust/HAC) estimation
     local F_model = e(F)
@@ -1613,7 +1625,11 @@ program define fbardl, eclass sortpreserve
     // STORE e() RESULTS
     // =========================================================================
     ereturn clear
-    ereturn post, obs(`nobs') esample(`touse')
+    capture ereturn post `_bd_b' `_bd_V', obs(`nobs') esample(`touse') ///
+        depname("`_bd_dep'")
+    if _rc {
+        ereturn post, obs(`nobs') esample(`touse')
+    }
 
     ereturn scalar N = `nobs'
     ereturn scalar best_p = `best_p'
@@ -1691,10 +1707,25 @@ program define fbardl, eclass sortpreserve
     // =========================================================================
     di as txt ""
     di as txt "{hline 78}"
-    di as res _col(5) "fbardl v1.3.0"
+    di as res _col(5) "fbardl v1.3.1"
     di as txt "{hline 78}"
 
     // Clean up
     capture drop _fbardl_sin _fbardl_cos _fbardl_resid _fbardl_trend
     restore
+
+    // --- bootdiag support: the Fourier and trend columns are deterministic
+    //     functions of the time index, so they can be rebuilt exactly after
+    //     restore.  They are kept in the data, as aardl does, so that
+    //     post-estimation commands can reconstruct the estimated equation.
+    capture drop _fbardl_sin _fbardl_cos _fbardl_trend
+    if `_bd_htr' {
+        qui gen double _fbardl_trend = _n
+    }
+    if `_bd_kstar' > 0 & `_bd_kstar' < . {
+        qui gen double _fbardl_sin = sin(2 * c(pi) * `_bd_kstar' * _n / `_bd_T')
+        qui gen double _fbardl_cos = cos(2 * c(pi) * `_bd_kstar' * _n / `_bd_T')
+    }
+    ereturn local bdvars   "`_bd_vars'"
+    ereturn local bddepvar "`_bd_dep'"
 end

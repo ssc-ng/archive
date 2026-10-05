@@ -1,4 +1,4 @@
-*! cruceandino v0.9  2026  Juan Marcelo Gutierrez Miranda | TodoEconometria
+*! cruceandino v0.9.1  2026  Juan Marcelo Gutierrez Miranda | TodoEconometria
 *! Multiway cross of an outcome by 1-3 categoricals -> table (collect) + figure.
 *! Aimed at household-survey consumption studies (coca/alcohol/tobacco). Requires
 *! Stata 17+ (table/collect framework). In one command it emits an exportable
@@ -17,6 +17,8 @@
 *!   - heatmap    : heatmap of the outcome over factor1 (x) by factor2 (y).
 *!   - composition: % of the (sub)sample in each cell (as catplot -percent-);
 *!                  best with an -if- (e.g. the composition of consumers).
+*! v0.9.1: line mode no longer prints the series levels; room for bar value labels
+*!         (vertical: below the panel strip; horizontal: right edge).
 *! v0.9: -dual- mode = the two margins of an ordinal outcome (0=none): extensive
 *!       (% consuming) as bars + intensive (frequency among consumers) as a line
 *!       on a second axis; the double hurdle drawn, with its table (ext+int+N).
@@ -120,6 +122,8 @@ program define cruceandino, rclass
     * common options so the output does not fall apart (aspect + clean axis)
     local szo xsize(10) ysize(6) graphregion(margin(l=5))
     local ylo ylabel(, angle(0) nogrid)
+    * room for the value labels: without it the tallest bar's label hits the panel strip
+    local blo plotregion(margin(t=5 r=3))
 
     * ===================== TABLE (table + collect) =====================
     local f1 : word 1 of `facs'
@@ -269,7 +273,7 @@ program define cruceandino, rclass
             }
             graph bar (mean) _pct if !missing(_pct), ///
                 `overs' `byopt' ytitle("`yt'", margin(r=3)) `ylo' `notopt' `schopt' `topttl' ///
-                `colopt' `legopt' blabel(bar, format(`format') size(small)) ///
+                `colopt' `legopt' blabel(bar, format(`format') size(small)) `blo' ///
                 `szo' `gropts' name(cruceandino, replace)
             restore
         }
@@ -359,7 +363,7 @@ program define cruceandino, rclass
             }
             if "`series'"!="" {
                 local lblname : value label `series'
-                levelsof `series', local(_lv)
+                quietly levelsof `series', local(_lv)
                 local plots
                 local leg
                 local k 0
@@ -405,13 +409,14 @@ program define cruceandino, rclass
                 local barcmd graph hbar
                 local ht = max(6, min(16, `nlev'*0.38))
                 local barsz xsize(9) ysize(`ht') graphregion(margin(l=5))
+                local blo plotregion(margin(r=9))
             }
             if `nf'==1 {
                 * one factor: bars over f1 with the number on top
                 `barcmd' (`statistic') `y' if `touse' [`weight'`exp'], ///
                     over(`f1', `sorto' label(labsize(small))) `byopt' ///
                     ytitle("`yt'", margin(r=3)) `ylo' `notopt' `schopt' `topttl' ///
-                    bar(1, color("`color'")) blabel(bar, format(`format') size(small)) ///
+                    bar(1, color("`color'")) blabel(bar, format(`format') size(small)) `blo' ///
                     `barsz' `gropts' name(cruceandino, replace)
             }
             else {

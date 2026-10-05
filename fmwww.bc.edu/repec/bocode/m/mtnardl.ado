@@ -366,6 +366,15 @@ program define mtnardl, eclass sortpreserve
     qui regress D.`depvar' `regvars'
     estimates store _mtnardl_main
 
+    // --- bootdiag support: keep the coefficient vector, its covariance
+    //     matrix and the regressor list so that post-estimation commands
+    //     can recover the estimated equation (matrices survive restore).
+    tempname _bd_b _bd_V
+    matrix `_bd_b' = e(b)
+    matrix `_bd_V' = e(V)
+    local _bd_vars "`regvars'"
+    local _bd_dep  "D.`depvar'"
+
     local nobs = e(N)
     local nparams = e(df_m) + 1
     local r2 = e(r2)
@@ -669,14 +678,23 @@ program define mtnardl, eclass sortpreserve
         // Fallback PSS CVs
         if `has_ardlbounds' == 0 {
             di as txt _col(5) "{it:Using PSS (2001) asymptotic CVs}"
-            local F_I0_10 = 2.45 ; local F_I1_10 = 3.52
-            local F_I0_05 = 2.86 ; local F_I1_05 = 4.01
-            local F_I0_01 = 3.74 ; local F_I1_01 = 5.06
-            local t_I0_10 = -2.57 ; local t_I1_10 = -3.66
-            local t_I0_05 = -2.86 ; local t_I1_05 = -3.99
-            local t_I0_01 = -3.43 ; local t_I1_01 = -4.60
-            local F_pv_I0 = . ; local F_pv_I1 = .
-            local t_pv_I0 = . ; local t_pv_I1 = .
+            local F_I0_10 = 2.45
+            local F_I1_10 = 3.52
+            local F_I0_05 = 2.86
+            local F_I1_05 = 4.01
+            local F_I0_01 = 3.74
+            local F_I1_01 = 5.06
+            local t_I0_10 = -2.57
+            local t_I1_10 = -3.66
+            local t_I0_05 = -2.86
+            local t_I1_05 = -3.99
+            local t_I0_01 = -3.43
+            local t_I1_01 = -4.60
+            local F_pv_I0 = .
+            local F_pv_I1 = .
+            local t_pv_I0 = .
+            local t_pv_I1 = .
+
         }
 
         // Restore estimation (ardlbounds clobbers e())
@@ -902,7 +920,11 @@ program define mtnardl, eclass sortpreserve
     // =====================================================================
     capture estimates drop _mtnardl_main
     ereturn clear
-    ereturn post, obs(`nobs') esample(`touse')
+    capture ereturn post `_bd_b' `_bd_V', obs(`nobs') esample(`touse') ///
+        depname("`_bd_dep'")
+    if _rc {
+        ereturn post, obs(`nobs') esample(`touse')
+    }
 
     ereturn scalar N = `nobs'
     ereturn scalar best_p = `best_p'
@@ -941,7 +963,7 @@ program define mtnardl, eclass sortpreserve
     // =====================================================================
     di as txt ""
     di as txt "{hline 78}"
-    di as res _col(5) "mtnardl v1.0.0 — Pal & Mitra (2016)"
+    di as res _col(5) "mtnardl v1.0.1 — Pal & Mitra (2016)"
     di as txt "{hline 78}"
 
     // Clean up
@@ -956,4 +978,14 @@ program define mtnardl, eclass sortpreserve
         }
     }
     restore
+
+    // --- bootdiag support: restore wipes the regime columns, so rebuild
+    //     them.  The decomposition is deterministic given the data and the
+    //     partition, so this reproduces exactly what was estimated.
+    local cp_opt2 ""
+    if "`cutpoints'" != "" local cp_opt2 "cutpoints(`cutpoints')"
+    capture _mtnardl_decompose, depvar(`depvar') decompose(`decompose') ///
+        partition(`partition') `cp_opt2' nograph
+    ereturn local bdvars   "`_bd_vars'"
+    ereturn local bddepvar "`_bd_dep'"
 end

@@ -1,5 +1,5 @@
 *! aardl — Augmented ARDL cointegration analysis (8 model types)
-*! Version 2.1.0 — 2026-09-22
+*! Version 2.1.1 — 2026-10-01
 *! Author: Dr. Merwan Roudane (merwanroudane920@gmail.com)
 *! Independent Researcher
 *!

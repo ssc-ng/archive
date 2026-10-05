@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 2.1.0  22sep2026}{...}
+{* *! version 2.1.1  01oct2026}{...}
 {vieweralsosee "ardl" "help ardl"}{...}
 {vieweralsosee "ardlbounds" "help ardlbounds"}{...}
 {vieweralsosee "newey" "help newey"}{...}
@@ -7,6 +7,7 @@
 {viewerjumpto "Description" "aardl##description"}{...}
 {viewerjumpto "Model" "aardl##model"}{...}
 {viewerjumpto "Options" "aardl##options"}{...}
+{viewerjumpto "Bootstrap diagnostics" "aardl##bootdiag"}{...}
 {viewerjumpto "Fixed regressors and dummies" "aardl##exog"}{...}
 {viewerjumpto "The three tests" "aardl##threetests"}{...}
 {viewerjumpto "Critical values" "aardl##cv"}{...}
@@ -794,6 +795,64 @@ stored under the name {cmd:_aardl_ols} and the inference fit under
 {pstd}
 {cmd:aardl_advanced} re-runs the advanced analysis after estimation, optionally
 with a different {opt horizon()}.
+
+
+{marker bootdiag}{...}
+{title:Bootstrap diagnostic tests (bootdiag)}
+
+{pstd}
+The diagnostic tests reported above use {bf:asymptotic} critical values. In the
+sample sizes, persistence levels and error variances that {bf:AARDL} models are
+normally applied to, those approximations can be badly size-distorted: a Monte
+Carlo experiment under the null, 300 replications at a nominal 5% level, gives
+
+{p 8 8 2}{txt}
+{space 2}{hline 58}{break}
+{space 2}test{space 20}n=60 rho=.5{space 2}n=60 rho=.9{space 2}n=150 rho=.9{break}
+{space 2}{hline 58}{break}
+{space 2}Koenker, asymptotic{space 7}0.113{space 8}0.197{space 9}0.163{break}
+{space 2}Koenker, bootstrap{space 8}0.020{space 8}0.060{space 9}0.030{break}
+{space 2}Jarque-Bera, asymptotic{space 3}0.040{space 8}0.027{space 9}0.027{break}
+{space 2}Jarque-Bera, bootstrap{space 4}0.033{space 8}0.037{space 9}0.050{break}
+{space 2}supF, bootstrap{space 11}0.057{space 8}0.050{space 9}0.057{break}
+{space 2}{hline 58}
+{p_end}
+
+{pstd}
+The asymptotic heteroskedasticity test rejects a true null three to four times
+too often. {helpb bootdiag} re-runs the same hypotheses with bootstrap and
+Monte Carlo p-values, and works directly after {bf:aardl}:
+
+{phang2}{cmd:. aardl y x z, maxlag(4) case(3)}{p_end}
+{phang2}{cmd:. bootdiag all}{p_end}
+
+{pstd}
+It provides 28 tests in five families — serial correlation (Breusch-Godfrey in
+three forms, Durbin-Watson, rho-hat), heteroskedasticity (Breusch-Pagan,
+Koenker, White, ARCH, Szroeter, Harrison-McCabe), normality (Jarque-Bera,
+Lobato-Velasco, Anderson-Darling), parameter stability (CUSUM, CUSUM of
+squares, supF, aveF, expF) and functional form (RESET, Cramer-von Mises,
+Kolmogorov-Smirnov) — together with the joint Jarque-Bera NHI test, the fast
+double bootstrap, and ten diagnostic graphs.
+
+{pstd}
+Three of those graphs have no standard Stata equivalent: CUSUM bands drawn as
+pointwise quantiles of the bootstrap paths rather than the Brown-Durbin-Evans
+straight lines; a residual correlogram whose bands come from the bootstrap
+instead of the plus-or-minus 2/sqrt(n) lines that assume iid data; and a
+P-value discrepancy plot showing the size distortion at every level, not only
+at 5%.
+
+{pstd}
+{bf:AARDL 2.1.0 and later} records its regressor list in {cmd:e(bdvars)} precisely
+so that {cmd:bootdiag} can recover the estimated equation. {cmd:bootdiag}
+re-fits that equation and checks the result against the residual sum of squares
+reported here before running any test, so a mismatch is reported as an error
+rather than as a wrong number.
+
+{pstd}
+See {helpb bootdiag} for the full guide, or type {stata "bootdiag all"} after
+estimation.
 
 
 {marker results}{...}

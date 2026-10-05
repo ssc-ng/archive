@@ -1,0 +1,23 @@
+d 'RCSPLOT': module to produce restricted cubic spline plot with matched model and plot ranges, optional histogram overlay, shaded confidence bandwidth adjustable opacity, survey support, and outlier trimming
+d
+d      rcsplot fits a restricted cubic spline (RCS) model for a
+d single exposure variable and plots the resulting dose-response
+d curve        with a confidence band. By default, the modeled data
+d and the plotted x-range are identical: both are defined by the
+d trim	      percentile window (1st to 99th percentile of the
+d exposure). This ensures the plot shows exactly the data on which
+d the	     model was fit, with no gap between the modeled sample
+d and the plotted region. 
+d
+d KW: graphics
+d KW: cubic splines
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261004
+d
+d Author: Zumin Shi ,  Qatar University
+d Support: email  zumin.shi@@qu.edu.qa
+d
+f rcsplot.ado
+f rcsplot.sthlp

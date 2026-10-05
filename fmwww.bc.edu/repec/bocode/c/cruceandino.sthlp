@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 0.9  2026  Juan Marcelo Gutierrez Miranda | TodoEconometria}{...}
+{* *! version 0.9.1  2026  Juan Marcelo Gutierrez Miranda | TodoEconometria}{...}
 {vieweralsosee "table" "help table"}{...}
 {vieweralsosee "collect" "help collect"}{...}
 {vieweralsosee "graph bar" "help graph bar"}{...}
@@ -221,5 +221,6 @@ defaults do not anticipate (e.g. {cmd:gropts(ylabel(0(10)70) ysize(8))}).
 {pstd}
 Juan Marcelo Gutierrez Miranda {hline 1} TodoEconometria, Madrid, Spain.{break}
 The command was developed for a comparative study of coca-leaf consumption in the Andes
-(Bolivia and Peru). Cite as: Gutierrez Miranda, J. M. (2026). {it:cruceandino: one-step
-multiway crosstabulation with a coherent table and figure}.
+(Bolivia and Peru). Available from the SSC archive: type {stata ssc install cruceandino}.
+Cite as: Gutierrez Miranda, J. M. (2026). {it:cruceandino: one-step multiway crosstabulation with a coherent table and figure}.
+Statistical Software Components, Boston College Department of Economics.

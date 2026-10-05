@@ -1,0 +1,37 @@
+d 'BOOTDIAG': module to perform bootstrap and Monte Carlo post-estimation diagnostic tests for time-series regression and the ARDL family
+d
+d      bootdiag replaces the asymptotic p-values of the standard
+d regression diagnostics with bootstrap and Monte Carlo p-values.
+d It	runs after regress, newey, ardl, aardl, fbardl, fbnardl and
+d mtnardl.    The test statistic is computed from the residuals and
+d the design matrix of the fitted equation, exactly as the source
+d papers    define it. Only the {it:null distribution} changes: it
+d is obtained by simulation rather than from a chi-squared or F
+d table.    bootdiag recovers the estimated equation from e() and
+d verifies the reconstruction against the residual sum of squares
+d the	 fitting command reported. If the two disagree it stops
+d with an error rather than reporting a number that does not
+d correspond	to the model you estimated. 
+d
+d KW: bootstrap
+d KW: Monte Carlo
+d KW: regression
+d KW: ARDL
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261004
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f bootdiag.ado
+f bootdiag.sthlp
+f ../_/_bd_fdbreport.ado
+f ../_/_bd_graph.ado
+f ../_/_bd_model.ado
+f ../_/_bd_parse.ado
+f ../_/_bd_prereport.ado
+f ../_/_bd_report.ado
+f ../l/lbootdiag.mlib
+f bootdiag_example.do

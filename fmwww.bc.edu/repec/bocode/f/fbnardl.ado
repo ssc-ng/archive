@@ -1,5 +1,5 @@
 *! fbnardl — Fourier Bootstrap Nonlinear ARDL
-*! Version 2.0.0 — 2026-09-22
+*! Version 2.0.1 — 2026-09-22
 *! Author: Dr. Merwan Roudane (merwanroudane920@gmail.com)
 *! Independent Researcher
 *!
@@ -730,6 +730,14 @@ program define fbnardl, eclass sortpreserve
         }
     }
     estimates store _fbnardl_main
+
+    // --- bootdiag support: remember the regressor list and the ingredients
+    //     needed to rebuild the constructed columns after restore.
+    local _bd_vars  "`best_formula'"
+    local _bd_dep   "D.`depvar'"
+    local _bd_kstar = `best_kstar'
+    local _bd_T     = `nobs'
+    local _bd_dec   "`dec_names'"
 
     local fstat = e(F)
     local fstat_p = Ftail(`df_m', `df_r', `fstat')
@@ -1683,8 +1691,35 @@ program define fbnardl, eclass sortpreserve
     capture estimates drop _fbnardl_ols
     capture drop _fbnardl_resid
 
+    // --- bootdiag support: snapshot the constructed columns BEFORE restore.
+    //     Rebuilding them afterwards from formulas is fragile (the Fourier
+    //     terms depend on the internal time index and sample count), so the
+    //     actual values are carried across the restore instead.
+    local _bd_keep ""
+    foreach cn of local dec_names {
+        capture confirm variable `cn'_pos
+        if !_rc local _bd_keep "`_bd_keep' `cn'_pos"
+        capture confirm variable `cn'_neg
+        if !_rc local _bd_keep "`_bd_keep' `cn'_neg"
+    }
+    capture confirm variable _fbnardl_sin
+    if !_rc local _bd_keep "`_bd_keep' _fbnardl_sin _fbnardl_cos"
+    if trim("`_bd_keep'") != "" {
+        mata: _bd_snap = st_data(., "`_bd_keep'")
+    }
+
     // Restore original data FIRST, then post results
     restore
+
+    // --- bootdiag support: write the snapshotted columns back
+    if trim("`_bd_keep'") != "" {
+        foreach v of local _bd_keep {
+            capture drop `v'
+            qui gen double `v' = .
+        }
+        mata: st_store(., tokens("`_bd_keep'"), _bd_snap)
+        mata: mata drop _bd_snap
+    }
 
     ereturn post `b_post' `V_post', obs(`nobs_post') esample(`esamp') ///
         depname(D.`depvar') dof(`df_r_post')
@@ -1815,9 +1850,12 @@ program define fbnardl, eclass sortpreserve
     di as txt "{hline 70}"
 
     di as txt "{hline 70}"
-    di as res "  fbnardl v2.0.0 — estimation complete. Results stored in e()."
+    di as res "  fbnardl v2.0.1 — estimation complete. Results stored in e()."
     di as txt "  Type {cmd:ereturn list} to view stored results."
     di as txt "{hline 70}"
+
+    ereturn local bdvars   "`_bd_vars'"
+    ereturn local bddepvar "`_bd_dep'"
 
 end
 

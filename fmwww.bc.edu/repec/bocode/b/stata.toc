@@ -84,6 +84,7 @@ p bmp2dta module to convert bitmap files to Stata datasets
 p bmtest module for computing the independent two-sample Brunner-Munzel test
 p bnormpdf module to calculate the bivariate normal density
 p boost module to perform boosted regression
+p bootdiag module to perform bootstrap and Monte Carlo post-estimation diagnostic tests for time-series regression and the ARDL family
 p boottest module to provide fast execution of the wild bootstrap with null imposed
 p bootur module to perform bootstrap unit root tests for single series, multiple series and panels 
 p boundedur module to perform unit root tests for bounded time series

@@ -1,0 +1,39 @@
+d 'XTMVARDLURT_MULTIVARIATE': module to perform panel multivariate ARDL unit root and cointegration test with cross-sectional dependence testing
+d
+d      For each unit the command estimates the multivariate ARDL
+d unit root regression of Sam, McNown, Goh and Goh (2024), D.y = c
+d + [trend] + pi L.y + delta'L.x + sum phi_i LiD.y + sum
+d Gamma_j'LjD.x + omega'D.x + u,   and computes the t-statistic on
+d pi (H0: unit root; lower tail) and the F-statistic on delta (H0:
+d no level relationship; upper	  tail; in Case 4 the trend is
+d included).  The k covariates are unrestricted in number. The unit
+d statistics are combined into	  the panel statistics	     
+d t-bar, F-bar: group means of the unit statistics;	   Fisher:
+d -2 sum ln(p_i) of the unit bootstrap p-values (Maddala-Wu type); 
+d	Inverse-normal: sum Phi^-1(p_i)/sqrt(N) (Choi type).	The
+d four-case framework is applied at the panel level (group-mean,
+d Fisher and inverse-normal versions) and at the unit level:	I =
+d neither rejects (unit root, no cointegration); II = t rejects
+d only (stationary); III = F rejects only (degenerate,	  possibly
+d I(2)); IV = both reject (cointegration). 
+d
+d KW: ARDL
+d KW: panel data unit root
+d KW: cointegration
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261004
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f xtmvardlurt_multivariate.ado
+f xtmvardlurt_multivariate.sthlp
+f ../_/_xtmvu_disp.ado
+f ../_/_xtmvu_load.ado
+f ../_/_xtmvu_mata.ado
+f xtmvardlurt_multivariate_example.do
+F xtmvardlurt_multivariate_expected.txt
+f xtmvardlurt_multivariate_graph.ado
+f xtmvardlurt_multivariate_testdata.csv

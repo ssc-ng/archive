@@ -57,6 +57,7 @@ p geoinpoly module to match geographic locations to shapefile polygons
 p geonear module to find nearest neighbors using geodetic distances
 p geoplot module to draw maps
 p georoute module to calculate travel distance and travel time between two addresses or two geographical points
+p gepwreg module for percentile weights regression: the effect of the covariates at a quantile of the outcome
 p get2ref module to retrieve published academic articles from academic databases
 p get_pwmse module to execute PWMSE-based model evaluation
 p getcensus module to load American Community Survey data from the U.S. Census Bureau API into Stata

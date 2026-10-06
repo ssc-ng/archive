@@ -82,6 +82,7 @@ p ersur module to calculate Elliott, Rothenberg & Stock DF-GLS unit root test st
 p esetran module to transform estimates and standard errors in parmest resultssets
 p esizereg module for calculating effect size based on a k-level linear regression coefficient
 p esli module to calculate the equation of a straight line
+p esreg module to estimate the endogenous switching regression with heterogeneous selection on gains
 p est2tex module to create LaTeX tables from estimation results
 p esteta module to estimate long-run effects using historical instruments
 p estout module to make regression tables

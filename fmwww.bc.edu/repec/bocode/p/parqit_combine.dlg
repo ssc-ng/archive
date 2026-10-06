@@ -2,17 +2,19 @@
   parqit merge - Combine the view with a file or another view, or join the
   data in memory with a file
 
-*!  VERSION 0.1.37  07sep2026
+*!  VERSION 0.3.3  05oct2026
 
   User > parqit > Combine datasets (merge, append, joinby)...
   Launch directly with:  db parqit_combine      (menu installed by: parqit menu)
 
   Main tab: the lazy two-table verbs (merge, append, joinby) whose using side
-  is a Parquet file, glob, Hive directory, delimited text, .dta, Excel (the
-  last three bridged) or another open view typed as view:name; and the
-  native in-memory routes (mergein, appendin). Options tab: the native merge
-  options forwarded by mergein, appendin's force, and the code page of a
-  legacy .dta/Excel using source. Populate fills the key pickers from the
+  is a Parquet file, glob, Hive directory, delimited text, .dta, Excel, SPSS
+  .sav/.zsav, R .rds/.rda/.RData (the last five bridged) or another open view
+  typed as view:name; and the native in-memory routes (mergein, appendin).
+  Options tab: native Stata's merge and append options, each enabled for the
+  commands that take it (nonotes for every merge and append, nolabel for
+  mergein/appendin, the rest for mergein), appendin's force, and the code page
+  of a legacy .dta/Excel/SPSS/R using source. Populate fills the key pickers from the
   current view (lazy verbs) or from the using file (memory verbs), and the
   using-variable picker from the Parquet footer of the using file.
 */
@@ -30,12 +32,6 @@ BEGIN
 	create STRING dlgname
 	dlgname.storeDialogClassName
 	create DOUBLE pq_populate_error
-	main.fi_using.formatfilter					///
-		"Parquet (*.parquet)|*.parquet|"			///
-		"Delimited text (*.csv *.tsv *.txt *.tab)|*.csv;*.tsv;*.txt;*.tab|" ///
-		"Stata data (*.dta)|*.dta|"				///
-		"Excel (*.xlsx *.xls)|*.xlsx;*.xls|"			///
-		"All files (*.*)|*.*"
 END
 
 PROGRAM POSTINIT_PROGRAM
@@ -76,6 +72,7 @@ BEGIN
   FILE fi_using			_lft	_ss	_iwd	.,		///
 	error("Using source")						///
 	defext(parquet)							///
+	filter("Data files|*.parquet;*.csv;*.tsv;*.txt;*.tab;*.dta;*.xlsx;*.xls;*.sav;*.zsav;*.rds;*.rda;*.RData|Parquet|*.parquet|Text|*.csv;*.tsv;*.txt;*.tab|Stata|*.dta|Excel|*.xlsx;*.xls|SPSS|*.sav;*.zsav|R|*.rds;*.rda;*.RData|All files|*.*") ///
 	label("Browse...")
 
   TEXT tx_more			_lft	_ls	_iwd	.,		///
@@ -101,7 +98,7 @@ BEGIN
 	label("Key variables")
 
   TEXT tx_keepus		_lft	_ls	_iwd	.,		///
-	label("Variables to keep from the using source (by default all are kept): keepusing() for merge and mergein, keep() for appendin:")
+	label("Variables to keep from the using source (all by default): keepusing() for merge/mergein, keep() for append/appendin:")
   COMBOBOX cb_keepus		@	_ss	@	.,		///
 	append								///
 	dropdown							///
@@ -146,7 +143,7 @@ END
 DIALOG opt, tabtitle("Options")
 BEGIN
   GROUPBOX gb_native		_lft	_top	_iwd	_ht12,		///
-	label("Native merge options forwarded by mergein")
+	label("Merge and append options, as in native Stata (enabled where the command takes them)")
   CHECKBOX ck_update		_ilft	_ss	_ibwd	.,		///
 	option(update)							///
 	onclickon(opt.ck_mreplace.enable)				///
@@ -178,13 +175,19 @@ BEGIN
 	label("Append string variables to numeric or numeric to string without error (appendin; force)")
 
   TEXT tx_enc			_lft	_ls	_iwd	.,		///
-	label("Code page of legacy (non-UTF-8) text in a .dta or Excel using source (lazy merge, append, joinby):")
+	label("Encoding of text that is not UTF-8 in the using file (delimited text, .dta, Excel, SPSS or R):")
   COMBOBOX cb_enc		@	_ss	_vnwd	.,		///
-	dropdownlist							///
+	dropdown							///
 	contents(enc_list)						///
-	default("windows-1252")						///
+	default("default")						///
 	option(encoding)						///
-	label("Code page")
+	tooltip("default: delimited text as UTF-8 or else in the session code page, .dta text in the session code page (windows-1252 unless parqit set encoding), SPSS and R files as they declare; pick or type any encoding parqit reads") ///
+	label("Encoding")
+  TEXT tx_int64 _lft _ls _iwd ., ///
+	label("Large integers read by mergein/appendin (default = inherit the session):")
+  COMBOBOX cb_int64 @ _ss _vnwd ., dropdownlist contents(i64_list) ///
+	default("default") option(int64) label("Integers beyond 2^53") ///
+	tooltip("string preserves exact digits; merge keys must have compatible types on both sides")
 END
 
 LIST vv_list
@@ -197,10 +200,35 @@ END
 
 LIST enc_list
 BEGIN
+	default
+	utf-8
 	windows-1252
 	latin1
 	latin9
 	macroman
+	windows-1250
+	windows-1251
+	windows-1253
+	windows-1254
+	windows-1255
+	windows-1256
+	windows-1257
+	windows-1258
+	windows-874
+	koi8-r
+	koi8-u
+	ibm866
+	iso-8859-2
+	iso-8859-5
+	iso-8859-7
+	shift_jis
+	euc-jp
+	gbk
+	gb18030
+	big5
+	euc-kr
+	utf-16le
+	utf-16be
 END
 
 LIST kind_list
@@ -209,6 +237,14 @@ BEGIN
 	"m:1"
 	"1:m"
 	"m:m"
+END
+
+LIST i64_list
+BEGIN
+	default
+	refuse
+	round
+	string
 END
 
 PROGRAM main_mode
@@ -240,6 +276,8 @@ BEGIN
 	call opt.ck_aforce.disable
 	call opt.tx_enc.disable
 	call opt.cb_enc.disable
+	call opt.tx_int64.disable
+	call opt.cb_int64.disable
 	if main.rb_merge | main.rb_mergein {
 		call main.tx_kind.enable
 		call main.cb_kind.enable
@@ -261,6 +299,8 @@ BEGIN
 	if main.rb_append {
 		call main.tx_more.enable
 		call main.ed_more.enable
+		call main.tx_keepus.enable
+		call main.cb_keepus.enable
 		call main.tx_gen.enable
 		call main.ed_gen.enable
 		call main.tx_gen.setlabel "Name of new variable to mark the source of each observation (optional):"
@@ -271,11 +311,19 @@ BEGIN
 	}
 	if main.rb_merge | main.rb_append | main.rb_joinby {
 		call main.tx_using.setlabel "Using source: filename, glob, Hive directory, or view:name:"
+	}
+	if main.rb_merge | main.rb_append | main.rb_joinby | main.rb_mergein | main.rb_appendin {
 		call opt.tx_enc.enable
 		call opt.cb_enc.enable
 	}
+	if main.rb_merge | main.rb_append | main.rb_mergein | main.rb_appendin {
+		call opt.gb_native.enable
+		call opt.ck_nonotes.enable
+	}
 	if main.rb_mergein {
-		call main.tx_using.setlabel "Using file (Parquet, delimited text, .dta, or Excel):"
+		call main.tx_using.setlabel "Using file (Parquet, delimited text, .dta, Excel, SPSS or R):"
+		call opt.tx_int64.enable
+		call opt.cb_int64.enable
 		call opt.gb_native.enable
 		call opt.ck_update.enable
 		call opt.ck_nolabel.enable
@@ -289,9 +337,15 @@ BEGIN
 		}
 	}
 	if main.rb_appendin {
-		call main.tx_using.setlabel "Using file (Parquet, delimited text, .dta, or Excel):"
+		call main.tx_using.setlabel "Using file (Parquet, delimited text, .dta, Excel, SPSS or R):"
+		call opt.tx_int64.enable
+		call opt.cb_int64.enable
 		call main.tx_keepus.enable
 		call main.cb_keepus.enable
+		call main.tx_gen.enable
+		call main.ed_gen.enable
+		call main.tx_gen.setlabel "Name of new variable to mark the source of each observation (optional):"
+		call opt.ck_nolabel.enable
 		call opt.ck_aforce.enable
 	}
 	call program main_context
@@ -371,6 +425,7 @@ BEGIN
 			if !main.ck_nogen {
 				optionarg main.ed_gen
 			}
+			option opt.ck_nonotes
 			optionarg /hidedefault opt.cb_enc
 		endoptions
 	}
@@ -383,6 +438,10 @@ BEGIN
 		}
 		beginoptions
 			optionarg main.ed_gen
+			if main.cb_keepus {
+				put "keep(" main.cb_keepus ") "
+			}
+			option opt.ck_nonotes
 			optionarg /hidedefault opt.cb_enc
 		endoptions
 	}
@@ -418,6 +477,8 @@ BEGIN
 			option opt.ck_nonotes
 			option opt.ck_mforce
 			option opt.ck_noreport
+			optionarg /hidedefault opt.cb_int64
+			optionarg /hidedefault opt.cb_enc
 		endoptions
 	}
 	if main.rb_appendin {
@@ -428,7 +489,12 @@ BEGIN
 			if main.cb_keepus {
 				put "keep(" main.cb_keepus ") "
 			}
+			optionarg main.ed_gen
+			option opt.ck_nolabel
+			option opt.ck_nonotes
 			option opt.ck_aforce
+			optionarg /hidedefault opt.cb_int64
+			optionarg /hidedefault opt.cb_enc
 		endoptions
 	}
 END

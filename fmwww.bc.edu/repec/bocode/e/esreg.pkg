@@ -1,0 +1,76 @@
+d 'ESREG': module to estimate the endogenous switching regression with heterogeneous selection on gains
+d
+d  esreg estimates the endogenous switching regression (the Roy
+d model with two regimes): a probit selection equation and an
+d outcome equation for each regime, by full-information maximum
+d likelihood or by a two-step estimator whose variance is that of
+d the whole procedure (stacked moments). It reports the treatment
+d effects ATT, ATU and ATE and the selection on gains, kappa = rho1
+d sigma1 - rho0 sigma0, constant or heterogeneous in the covariates
+d (kappa(x)), with standard errors from the influence functions of
+d the whole procedure (the estimation of the parameters, the
+d averaging over the units and their covariance), by observation,
+d by cluster or through the survey design (svyset: the svy prefix
+d for the likelihood, vce(svy) for the two-step). An augmented
+d two-step adds Hermite terms, in both regimes or in one, when the
+d conditional mean of the regime errors is not linear. A family of
+d post-estimation commands checks the assumptions one by one:
+d esrdiag (strength, variation and support of the selection
+d equation), esrtest (specification of the index, sufficiency of
+d the instruments, constant kappa, normality by regime, and a
+d pseudo-difference-in-differences on the index), esrcurve (the
+d effect by quantile group of the score), esrmte (the marginal
+d treatment effect, parametric and semiparametric) and esrreport (a
+d reading of the results and the route to report). A dialog box and
+d help examples run from clickable links are included. The commands
+d are validated against etregress, movestay, msat and a Python
+d reference implementation, and their standard errors against
+d brute-force influence functions. A technical note documents the
+d model, the tests and the estimators; it is included as an
+d ancillary file (esreg_technical_note.pdf). 
+d
+d KW: endogenous switching regression
+d KW: Roy model
+d KW: treatment effects
+d KW: selection on gains
+d KW: marginal treatment effect
+d KW: control function
+d KW: survey design
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261005
+d
+d Author: Abdelkrim Araar,  Universite Laval 
+d Support: email aabd@@ecn.ulaval.ca
+d
+f esreg.ado
+f esreg.dlg
+f esreg.sthlp
+f esr_kx.dta
+f esr_nonlin.dta
+f esr_wt.dta
+f esrcurve.ado
+f esrcurve.sthlp
+f esrdiag.ado
+f esrdiag.sthlp
+f esreg_engine.ado
+f esreg_examples.ado
+f esreg_lf1.ado
+f esreg_mata.ado
+f esreg_p.ado
+f esreg_postestimation.sthlp
+f esrmte.ado
+f esrmte.sthlp
+f esrreport.ado
+f esrreport.sthlp
+f esrtest.ado
+f esrtest.sthlp
+f ../_/_esreg_data.ado
+f ../_/_esreg_effects_post.ado
+f ../_/_esreg_esample.ado
+f ../_/_esreg_getest.ado
+f ../_/_esreg_ifcov.ado
+f ../_/_esreg_pwr.ado
+F esreg_returns.txt
+f esreg_technical_note.pdf

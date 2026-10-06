@@ -1,4 +1,4 @@
-*! version 0.1.37 07sep2026
+*! version 0.3.3 05oct2026
 *! parqit — a grammar of data manipulation for Stata, backed by Parquet (embedded DuckDB engine)
 *! Authors: Miguel Portela (Universidade do Minho & NIPE), Rute Costa, Paulo Guimarães and Marta Silva (BPLIM / Banco de Portugal)
 *! License: MIT (see LICENSE in the parqit repository)
@@ -6,7 +6,8 @@
 program define parqit, rclass
     version 16.0
     gettoken todo 0 : 0, parse(" ,")
-    if (`"`todo'"' == "generate") local todo "gen"
+    * CMD-ABBREV-1: Stata core's abbreviations (su, ta, d, g, l, ...)
+    mata: st_local("todo", _parqit_cmd_name(st_local("todo")))
     if `"`todo'"' == "" {
         di as err "parqit: subcommand required; see {help parqit}"
         exit 198
@@ -17,14 +18,23 @@ program define parqit, rclass
         contract duplicates sample collect count head list show explain    ///
         set merge append joinby reshape pivot sql query summarize tabulate ///
         path view views misstable levelsof ds lookfor codebook distinct    ///
-        tabstat correlate pwcorr histogram mergein appendin menu _dlgvars  ///
-        _dlgcontext _dlgsource
+        tabstat correlate pwcorr histogram mergein appendin menu           ///
+        spssencode _dlgvars _dlgcontext _dlgsource
     local k : list posof `"`todo'"' in cmds
     if (`k' == 0) {
         di as err `"parqit: unknown subcommand `"`todo'"'"'
         exit 198
     }
+    * STATAMISS-WARN-1: the plugin leaves its missing-value warning (hex) in
+    * this global; it is shown after the command, in red, and like any output
+    * it is silenced by quietly and capture. Cleared first, so no command
+    * inherits another's.
+    global PARQIT_MISSWARN
     _parqit_`todo' `0'
+    if (`"$PARQIT_MISSWARN"' != "") {
+        mata: displayas("error"); printf("%s\n", _parqit_smcl_plain(_parqit_unhex(st_global("PARQIT_MISSWARN"))))
+        global PARQIT_MISSWARN
+    }
     return add
 end
 
@@ -37,6 +47,7 @@ program define _parqit_ensure_plugin
     capture plugin call parqit_plugin, ping 03
     if (_rc == 0) {
         _parqit_check_numeric_contract "`parqit_numeric_contract'"
+        _parqit_check_plugin_release "`parqit_plugin_version'"
         exit
     }
 
@@ -76,6 +87,30 @@ program define _parqit_ensure_plugin
 
     plugin call parqit_plugin, ping 03
     _parqit_check_numeric_contract "`parqit_numeric_contract'"
+    _parqit_check_plugin_release "`parqit_plugin_version'"
+end
+
+* PLUGIN-VERSION-1: the plugin must be the release of these ado-files. A
+* running Stata keeps the plugin it loaded first, so an update installed while
+* Stata is open (or a plugin net install could not replace) pairs new
+* ado-files with an old plugin, which used to fail deep inside a command
+* ("option revalidvars() not allowed", BPLIM, 2026-10-01). A plugin older than
+* this check does not report its release to ping.
+program define _parqit_check_plugin_release
+    version 16.0
+    args plugin_version
+    local ado_version "0.3.3"
+    if ("`plugin_version'" == "`ado_version'") exit
+    if ("`plugin_version'" == "") {
+        * an older plugin reports its release to version only
+        capture plugin call parqit_plugin, version
+        local plugin_version `parqit_plugin_version'
+    }
+    local pv = cond("`plugin_version'" == "", "of an earlier release", "version `plugin_version'")
+    di as err "parqit: the plugin in use is `pv', but the ado-files are version `ado_version'"
+    di as err "Stata keeps a plugin loaded until it exits: close Stata and start it again;"
+    di as err "if they still differ, install parqit again in a new Stata session and restart Stata"
+    exit 498
 end
 
 program define _parqit_check_numeric_contract
@@ -107,6 +142,17 @@ program define _parqit_version, rclass
     return local parqit_version `"`parqit_plugin_version'"'
     return local duckdb_version `"`parqit_duckdb_version'"'
     return local parallel_backend "duckdb"
+    * FILL-THREADS-SET-1: "auto" unless parqit set fill_threads chose a number
+    return local fill_threads "`parqit_fill_threads'"
+    * CPUS-1 / STREAM-BUFFER-SET-1: the CPUs available to this process, the
+    * engine threads in force and the streaming-buffer setting
+    di as txt "CPUs available: " as res "`parqit_cpus'" ///
+        as txt "; engine threads: " as res "`parqit_threads'" ///
+        as txt "; fill workers: " as res "`parqit_fill_threads'" ///
+        as txt "; stream buffer (MB): " as res "`parqit_stream_buffer_mb'"
+    return scalar cpus = `parqit_cpus'
+    return scalar threads = `parqit_threads'
+    return local stream_buffer_mb "`parqit_stream_buffer_mb'"
     return scalar openmp = 0
     return scalar openmp_version = real("`parqit_openmp_version'")
     return scalar openmp_max_threads = real("`parqit_openmp_max_threads'")
@@ -195,7 +241,15 @@ end
 *                      snapshots to a Parquet bridge the engine then scans. Best
 *                      for small inputs (a lookup .dta, an .xlsx) — for a large
 *                      master prefer `use file.dta` + `parqit open _data`.
-* The raw path travels through the global PARQIT_RS_IN to survive spaces/quotes.
+*   sav / zsav       : SPSS system files; the plugin's own reader converts them
+*                      into a Parquet bridge out of core, never through a frame
+*                      (SPSS-READ-1). parqit save <file> using <x.sav> writes the
+*                      complete Parquet file directly.
+*   rds / rda / RData: R data files; likewise converted by the plugin's own
+*                      reader (R-READ-1), the data frame they hold (object()
+*                      names one when an .RData holds several).
+* The raw path travels through the global PARQIT_RS_IN to survive spaces/quotes;
+* the R object through PARQIT_RS_OBJ, which the resolver consumes.
 * ----------------------------------------------------------------------------
 
 * Dialog support: fill a dialog's LIST member with variable names so the
@@ -333,8 +387,11 @@ program define _parqit__dlgsource, rclass
     local base = substr(`"`using'"', strrpos(`"`using'"', "/")+1, .)
     local ext ""
     if (strpos(`"`base'"', ".")) local ext = lower(substr(`"`base'"', strrpos(`"`base'"', ".")+1, .))
-    local footer = (`"`using'"' != "" & !inlist("`ext'", "csv", "tsv", "txt", "tab", "dta", "xls", "xlsx"))
-    local legacy = inlist("`ext'", "dta", "xls", "xlsx")
+    local footer = (`"`using'"' != "" & !inlist("`ext'", "csv", "tsv", "txt", "tab", "dta", "xls", "xlsx") ///
+        & !inlist("`ext'", "sav", "zsav", "rds", "rda", "rdata"))
+    * encoding() applies to every source but Parquet (CSV-ENC-1: delimited text too)
+    local legacy = inlist("`ext'", "dta", "xls", "xlsx", "sav", "zsav") | inlist("`ext'", "rds", "rda", "rdata") | ///
+        inlist("`ext'", "csv", "tsv", "txt", "tab")
     local usemode 1
     capture local usemode = .`dlg'.main.rb_use.value
     if (!`usemode') {
@@ -347,6 +404,10 @@ program define _parqit__dlgsource, rclass
     local action = cond(`legacy', "enable", "disable")
     capture .`dlg'.main.tx_enc.`action'
     capture .`dlg'.main.cb_enc.`action'
+    * object() names the data frame of an R file, and only there
+    local action = cond(`usemode' & inlist("`ext'", "rds", "rda", "rdata"), "enable", "disable")
+    capture .`dlg'.main.tx_object.`action'
+    capture .`dlg'.main.ed_object.`action'
     _return restore `prior'
     return add
     if ("`report'" != "") return scalar footer = `footer'
@@ -367,6 +428,21 @@ end
 * references them.  The plugin atomically reserves a private directory using
 * the real OS PID, an operation counter and a strong nonce; it also keeps the
 * ownership token, so only package-created paths can ever be erased here.
+* F19 (release audit 2026-09-28): the engine reads a key=value directory of any
+* path as a Hive partition column, so a temporary directory whose path has one
+* gives every bridged file a column it does not have — said once a session
+program define _parqit_tmpdir_note
+    version 16.0
+    if ("${PARQIT_TMPDIR_NOTED}" == "1") exit
+    mata: st_local("_eqdir", strofreal(_parqit_hive_segment(c("tmpdir"))))
+    if (!`_eqdir') exit
+    global PARQIT_TMPDIR_NOTED 1
+    di as txt "note: the temporary directory " as res "`c(tmpdir)'" as txt " contains =;" ///
+        " the engine reads a directory named key=value as a column, so data parqit" ///
+        " bridges through it gain one — point TMPDIR (STATATMP on Windows) at a" ///
+        " directory without ="
+end
+
 program define _parqit_bridge_new, rclass
     version 16.0
     args kind
@@ -388,13 +464,128 @@ program define _parqit_bridge_discard
     plugin call parqit_plugin, bridge_discard `_bridge_hex'
 end
 
+* ENC-3: encoding(name[, all]) -> the caller's _enc_name and _enc_all
+program define _parqit_enc_parse
+    version 16.0
+    args who spec
+    local all 0
+    local name `"`spec'"'
+    if (strpos(`"`spec'"', ",")) {
+        local rest = strtrim(substr(`"`spec'"', strpos(`"`spec'"', ",") + 1, .))
+        local name = substr(`"`spec'"', 1, strpos(`"`spec'"', ",") - 1)
+        if (lower(`"`rest'"') != "all" | strtrim(`"`name'"') == "") {
+            di as err "`who': encoding(name) or encoding(name, all)"
+            exit 198
+        }
+        local all 1
+    }
+    c_local _enc_name `"`=strtrim(`"`name'"')'"'
+    c_local _enc_all `all'
+end
+
+* CSV-ENC-1: delimited text that is not UTF-8 — by its byte-order mark, the
+* patterns of UTF-16, encoding(), or (mode using: a lookup file read into
+* Stata) its bytes — is decoded by the plugin into a package-owned UTF-8
+* bridge that is read instead (r(bridge)); otherwise the file itself is read
+* (r(bridge) empty). The plugin writes the notes, file by file where files
+* differ; they are printed from Mata, so no file name is macro-expanded or read
+* as SMCL.
+program define _parqit_text_prepare, rclass
+    version 16.0
+    syntax, src(string) mode(string) [ENCoding(string) ALL]
+    _parqit_ensure_plugin
+    tempfile req
+    local _sq_src `"`src'"'
+    local _sq_mode "`mode'"
+    local _sq_encoding `"`encoding'"'
+    local _sq_encall = ("`all'" != "")
+    mata: _parqit_wr_text_request("`req'")
+    capture noisily plugin call parqit_plugin, text_prepare `reqhex'
+    if (_rc) exit _rc
+    mata: st_local("bridge", _parqit_unhex(st_local("parqit_tf_bridge")))
+    if (`"`bridge'"' != "") _parqit_tmpdir_note
+    forvalues i = 1/0`parqit_tf_nnotes' {
+        mata: displayas("text"); printf("note: %s\n", _parqit_smcl_plain(_parqit_unhex(st_local("parqit_tf_note`i'"))))
+    }
+    if ("`parqit_tf_defaulted'" == "1") _parqit_locale_hint "`parqit_tf_legacy'"
+    return local bridge `"`bridge'"'
+    if ("`parqit_tf_encoding'" != "") return local encoding "`parqit_tf_encoding'"
+    return scalar transcoded_lines = 0`parqit_tf_decoded'
+    return scalar transcoded_revalid_lines = 0`parqit_tf_revalid'
+    return scalar undecodable = 0`parqit_tf_undecodable'
+    return scalar encoding_default = ("`parqit_tf_defaulted'" == "1")
+end
+
+* ENC-3: when undeclared text was decoded from the default code page and the
+* locale suggests another, say which and how to give it. c(locale_functions)
+* is the computer's locale unless set locale_functions chose another.
+program define _parqit_locale_hint
+    version 16.0
+    args enc
+    mata: st_local("_lcp", _parqit_locale_codepage(c("locale_functions")))
+    if ("`_lcp'" == "" | "`_lcp'" == "`enc'") exit
+    di as txt "note: " as res "`enc'" as txt " is the default; the locale here is " ///
+        as res "`c(locale_functions)'" as txt " — if the text is in its code page, give " ///
+        as res "encoding(`_lcp')" as txt " (or once per session: " ///
+        as res "parqit set encoding `_lcp'" as txt ")"
+end
+
 program define _parqit_import_to_bridge, rclass
     version 16.0
     args kind                                /* dta | excel | csv */
     local src `"${PARQIT_RS_IN}"'
-    local enc `"${PARQIT_RS_ENC}"'
-    _parqit_bridge_new import
+    _parqit_enc_parse "parqit" `"${PARQIT_RS_ENC}"'
+    local encname `"`_enc_name'"'
+    local encall `_enc_all'
+    * ENC-3: a .dta of format 117 or older (Stata 13 and earlier) predates
+    * Unicode, so all its text is in the code page encoding() names — also
+    * text that happens to be valid UTF-8 (as encoding(name, all))
+    if ("`kind'" == "dta" & `"`encname'"' != "" & !`encall') {
+        capture quietly dtaversion `"`src'"'
+        if (!_rc) {
+            if (r(version) <= 117) local encall 1
+        }
+    }
+    * Stata decodes Excel text itself (import excel gives UTF-8): all would
+    * decode that UTF-8 again, so it does not apply there, and says so
+    if ("`kind'" == "excel" & `encall') {
+        di as txt "note: encoding(`encname', all) applies to legacy text; Stata decodes the text" ///
+            " of an Excel file itself, so all is not applied to " as res `"`src'"'
+        local encall 0
+    }
+    local encarg `"`encname'"'
+    if (`encall') local encarg `"`encname', all"'
+    * CSV-ENC-1: a lookup file of delimited text is read into Stata as UTF-8,
+    * decoded first when it is not (never Stata's guess of its encoding: for
+    * Cyrillic, Chinese or Japanese text import delimited guesses wrong)
+    local csvsrc `"`src'"'
+    local tbridge ""
+    local t_enc ""
+    local t_lines 0
+    local t_rvlines 0
+    local t_undec 0
+    local t_deflt 0
+    if ("`kind'" == "csv") {
+        local _all = cond(`encall', "all", "")
+        _parqit_text_prepare, src(`"`src'"') mode(using) encoding(`"`encname'"') `_all'
+        local tbridge `"`r(bridge)'"'
+        if (`"`tbridge'"' != "") local csvsrc `"`tbridge'"'
+        local t_enc `"`r(encoding)'"'
+        local t_lines = r(transcoded_lines)
+        local t_rvlines = r(transcoded_revalid_lines)
+        local t_undec = r(undecodable)
+        local t_deflt = r(encoding_default)
+        * the frame then holds UTF-8 only: the save must not decode it again
+        local encarg ""
+    }
+    capture _parqit_bridge_new import
+    if (_rc) {
+        local rc = _rc
+        capture _parqit_bridge_discard `"`tbridge'"'
+        exit `rc'
+    }
     local bridge `"`r(bridge)'"'
+    _parqit_tmpdir_note
     tempname fr
     capture noisily frame create `fr'
     local rc = _rc
@@ -416,28 +607,38 @@ program define _parqit_import_to_bridge, rclass
     local b_tcells 0
     local b_tmeta 0
     local b_enc ""
+    local b_revalid 0
+    local b_rvars ""
+    local b_undec 0
+    local b_deflt 0
     if (!`rc') capture noisily frame `fr' {
         quietly {
             if ("`kind'" == "dta")        use `"`src'"', clear
             else if ("`kind'" == "excel") import excel `"`src'"', firstrow clear
-            else                          import delimited `"`src'"', clear
+            else                          import delimited `"`csvsrc'"', clear encoding("utf-8")
             if (c(k) == 0 | _N == 0) {
                 * still snapshot an empty schema so downstream errors are about
                 * the data, not a missing file
             }
-            parqit save `"`bridge'"', replace data encoding(`"`enc'"')
+            parqit save `"`bridge'"', replace data encoding(`"`encarg'"')
             local b_ext `"`r(ext_missing)'"'
             local b_frac `"`r(frac_dates)'"'
             local b_tvars `"`r(transcoded_vars)'"'
             local b_tcells = cond(r(transcoded_cells) < ., r(transcoded_cells), 0)
             local b_tmeta = cond(r(transcoded_meta) < ., r(transcoded_meta), 0)
             local b_enc `"`r(encoding)'"'
+            local b_revalid = cond(r(transcoded_revalid) < ., r(transcoded_revalid), 0)
+            local b_rvars `"`r(transcoded_revalid_vars)'"'
+            local b_undec = cond(r(undecodable) < ., r(undecodable), 0)
+            local b_deflt = cond(r(encoding_default) < ., r(encoding_default), 0)
         }
     }
     if (!`rc') local rc = _rc
     capture frame drop `fr'
     local drop_rc = _rc
     if (!`rc' & `drop_rc') local rc = `drop_rc'
+    * CSV-ENC-1: the decoded text has been imported; only the Parquet bridge stays
+    capture _parqit_bridge_discard `"`tbridge'"'
     if (`rc') {
         * The import/save error is authoritative; cleanup is best-effort and
         * must never replace that original return code.
@@ -446,7 +647,14 @@ program define _parqit_import_to_bridge, rclass
     }
     _parqit_lossy_notes, ext(`"`b_ext'"') frac(`"`b_frac'"') transvars(`"`b_tvars'"') ///
         transcells(`b_tcells') transmeta(`b_tmeta') encoding(`"`b_enc'"') ///
-        source(`"`src'"')
+        revalid(`b_revalid') revalidvars(`"`b_rvars'"') undecodable(`b_undec') ///
+        defaulted(`b_deflt') source(`"`src'"')
+    if ("`kind'" == "csv") {
+        * the text was decoded before the import, not by the save
+        local b_enc `"`t_enc'"'
+        local b_undec `t_undec'
+        local b_deflt `t_deflt'
+    }
     return local bridge `"`bridge'"'
     return local ext_missing `"`b_ext'"'
     return local frac_dates `"`b_frac'"'
@@ -454,12 +662,27 @@ program define _parqit_import_to_bridge, rclass
     return scalar transcoded_cells = `b_tcells'
     return scalar transcoded_meta = `b_tmeta'
     return local encoding `"`b_enc'"'
+    return scalar transcoded_revalid = `b_revalid'
+    return local transcoded_revalid_vars `"`b_rvars'"'
+    return scalar undecodable = `b_undec'
+    return scalar encoding_default = `b_deflt'
+    return scalar transcoded_lines = `t_lines'
+    return scalar transcoded_revalid_lines = `t_rvlines'
 end
 
 program define _parqit_resolve_source, rclass
     version 16.0
-    args mode                                /* source | using */
+    args mode                                /* source | using | lookup */
     local raw `"${PARQIT_RS_IN}"'
+    * R-READ-1: the R object to read is consumed here, so a value can never
+    * leak into a later read
+    local obj `"${PARQIT_RS_OBJ}"'
+    global PARQIT_RS_OBJ
+    * ENC-3: encoding(name[, all]); SPSS and R files decode all their text from
+    * one code page, so they take the name alone
+    _parqit_enc_parse "parqit" `"${PARQIT_RS_ENC}"'
+    local encname `"`_enc_name'"'
+    local encall `_enc_all'
     * extension of the final path component (basename), case-insensitive
     local base = substr(`"`raw'"', strrpos(`"`raw'"', "/") + 1, .)
     local ext ""
@@ -468,13 +691,59 @@ program define _parqit_resolve_source, rclass
     local fmt "parquet"
     local bridge ""
     local kind ""
+    * CSV-ENC-1: the disk side of mergein/appendin (mode lookup) is scanned in
+    * place like a main source, but its undeclared text is decoded like any
+    * other lookup's
+    local tmode = cond("`mode'" == "lookup", "lookup", "source")
     if (inlist("`ext'", "csv", "tsv", "txt", "tab")) {
         if ("`mode'" == "using") local kind "csv"   /* bridge small CSV lookups */
         else local fmt "csv"                        /* big side: scan out-of-core */
     }
     else if ("`ext'" == "dta") local kind "dta"
     else if (inlist("`ext'", "xls", "xlsx")) local kind "excel"
-    if ("`kind'" != "") {
+    else if (inlist("`ext'", "sav", "zsav")) local kind "spss"
+    else if (inlist("`ext'", "rds", "rda", "rdata")) local kind "r"
+    if (`"`obj'"' != "" & "`kind'" != "r") {
+        di as err "parqit: object() names the data frame to read from an R data file" ///
+            " (.rds, .rda, .RData)"
+        exit 198
+    }
+    if (inlist("`kind'", "spss", "r")) global PARQIT_RS_ENC `"`encname'"'
+    if ("`fmt'" == "csv") {
+        * CSV-ENC-1: delimited text scanned in place is read as UTF-8 — through
+        * a decoded UTF-8 bridge when its byte-order mark, its UTF-16 NUL
+        * pattern or encoding() says it is not
+        local _all = cond(`encall', "all", "")
+        _parqit_text_prepare, src(`"`raw'"') mode(`tmode') encoding(`"`encname'"') `_all'
+        if (`"`r(bridge)'"' != "") {
+            local raw `"`r(bridge)'"'
+            local bridge `"`raw'"'
+            local kind "text"
+        }
+        return local encoding `"`r(encoding)'"'
+        return scalar transcoded_lines = r(transcoded_lines)
+        return scalar transcoded_revalid_lines = r(transcoded_revalid_lines)
+        return scalar undecodable = r(undecodable)
+        return scalar encoding_default = r(encoding_default)
+    }
+    else if ("`kind'" == "spss") {
+        * SPSS-READ-1: the plugin reads the SPSS file natively and out of core
+        * (never through Stata's memory) into a Parquet bridge carrying every
+        * SPSS property; the Parquet path then reads that bridge
+        _parqit_spss_to_bridge
+        local raw `"`r(bridge)'"'
+        local bridge `"`raw'"'
+        return local spss_xmissing `"`r(xmissing_vars)'"'
+    }
+    else if ("`kind'" == "r") {
+        * R-READ-1: the same for the data frame of an R data file
+        _parqit_r_to_bridge `"`obj'"'
+        local raw `"`r(bridge)'"'
+        local bridge `"`raw'"'
+        return local spss_xmissing `"`r(xmissing_vars)'"'
+        return local r_object `"`r(r_object)'"'
+    }
+    else if ("`kind'" != "") {
         _parqit_import_to_bridge `kind'
         local raw `"`r(bridge)'"'
         local bridge `"`raw'"'
@@ -485,10 +754,210 @@ program define _parqit_resolve_source, rclass
         return scalar transcoded_cells = r(transcoded_cells)
         return scalar transcoded_meta = r(transcoded_meta)
         return local encoding `"`r(encoding)'"'
+        return scalar transcoded_revalid = r(transcoded_revalid)
+        return local transcoded_revalid_vars `"`r(transcoded_revalid_vars)'"'
+        return scalar undecodable = r(undecodable)
+        return scalar encoding_default = r(encoding_default)
+        return scalar transcoded_lines = r(transcoded_lines)
+        return scalar transcoded_revalid_lines = r(transcoded_revalid_lines)
     }
     return local path `"`raw'"'
     return local fmt "`fmt'"
     return local bridge `"`bridge'"'
+    return local kind "`kind'"
+end
+
+* SPSS-READ-1: one SPSS system file (.sav/.zsav) -> one Parquet file, by the
+* plugin's own reader: the whole file is profiled first (a truncated or corrupt
+* file fails before anything is written), then streamed out of core into the
+* verified Parquet writer. Stata's memory and the open views are untouched.
+* The conversion notes are printed from Mata (no macro expansion of the text).
+program define _parqit_spss_convert, rclass
+    version 16.0
+    syntax, src(string) dest(string) who(string) [replace ENCoding(string) ///
+        COMPression(string) compression_level(integer -1)]
+    * encoding() replaces the code page the SPSS file declares (a wrong or
+    * missing declaration); the plugin validates the name (ENC-3)
+    _parqit_ensure_plugin
+    tempfile req
+    local _sq_src `"`src'"'
+    local _sq_dest `"`dest'"'
+    local _sq_who `"`who'"'
+    local _sq_replace = ("`replace'" != "")
+    local _sq_encoding `"`encoding'"'
+    local _sq_comp `"`compression'"'
+    local _sq_complevel = `compression_level'
+    mata: _parqit_wr_spss_request("`req'")
+    capture noisily plugin call parqit_plugin, spss_convert `reqhex'
+    if (_rc) exit _rc
+    forvalues i = 1/`parqit_spss_nnotes' {
+        mata: displayas("text"); printf("note: %s\n", _parqit_unhex(st_local("parqit_spss_note`i'")))
+    }
+    mata: st_local("_sq_destabs", _parqit_unhex(st_local("parqit_spss_dest")))
+    mata: st_local("_sq_declared", _parqit_unhex(st_local("parqit_spss_declared")))
+    return local filename `"`_sq_destabs'"'
+    return local source `"`src'"'
+    return scalar N = `parqit_spss_n'
+    return scalar k = `parqit_spss_k'
+    return local xmissing_vars `"`parqit_spss_xmvars'"'
+    return local encoding "`parqit_spss_encoding'"
+    return local spss_encoding `"`_sq_declared'"'
+    return local spss_compression "`parqit_spss_compression'"
+    if (`parqit_spss_tcells' > 0) return scalar transcoded_cells = `parqit_spss_tcells'
+    if (`parqit_spss_tmeta' > 0) return scalar transcoded_meta = `parqit_spss_tmeta'
+end
+
+* SPSS-READ-1: a .sav/.zsav source becomes a package-owned Parquet bridge,
+* exactly like a .dta/Excel source, but without passing through a frame
+program define _parqit_spss_to_bridge, rclass
+    version 16.0
+    local src `"${PARQIT_RS_IN}"'
+    local enc `"${PARQIT_RS_ENC}"'
+    _parqit_bridge_new spss
+    local bridge `"`r(bridge)'"'
+    _parqit_tmpdir_note
+    capture noisily _parqit_spss_convert, src(`"`src'"') dest(`"`bridge'"') ///
+        who("parqit") encoding(`"`enc'"')
+    local rc = _rc
+    if (`rc') {
+        * the conversion error is authoritative; cleanup is best-effort
+        capture _parqit_bridge_discard `"`bridge'"'
+        exit `rc'
+    }
+    return add
+    return local bridge `"`bridge'"'
+end
+
+* R-READ-1: the data frame of one R data file (.rds, .rda/.RData) -> one Parquet
+* file, by the plugin's own reader of R's serialization: the file is parsed and
+* every column read once first (a truncated or corrupt file fails before
+* anything is written), then streamed out of core into the verified Parquet
+* writer. object() names the data frame when the file holds several.
+program define _parqit_r_convert, rclass
+    version 16.0
+    syntax, src(string) dest(string) who(string) [replace ENCoding(string) ///
+        COMPression(string) compression_level(integer -1) OBJect(string)]
+    * encoding() replaces the native encoding R recorded for strings that carry
+    * no encoding mark of their own; the plugin validates the name (ENC-3)
+    _parqit_ensure_plugin
+    tempfile req
+    local _sq_src `"`src'"'
+    local _sq_dest `"`dest'"'
+    local _sq_who `"`who'"'
+    local _sq_replace = ("`replace'" != "")
+    local _sq_encoding `"`encoding'"'
+    local _sq_comp `"`compression'"'
+    local _sq_complevel = `compression_level'
+    local _sq_object `"`object'"'
+    mata: _parqit_wr_r_request("`req'")
+    capture noisily plugin call parqit_plugin, rdata_convert `reqhex'
+    if (_rc) exit _rc
+    forvalues i = 1/`parqit_r_nnotes' {
+        mata: displayas("text"); printf("note: %s\n", _parqit_unhex(st_local("parqit_r_note`i'")))
+    }
+    mata: st_local("_sq_destabs", _parqit_unhex(st_local("parqit_r_dest")))
+    mata: st_local("_sq_object", _parqit_unhex(st_local("parqit_r_object")))
+    mata: st_local("_sq_renc", _parqit_unhex(st_local("parqit_r_encoding")))
+    return local filename `"`_sq_destabs'"'
+    return local source `"`src'"'
+    return scalar N = `parqit_r_n'
+    return scalar k = `parqit_r_k'
+    return scalar k_dropped = `parqit_r_ndropped'
+    return local xmissing_vars `"`parqit_r_xmvars'"'
+    return local r_object `"`_sq_object'"'
+    return local r_format "`parqit_r_format'"
+    return local r_version "`parqit_r_version'"
+    return local r_encoding `"`_sq_renc'"'
+    return local r_compression "`parqit_r_compression'"
+    if (`parqit_r_tcells' > 0) return scalar transcoded_cells = `parqit_r_tcells'
+    if (`parqit_r_tmeta' > 0) return scalar transcoded_meta = `parqit_r_tmeta'
+end
+
+* R-READ-1: an R data file source becomes a package-owned Parquet bridge, like
+* an SPSS file
+program define _parqit_r_to_bridge, rclass
+    version 16.0
+    args obj
+    local src `"${PARQIT_RS_IN}"'
+    local enc `"${PARQIT_RS_ENC}"'
+    _parqit_bridge_new rdata
+    local bridge `"`r(bridge)'"'
+    _parqit_tmpdir_note
+    capture noisily _parqit_r_convert, src(`"`src'"') dest(`"`bridge'"') ///
+        who("parqit") encoding(`"`enc'"') object(`"`obj'"')
+    local rc = _rc
+    if (`rc') {
+        * the conversion error is authoritative; cleanup is best-effort
+        capture _parqit_bridge_discard `"`bridge'"'
+        exit `rc'
+    }
+    return add
+    return local bridge `"`bridge'"'
+end
+
+* SPSS-ENCODE-1: Stata cannot label a string, so a string variable read from an
+* SPSS file keeps its value labels as JSON pairs in char var[spss_value_labels].
+* spssencode makes the labelled numeric version: the SPSS codes themselves when
+* every code is a distinct integer, otherwise 1, 2, ... in code order. The
+* dictionary, not the data, decides, so files that share a dictionary share
+* codes; SPSS user-missing codes become .a-.z, as for numeric SPSS variables.
+* Nothing is created until the dictionary and the data are known to fit.
+program define _parqit_spssencode, rclass
+    version 16.0
+    syntax varname, Generate(name) [Label(name) SEQuential]
+    capture confirm string variable `varlist'
+    if (_rc) {
+        di as err "parqit spssencode: `varlist' is numeric; the SPSS value labels" ///
+            " of a numeric variable are its Stata value label already"
+        exit 109
+    }
+    confirm new variable `generate'
+    if ("`label'" == "") local label `generate'
+    mata: st_local("_sq_lab", strofreal(st_vlexists("`label'")))
+    if (`_sq_lab') {
+        di as err "parqit spssencode: value label `label' already exists;" ///
+            " name another with label()"
+        exit 110
+    }
+    mata: _parqit_spssenc_plan("`varlist'", "`sequential'" != "")
+    tempvar num
+    if ("`_sq_mode'" == "codes") quietly gen double `num' = real(`varlist')
+    else {
+        * encode numbers the dictionary's codes as defined, then the rest
+        mata: _parqit_spssenc_keys("`varlist'", "`label'")
+        capture noisily encode `varlist', generate(`num') label(`label')
+        if (_rc) {
+            local rc = _rc
+            capture label drop `label'
+            exit `rc'
+        }
+    }
+    capture noisily mata: _parqit_spssenc_apply("`varlist'", "`num'", "`label'", ///
+        "`_sq_mode'", "`generate'")
+    if (_rc) {
+        local rc = _rc
+        capture label drop `label'
+        exit `rc'
+    }
+    quietly summarize `num', meanonly
+    local type double
+    if (r(N) == 0 | (r(min) >= -127 & r(max) <= 100)) local type byte
+    else if (r(min) >= -32767 & r(max) <= 32740) local type int
+    else if (r(min) >= -2147483647 & r(max) <= 2147483620) local type long
+    quietly gen `type' `generate' = `num'
+    label values `generate' `label'
+    local vl : variable label `varlist'
+    label variable `generate' `"`vl'"'
+    if (`"`_sq_map'"' != "") char `generate'[spss_missing_map] `"`_sq_map'"'
+    if ("`_sq_mode'" == "codes") ///
+        di as txt "(`generate': the SPSS codes of `varlist', labelled by `label')"
+    else di as txt "(`generate': the SPSS codes of `varlist' numbered 1, 2, ... in" ///
+        " code order, labelled by `label'; `_sq_why')"
+    return local mode "`_sq_mode'"
+    return local label "`label'"
+    return scalar N_labels = `_sq_nlab'
+    return scalar N_unlabeled = `_sq_nextra'
+    if (`"`_sq_map'"' != "") return local missing_map `"`_sq_map'"'
 end
 
 * BRIDGE-LOSS-1: after _parqit_resolve_source, capture the bridge's loss
@@ -496,77 +965,281 @@ end
 * return them additively once its own work is done.
 program define _parqit_bridge_losses
     version 16.0
-    syntax [, ext(string) frac(string) tvars(string) tcells(string) tmeta(string) enc(string)]
-    c_local _bl_ext `"`ext'"'
-    c_local _bl_frac `"`frac'"'
-    c_local _bl_tvars `"`tvars'"'
-    c_local _bl_tcells = cond("`tcells'" == "" | "`tcells'" == ".", "0", "`tcells'")
-    c_local _bl_tmeta = cond("`tmeta'" == "" | "`tmeta'" == ".", "0", "`tmeta'")
-    c_local _bl_enc `"`enc'"'
+    * reads the r() of _parqit_resolve_source, which a non-rclass program keeps
+    c_local _bl_ext `"`r(ext_missing)'"'
+    c_local _bl_frac `"`r(frac_dates)'"'
+    c_local _bl_tvars `"`r(transcoded_vars)'"'
+    c_local _bl_tcells = cond(r(transcoded_cells) < ., r(transcoded_cells), 0)
+    c_local _bl_tmeta = cond(r(transcoded_meta) < ., r(transcoded_meta), 0)
+    c_local _bl_enc `"`r(encoding)'"'
+    * ENC-3 / CSV-ENC-1
+    c_local _bl_revalid = cond(r(transcoded_revalid) < ., r(transcoded_revalid), 0)
+    c_local _bl_rvars `"`r(transcoded_revalid_vars)'"'
+    c_local _bl_undec = cond(r(undecodable) < ., r(undecodable), 0)
+    c_local _bl_deflt = cond(r(encoding_default) < ., r(encoding_default), 0)
+    c_local _bl_tlines = cond(r(transcoded_lines) < ., r(transcoded_lines), 0)
+    c_local _bl_rvlines = cond(r(transcoded_revalid_lines) < ., r(transcoded_revalid_lines), 0)
 end
 
 * ... and return them (only the ones that carry information, like a save)
 program define _parqit_return_losses, rclass
     version 16.0
-    syntax [, ext(string) frac(string) tvars(string) tcells(string) tmeta(string) enc(string)]
+    syntax [, ext(string) frac(string) tvars(string) tcells(string) tmeta(string) enc(string) ///
+        revalid(string) rvars(string) undec(string) deflt(string) tlines(string) rvlines(string)]
     if (`"`ext'"' != "") return local ext_missing `"`ext'"'
     if (`"`frac'"' != "") return local frac_dates `"`frac'"'
     if (`"`tvars'"' != "") return local transcoded_vars `"`tvars'"'
     if ("`tcells'" != "" & "`tcells'" != "0") return scalar transcoded_cells = `tcells'
     if ("`tmeta'" != "" & "`tmeta'" != "0") return scalar transcoded_meta = `tmeta'
-    if (`"`enc'"' != "" & ("`tcells'" != "0" | "`tmeta'" != "0")) return local encoding `"`enc'"'
+    if ("`revalid'" != "" & "`revalid'" != "0") return scalar transcoded_revalid = `revalid'
+    if (`"`rvars'"' != "") return local transcoded_revalid_vars `"`rvars'"'
+    if ("`tlines'" != "" & "`tlines'" != "0") return scalar transcoded_lines = `tlines'
+    if ("`rvlines'" != "" & "`rvlines'" != "0") return scalar transcoded_revalid_lines = `rvlines'
+    if ("`undec'" != "" & "`undec'" != "0") return scalar undecodable = `undec'
+    local told = ("`tcells'" != "" & "`tcells'" != "0") | ("`tmeta'" != "" & "`tmeta'" != "0") | ///
+        ("`tlines'" != "" & "`tlines'" != "0")
+    if (`told' & "`deflt'" == "1") return scalar encoding_default = 1
+    if (`"`enc'"' != "" & `told') return local encoding `"`enc'"'
+end
+
+* CSV-OPT-1: parse `csv(...)` of parqit use into the caller's _sq_csv_* locals.
+* Every sub-option is a reader option of the embedded DuckDB CSV reader; the
+* plugin validates the keys again and quotes every value as an SQL literal. An
+* empty value counts as not given (each of these wants a character or a word).
+program define _parqit_csv_opts
+    version 16.0
+    local _opts DELIM(string) QUOTE(string) ESCape(string) HEADer(string) ///
+        DATEformat(string) TIMESTAMPformat(string) SAMPLE(string) ALLVARchar ///
+        TYPES(string) NULLSTR(string)
+    capture syntax [, `_opts']
+    if (_rc) {
+        * USE-OPT-1, inside csv(): name the sub-option, not "invalid syntax"
+        capture syntax [, `_opts' *]
+        if (!_rc & `"`options'"' != "") {
+            di as err `"parqit use: csv(): option `options' not allowed"'
+            exit 198
+        }
+        syntax [, `_opts']
+    }
+    if (`"`header'"' != "" & !inlist(lower(`"`header'"'), "on", "off")) {
+        di as err "parqit use: csv(): header() takes on or off"
+        exit 198
+    }
+    if (`"`sample'"' != "") {
+        capture confirm number `sample'
+        if (_rc) local _bad 1
+        else local _bad = (real("`sample'") != trunc(real("`sample'"))) | ///
+            (real("`sample'") < 1 & real("`sample'") != -1)
+        if (`_bad') {
+            di as err "parqit use: csv(): sample() takes the number of rows to" ///
+                " sniff (a positive integer), or -1 for the whole file"
+            exit 198
+        }
+    }
+    local keys ""
+    foreach k in delim quote escape header dateformat timestampformat sample nullstr types {
+        if (`"``k''"' != "") {
+            local keys `"`keys' `k'"'
+            c_local _sq_csv_v_`k' `"``k''"'
+        }
+    }
+    if ("`allvarchar'" != "") {
+        local keys `"`keys' allvarchar"'
+        c_local _sq_csv_v_allvarchar "1"
+    }
+    c_local _sq_csv_keys `"`=strtrim(`"`keys'"')'"'
 end
 
 * ----------------------------------------------------------------------------
 * parqit use — lazy view by default; , clear = read into memory now
 * ----------------------------------------------------------------------------
 
+* VIEWNAME-ALL-1: parqit close _all reserves _all, so a view with that name
+* could never be closed on its own
+program define _parqit_check_viewname
+    version 16.0
+    args who name
+    if ("`name'" != "_all") exit
+    di as err "`who': _all is reserved by parqit close _all; choose another name()"
+    exit 198
+end
+
+* VIEW-COPY-1: mergein/appendin join memory with a FILE; an open view is
+* refused by name instead of reaching parqit use as a file to read
+program define _parqit_no_view_using
+    version 16.0
+    args who using lazyverb
+    if (substr(`"`using'"', 1, 5) != "view:") exit
+    local v = substr(`"`using'"', 6, .)
+    di as err `"parqit `who': the using side is a file on disk, not the open view `v';"' ///
+        `" save it first (parqit view `v': save <file>) and `who' that file, or join"' ///
+        `" out of core: parqit open _data, parqit `lazyverb' ... using view:`v', parqit collect, clear"'
+    exit 198
+end
+
+* INT64-PROTECT-1 / BINARY-DECODE-1: one validator for the read-time type
+* options, so every command that accepts them refuses the same typos with the
+* same words (the plugin re-checks, but a user must never see a wire message).
+program define _parqit_typeopts
+    version 16.0
+    syntax , who(string) [ int64(string) binary(string) ]
+    if (`"`int64'"' != "" & !inlist(`"`int64'"', "refuse", "round", "string")) {
+        di as err `"`who': int64() must be refuse, round or string"'
+        exit 198
+    }
+    if (`"`binary'"' != "" & !inlist(`"`binary'"', "drop", "text", "hex")) {
+        di as err `"`who': binary() must be drop, text or hex"'
+        exit 198
+    }
+end
+
+* STATS-IF-1: an if with no expression after it, in a statistics command
+program define _parqit_if_noexp
+    version 16.0
+    args who
+    di as err "`who': if requires an expression"
+    exit 198
+end
+
 program define _parqit_use, rclass
     version 16.0
     * owned is INTERNAL (not in the help): the view takes ownership of the
     * backing file and the plugin erases it on close/replace — only
     * parqit open _data passes it for its per-promotion bridge snapshots.
-    capture syntax [anything(name=namelist)] using/ [, clear Name(name) OWNed RELAXed ENCoding(string)]
+    * CSV-ENC-1: mergein/appendin read their disk side through parqit use with
+    * the global PARQIT_USE_LOOKUP set, so that its undeclared legacy text is
+    * decoded like any lookup's; it is consumed here, before anything can fail,
+    * so it never reaches a later read.
+    local lookup = ("${PARQIT_USE_LOOKUP}" == "1")
+    global PARQIT_USE_LOOKUP
+    capture syntax [anything(name=namelist)] using/ ///
+        [, clear Name(name) OWNed RELAXed ENCoding(string) INT64(string) BINARY(string) FILEname(name) CSV(string) OBJect(string)]
     if (_rc) {
-        capture syntax anything(name=fileraw id="filename") [, clear Name(name) OWNed RELAXed ENCoding(string)]
+        capture syntax anything(name=fileraw id="filename") ///
+            [, clear Name(name) OWNed RELAXed ENCoding(string) INT64(string) BINARY(string) FILEname(name) CSV(string) OBJect(string)]
         if (_rc) {
             * USE-OPT-1 (audit 2026-08-22, A5-13): an unknown option used to
             * surface as "filename required" — name the option instead
-            capture syntax [anything] [using/] [, clear Name(name) OWNed RELAXed ENCoding(string) *]
+            capture syntax [anything] [using/] ///
+                [, clear Name(name) OWNed RELAXed ENCoding(string) INT64(string) BINARY(string) FILEname(name) CSV(string) OBJect(string) *]
             if (!_rc & `"`options'"' != "") {
                 di as err `"parqit use: option `options' not allowed"'
                 exit 198
             }
-            syntax anything(name=fileraw id="filename") [, clear Name(name) OWNed RELAXed ENCoding(string)]
+            syntax anything(name=fileraw id="filename") ///
+                [, clear Name(name) OWNed RELAXed ENCoding(string) INT64(string) BINARY(string) FILEname(name) CSV(string) OBJect(string)]
         }
         local using `fileraw'
         local namelist
     }
+    _parqit_check_viewname "parqit use" "`name'"
+    * VIEW-COPY-1: view:<name> copies the plan of an open view instead of
+    * reading a file, so it is settled before any file option is validated or
+    * the source is resolved by extension
+    if (substr(`"`using'"', 1, 5) == "view:") {
+        local src = substr(`"`using'"', 6, .)
+        if (`"`src'"' == "" | wordcount(`"`src'"') != 1) {
+            di as err `"parqit use: `using' does not name an open view"'
+            exit 198
+        }
+        foreach o in clear relaxed owned encoding int64 binary filename csv object {
+            if (`"``o''"' == "") continue
+            local oname = cond(inlist("`o'", "clear", "relaxed", "owned"), "`o'", "`o'()")
+            local hint
+            if ("`o'" == "clear") local hint "; load it with parqit view `src': collect, clear"
+            if ("`o'" == "int64") local hint "; give int64() to parqit collect"
+            di as err "parqit use: `oname' describes how to read a file; view:`src'" ///
+                " copies that view's plan as it is`hint'"
+            exit 198
+        }
+        if ("`name'" == "") {
+            di as err "parqit use: view:`src' needs name(): the copy is a new view"
+            exit 198
+        }
+        _parqit_ensure_plugin
+        tempfile req
+        local _sq_src "`src'"
+        local _sq_vname "`name'"
+        local _sq_namelist `"`namelist'"'
+        mata: _parqit_wr_view_copy_request("`req'")
+        capture noisily plugin call parqit_plugin, view_copy `reqhex'
+        if (_rc) exit _rc
+        di as txt "(lazy view " as res "`name'" as txt " copied from view " as res "`src'" ///
+            as txt ": " as res "`parqit_view_k'" as txt " columns; plan copied, no rows read" ///
+            " — later verbs on either view do not affect the other)"
+        return scalar k = `parqit_view_k'
+        return local view "`name'"
+        return local source_view "`src'"
+        exit
+    }
+    * INT64-PROTECT-1 / BINARY-DECODE-1: read-time type options, validated
+    * here so a typo never reaches the plugin as a silent fallback
+    _parqit_typeopts, who("parqit use") int64(`"`int64'"') binary(`"`binary'"')
+    local _sq_int64 "`int64'"
+    local _sq_binary "`binary'"
     local _sq_relaxed = ("`relaxed'" != "")
+    * FILENAME-1: filename(newvar) adds a string column holding the path each
+    * row came from. syntax's `name' type already refuses an illegal or
+    * over-long variable name, loudly and by name.
+    local _sq_filename "`filename'"
+    * Validate CSV options before a resolver can create a decoded copy.
+    local _sq_csv_keys ""
+    if (`"`csv'"' != "") _parqit_csv_opts, `csv'
     _parqit_ensure_plugin
     if ("`clear'" != "" & "`name'" != "") {
         di as err "parqit use: name() applies to lazy views; omit clear"
         exit 198
     }
 
-    * resolve the input: parquet/csv scan in place; dta/xls/xlsx -> Parquet
-    * bridge (the working dataset is left untouched). encoding() is the legacy
-    * code page for non-UTF-8 text in a .dta/Excel bridge (BRIDGE-LOSS-1).
+    * resolve the input: parquet/csv scan in place; dta/xls/xlsx/sav/zsav ->
+    * Parquet bridge (the working dataset is left untouched). encoding() is the
+    * legacy code page for non-UTF-8 text in a .dta/Excel bridge (BRIDGE-LOSS-1)
+    * and the code page of an SPSS file that declares none or a wrong one.
+    local _sq_orig `"`using'"'
     global PARQIT_RS_IN `"`using'"'
     global PARQIT_RS_ENC `"`encoding'"'
-    _parqit_resolve_source source
+    global PARQIT_RS_OBJ `"`object'"'
+    capture noisily _parqit_resolve_source `=cond(`lookup', "lookup", "source")'
+    local rc = _rc
     global PARQIT_RS_ENC
+    global PARQIT_RS_OBJ
+    if (`rc') exit `rc'
     local using `"`r(path)'"'
     local _sq_fmt "`r(fmt)'"
     local _sq_bridge `"`r(bridge)'"'
-    _parqit_bridge_losses, ext(`"`r(ext_missing)'"') frac(`"`r(frac_dates)'"') ///
-        tvars(`"`r(transcoded_vars)'"') tcells("`r(transcoded_cells)'") ///
-        tmeta("`r(transcoded_meta)'") enc(`"`r(encoding)'"')
-    if (`"`encoding'"' != "" & `"`_sq_bridge'"' == "") {
-        di as txt "note: encoding() applies to a .dta/Excel source bridged to Parquet; " ///
-            "a Parquet/CSV source is read as UTF-8 (ignored)"
+    local _sq_kind "`r(kind)'"
+    local _sq_spss_xm `"`r(spss_xmissing)'"'
+    local _sq_robject `"`r(r_object)'"'
+    _parqit_bridge_losses
+    if (`"`encoding'"' != "" & `"`_sq_bridge'"' == "" & "`_sq_fmt'" != "csv") {
+        di as txt "note: encoding() applies to delimited text and to .dta, Excel, SPSS and R" ///
+            " files; Parquet text is UTF-8 by definition (ignored)"
     }
-
+    * FILENAME-1: a .dta/Excel/SPSS/R source is scanned through a package-owned
+    * Parquet bridge in the temporary directory (delimited text that is not
+    * UTF-8 through a decoded UTF-8 copy, CSV-ENC-1), so the path the engine
+    * reports is that bridge, not the file the user named — refuse instead of
+    * handing back a meaningless path. The bridge is discarded; memory is untouched.
+    if ("`filename'" != "" & `"`_sq_bridge'"' != "") {
+        capture _parqit_bridge_discard `"`_sq_bridge'"'
+        di as err "parqit use: filename() reports the path the engine reads;" ///
+            " a .dta, Excel, SPSS or R source, or delimited text that is not UTF-8," ///
+            " is read through a temporary bridge, whose path says nothing about your" ///
+            " file — write it with {bf:parqit save} first and read the Parquet"
+        exit 198
+    }
+    * SPSS-READ-1 / R-READ-1 / CSV-ENC-1: messages name the file the user gave,
+    * not the bridge
+    local _sq_shown `"`using'"'
+    if (inlist("`_sq_kind'", "spss", "r", "text")) local _sq_shown `"`_sq_orig'"'
+    * CSV-OPT-1: csv() changes how delimited text is parsed and typed, so it
+    * must never be ignored on a source that is not delimited text.
+    if (`"`csv'"' != "" & "`_sq_fmt'" != "csv") {
+        if (`"`_sq_bridge'"' != "") capture _parqit_bridge_discard `"`_sq_bridge'"'
+        di as err "parqit use: csv() applies to delimited text" ///
+            " (.csv, .tsv, .txt, .tab); this source is read as `_sq_fmt'"
+        exit 198
+    }
     if ("`clear'" == "") {
         * open (or replace) the named lazy view — schema probed, no rows loaded
         if ("`name'" == "") local name "default"
@@ -589,14 +1262,30 @@ program define _parqit_use, rclass
         }
         mata: st_local("vname", _parqit_unhex(st_local("parqit_view_name")))
         di as txt "(lazy view " as res "`vname'" as txt " opened over " ///
-            as res `"`using'"' as txt ": " as res "`parqit_view_k'" ///
+            as res `"`_sq_shown'"' as txt ": " as res "`parqit_view_k'" ///
             as txt " columns; schema probed, no rows loaded — use {bf:parqit collect} or {bf:parqit save})"
+        * SPSS-READ-1: a lazy view reads the user-missing codes as plain `.',
+        * so a Parquet file saved from it would lose them; name the lossless
+        * route (the codes stay in the bridge and in a direct conversion)
+        if ("`_sq_kind'" == "spss" & `"`_sq_spss_xm'"' != "") {
+            di as txt "note: to write this SPSS file to Parquet with its user-missing codes" ///
+                " (.a-.z), convert it directly: " as res `"parqit save {it:newfile}.parquet using `_sq_orig'"'
+        }
+        if ("`_sq_kind'" == "r" & `"`_sq_spss_xm'"' != "") {
+            local _sq_objopt
+            if (`"`object'"' != "") local _sq_objopt `", object(`object')"'
+            di as txt "note: to write this R data to Parquet with its extended missing codes" ///
+                " (.a-.z), convert it directly: " as res `"parqit save {it:newfile}.parquet using `_sq_orig'`_sq_objopt'"'
+        }
         _parqit_return_losses, ext(`"`_bl_ext'"') frac(`"`_bl_frac'"') tvars(`"`_bl_tvars'"') ///
-            tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"')
+            tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"') ///
+            revalid("`_bl_revalid'") rvars(`"`_bl_rvars'"') undec("`_bl_undec'") ///
+            deflt("`_bl_deflt'") tlines("`_bl_tlines'") rvlines("`_bl_rvlines'")
         return add
         return scalar k = `parqit_view_k'
         return local view "`vname'"
         if (`"`_sq_owned_file'"' != "") return local bridge `"`_sq_owned_file'"'
+        if (`"`_sq_robject'"' != "") return local r_object `"`_sq_robject'"'
         exit
     }
 
@@ -632,7 +1321,10 @@ program define _parqit_use, rclass
     global PARQIT_FAST_SOURCE_CTIME
     global PARQIT_FAST_SOURCE_INODE
     global PARQIT_FAST_SOURCE_FOOTER
-    if ("`parqit_fast_source_ok'" == "1") {
+    * a bridged source (.dta, Excel, SPSS, R) is read through a package-owned
+    * Parquet file that is discarded right below: never offer it as the source
+    * a later copysource would copy
+    if ("`parqit_fast_source_ok'" == "1" & `"`_sq_bridge'"' == "") {
         if ("${PARQIT_FAST_SOURCE_SEQ}" == "") global PARQIT_FAST_SOURCE_SEQ = 0
         global PARQIT_FAST_SOURCE_SEQ = ${PARQIT_FAST_SOURCE_SEQ} + 1
         local _parqit_fast_nonce "`c(pid)'_${PARQIT_FAST_SOURCE_SEQ}"
@@ -655,10 +1347,13 @@ program define _parqit_use, rclass
     }
 
     di as txt "(" as res "`parqit_k'" as txt " vars, " as res "`parqit_n'" ///
-        as txt `" obs read from `_sq_file')"'
+        as txt `" obs read from `_sq_shown')"'
     _parqit_return_losses, ext(`"`_bl_ext'"') frac(`"`_bl_frac'"') tvars(`"`_bl_tvars'"') ///
-        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"')
+        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"') ///
+        revalid("`_bl_revalid'") rvars(`"`_bl_rvars'"') undec("`_bl_undec'") ///
+        deflt("`_bl_deflt'") tlines("`_bl_tlines'") rvlines("`_bl_rvlines'")
     return add
+    if (`"`_sq_robject'"' != "") return local r_object `"`_sq_robject'"'
     return scalar N = `parqit_n'
     return scalar k = `parqit_k'
 end
@@ -702,7 +1397,8 @@ program define _parqit_load_core
                 * fit and apply best-effort, matching the metadata-restore charter.
                 capture label data `"`dl'"'
                 if (_rc) {
-                    capture label data `"`=substr(`"`dl'"', 1, 80)'"'
+                    * characters, not bytes: a byte cut could split one (ENC-3)
+                    capture label data `"`=usubstr(`"`dl'"', 1, 80)'"'
                 }
             }
             if (`"`parqit_sortedby'"' != "") {
@@ -1233,8 +1929,21 @@ end
 program define _parqit_duplicates, rclass
     version 16.0
     gettoken sub 0 : 0, parse(" ,")
+    * CMD-ABBREV-1: native duplicates' rule — report and list from one letter,
+    * drop in full
+    local l = max(1, strlen(`"`sub'"'))
+    if (`"`sub'"' == substr("report", 1, `l')) local sub report
+    else if (`"`sub'"' == substr("list", 1, `l')) local sub list
     if (`"`sub'"' == "report" | `"`sub'"' == "list") {
-        syntax anything(name=vars) [, Limit(integer 20)]
+        * DUP-ALL-1: no varlist means every variable, as in native duplicates
+        * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+        mata: _parqit_stats_split()
+        if (`_sq_if_noexp') _parqit_if_noexp "parqit duplicates"
+        syntax [, Limit(integer 20)]
+        if (`limit' < 1) {
+            di as err "parqit duplicates: limit() must be a positive integer"
+            exit 198
+        }
         _parqit_ensure_plugin
         tempfile req resp
         local _sq_what = cond("`sub'" == "report", "dupreport", "duplist")
@@ -1248,10 +1957,20 @@ program define _parqit_duplicates, rclass
             return scalar unique_value = `parqit_dup_unique'
             return scalar surplus = `parqit_dup_surplus'
             return scalar N = `parqit_dup_total'
+            exit
         }
-        else {
-            mata: _parqit_print_duplist("`resp'")
+        * DUP-LIST-1: the rows are listed by native list in a scratch frame,
+        * so they look as native duplicates list shows them
+        local vartext = cond(`"`_sq_vars'"' == "", "all variables", `"{res}`_sq_vars'"')
+        di _n `"{p 0 4}{txt}Duplicates in terms of `vartext'{p_end}"'
+        tempname stage
+        frame create `stage'
+        frame `stage' {
+            capture noisily mata: _parqit_print_duplist("`resp'")
+            local rc = _rc
         }
+        frame drop `stage'
+        if (`rc') exit `rc'
         exit
     }
     if (`"`sub'"' != "drop") {
@@ -1270,17 +1989,64 @@ end
 
 program define _parqit_sample
     version 16.0
-    syntax anything(name=amount) [, Count seed(integer -1)]
+    * SAMPLE-DESIGN-1: # [if exp] [, count seed() by() cluster() any all
+    * generate()|keep()]. The if expression and the variables belong to the
+    * view, so they travel as text and are never evaluated in memory.
+    mata: _parqit_split_opts(st_local("0"))
+    mata: _parqit_split_if(st_local("parqit_head"))
+    local amount `"`parqit_expr'"'
+    local ifexp `"`parqit_ifexpr'"'
+    local 0
+    if (`"`parqit_opts'"' != "") local 0 `", `parqit_opts'"'
+    syntax [, Count seed(integer -1) BY(string) CLuster(string) ANY ALL ///
+        GENerate(name) KEEP(name)]
+    if (`"`amount'"' == "") {
+        di as err "parqit sample: # is required (a percentage, or a number with count)"
+        exit 198
+    }
+    gettoken first rest : amount
+    if (`"`rest'"' != "" | `"`parqit_head'"' != `"`parqit_expr'"' & `"`ifexp'"' == "") {
+        gettoken word : rest
+        if ("`word'" == "in") di as err "parqit sample: in is not supported on a lazy view; use parqit keep in first"
+        else if ("`word'" == "if" | `"`rest'"' == "") di as err "parqit sample: if requires an expression"
+        else di as err `"parqit sample: `amount' is not a number"'
+        exit 198
+    }
     confirm number `amount'
     if missing(`amount') {
         di as err "parqit sample: amount must be a finite number"
         exit 198
+    }
+    if ("`generate'" != "" & "`keep'" != "") {
+        di as err "parqit sample: specify generate() or keep(), not both"
+        exit 198
+    }
+    if ("`keep'" != "") local generate `keep'
+    * a reserved word such as _n or _N would name a column no expression reaches
+    if ("`generate'" != "") confirm name `generate'
+    if ("`any'" != "" & "`all'" != "") {
+        di as err "parqit sample: specify any or all, not both"
+        exit 198
+    }
+    if (`: word count `cluster'' > 1) {
+        di as err "parqit sample: cluster() takes one variable"
+        exit 198
+    }
+    local rule
+    if ("`any'`all'" != "") {
+        if (`"`cluster'"' == "") di as txt "note: option `any'`all' ignored (no cluster())"
+        else local rule `any'`all'
     }
     _parqit_ensure_plugin
     tempfile req
     local _sq_amount : display %24.17e (`amount')
     local _sq_count = cond("`count'" != "", "true", "false")
     local _sq_seed `seed'
+    local _sq_ifexpr `"`ifexp'"'
+    local _sq_by `"`by'"'
+    local _sq_cluster `"`cluster'"'
+    local _sq_rule "`rule'"
+    local _sq_generate "`generate'"
     mata: _parqit_wr_op_sample_request("`req'")
     capture noisily plugin call parqit_plugin, view_op `reqhex'
     if (_rc) exit _rc
@@ -1292,13 +2058,26 @@ end
 
 program define _parqit_collect, rclass
     version 16.0
-    syntax [, clear]
+    syntax [, clear INT64(string) BINARY(string)]
+    * INT64-PROTECT-1: int64() decides how a column beyond 2^53 reaches Stata
+    * memory, so it belongs on the materialiser as well as on use.
+    * BINARY-DECODE-1: binary() cannot act here — the lazy boundary decides a
+    * view's columns when it is OPENED, so a BLOB is already gone by now.
+    * Refuse it loudly, naming where it does work, instead of ignoring it.
+    if (`"`binary'"' != "") {
+        di as err "parqit collect: binary() is an option of parqit use " ///
+            "(the view's columns are decided when it is opened); reopen with " ///
+            "parqit use using ..., binary(text|hex)"
+        exit 198
+    }
+    _parqit_typeopts, who("parqit collect") int64(`"`int64'"')
     if ("`clear'" == "" & c(changed) & (c(N) > 0 | c(k) > 0)) {
         error 4
     }
     _parqit_ensure_plugin
     tempfile req resp strl
     local _sq_limit -1
+    local _sq_int64 "`int64'"
     local _sq_cmdlabel "collect"
     mata: _parqit_wr_collect_request("`req'", "`resp'", "`strl'")
     capture noisily plugin call parqit_plugin, view_collect_prepare `reqhex'
@@ -1497,7 +2276,10 @@ end
 
 program define _parqit_codebook, rclass
     version 16.0
-    syntax [anything(name=vars)]
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit codebook"
+    syntax
     _parqit_ensure_plugin
     tempfile req resp
     local _sq_what "codebook"
@@ -1510,12 +2292,18 @@ end
 
 program define _parqit_distinct, rclass
     version 16.0
-    syntax [anything(name=vars)] [, Joint]
+    * DISTINCT-OBS-1: as the community-contributed distinct (Cox & Longton,
+    * SSC): Obs counts the observations used; missing counts missing as a value
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit distinct"
+    syntax [, Joint Missing]
     _parqit_ensure_plugin
     tempfile req resp
     local _sq_what "distinct"
     local _sq_vars `"`vars'"'
     local _sq_joint = ("`joint'" != "")
+    local _sq_missing = ("`missing'" != "")
     mata: _parqit_wr_stats_request("`req'", "`resp'")
     capture noisily plugin call parqit_plugin, view_stats `reqhex'
     if (_rc) exit _rc
@@ -1526,13 +2314,21 @@ end
 
 program define _parqit_tabstat, rclass
     version 16.0
-    gettoken vars 0 : 0, parse(",")
-    local vars = strtrim(`"`vars'"')
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit tabstat"
     if ("`vars'" == "") {
         di as err "parqit tabstat: a numeric varlist is required"
         exit 198
     }
-    syntax [, Statistics(string) by(name) SAVE]
+    syntax [, Statistics(string) STATS(string) by(name) SAVE]
+    if (`"`stats'"' != "") {
+        if (`"`statistics'"' != "") {
+            di as err "options {bf:statistics()} and {bf:stats()} may not be specified together"
+            exit 198
+        }
+        local statistics `"`stats'"'
+    }
     if (`"`statistics'"' == "") local statistics "mean"
     _parqit_ensure_plugin
     tempfile req resp
@@ -1558,7 +2354,11 @@ end
 
 program define _parqit_correlate, rclass
     version 16.0
-    syntax anything(name=vars)
+    * CORR-ALL-1: no varlist means every numeric variable, as native correlate
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit correlate"
+    syntax
     _parqit_ensure_plugin
     tempfile req resp
     local _sq_what "corr"
@@ -1579,9 +2379,12 @@ end
 
 program define _parqit_pwcorr, rclass
     version 16.0
-    gettoken vars 0 : 0, parse(",")
-    local vars = strtrim(`"`vars'"')
-    syntax [, obs sig]
+    * CORR-ALL-1: the varlist may be empty (every numeric variable), so the
+    * options are split at the first top-level comma, not by gettoken
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit pwcorr"
+    syntax [, Obs sig]
     _parqit_ensure_plugin
     tempfile req resp
     local _sq_what "corr"
@@ -1608,7 +2411,15 @@ end
 
 program define _parqit_histogram, rclass
     version 16.0
-    syntax anything(name=var) [, Bins(integer 0) NODRAW]
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit histogram"
+    local var `"`vars'"'
+    if (`"`var'"' == "") {
+        di as err "parqit histogram: a variable is required"
+        exit 100
+    }
+    syntax [, Bins(integer 0) NODRAW]
     if (`bins' < 0) {
         di as err "parqit histogram: bins() must be nonnegative (0 selects automatic bins)"
         exit 198
@@ -1675,10 +2486,15 @@ end
 
 program define _parqit_describe, rclass
     version 16.0
-    syntax [anything(name=target)]
+    syntax [anything(name=target)] [, LABels NOTes]
     _parqit_ensure_plugin
 
     if (`"`target'"' == "") {
+        if ("`labels'`notes'" != "") {
+            di as err "parqit describe: labels and notes list the metadata of a Parquet file;" ///
+                " name the file"
+            exit 198
+        }
         * describe the open view
         tempfile resp
         mata: st_local("whathex", _parqit_hex("describe"))
@@ -1713,9 +2529,12 @@ program define _parqit_describe, rclass
     if ("`_d_isdir'" == "0" & strpos(`"`_d_base'"', ".") > 0) ///
         local _d_ext = lower(substr(`"`_d_base'"', strrpos(`"`_d_base'"', ".") + 1, .))
     if inlist("`_d_ext'", "csv", "tsv", "txt", "tab", "dta") | ///
-       inlist("`_d_ext'", "xls", "xlsx") {
+       inlist("`_d_ext'", "xls", "xlsx", "sav", "zsav", "rds", "rda", "rdata") {
         di as err "parqit describe: reads Parquet footers only (file, glob or Hive directory)"
         di as err `"open `_d_ext' input with {bf:parqit use using `file'} and describe the view instead"'
+        if inlist("`_d_ext'", "sav", "zsav", "rds", "rda", "rdata") {
+            di as err `"(or convert it once: {bf:parqit save} {it:newfile}{bf:.parquet using `file'}, and describe that)"'
+        }
         exit 198
     }
     tempfile req resp
@@ -1731,8 +2550,7 @@ program define _parqit_describe, rclass
         as txt "   row groups: " as res "`parqit_row_groups'" ///
         as txt "   files: " as res "`parqit_n_files'" ///
         as txt "   parqit metadata: " as res cond("`parqit_has_meta'" == "1", "yes", "no")
-    di as txt ""
-    mata: _parqit_resp_describe("`resp'")
+    mata: _parqit_resp_describe("`resp'", "`labels'" != "", "`notes'" != "")
 
     return scalar n_rows = `parqit_n'
     return scalar n_cols = `parqit_k'
@@ -1740,10 +2558,18 @@ program define _parqit_describe, rclass
     return scalar n_row_groups = `parqit_row_groups'
     return scalar n_files = `parqit_n_files'
     return scalar has_parqit_meta = ("`parqit_has_meta'" == "1")
+    * DESCRIBE-META-1: labels and notes travel as text, copied, never expanded
+    return scalar n_value_labels = `parqit_dnvl'
+    return scalar n_notes = `parqit_dnotes'
+    return local spss_labels `"`parqit_dspss'"'
+    return local r_labels `"`parqit_drlab'"'
+    return local label : copy local parqit_dlabel
     forvalues i = 1/`parqit_k' {
         return local name_`i' `"`parqit_dname_`i''"'
         return local type_`i' `"`parqit_dtype_`i''"'
         return local stata_type_`i' `"`parqit_dstype_`i''"'
+        return local varlab_`i' : copy local parqit_dvarlab_`i'
+        return local vallab_`i' : copy local parqit_dvallab_`i'
     }
 end
 
@@ -1758,7 +2584,9 @@ end
 program define _parqit_lossy_notes
     version 16.0
     syntax [, ext(string) frac(string) TRANSvars(string) ///
-        TRANScells(integer 0) TRANSmeta(integer 0) ENCoding(string) SOURCE(string)]
+        TRANScells(integer 0) TRANSmeta(integer 0) ENCoding(string) SOURCE(string) ///
+        XMvars(string) XMhint REValid(integer 0) REVALIDvars(string) ///
+        UNDecodable(integer 0) DEFaulted(integer 0)]
     * BRIDGE-LOSS-1: a source() names the bridged file so the reader knows the
     * conversions happened while snapshotting it, not to the dataset in memory
     if (`"`source'"' != "" & (`transcells' > 0 | `transmeta' > 0 | ///
@@ -1778,14 +2606,51 @@ program define _parqit_lossy_notes
             if (`"`what'"' != "") local what "`what'; "
             local what "`what'`ncells' string cell(s) in `transvars'"
         }
-        di as txt "note: text that was not valid UTF-8 (legacy 8-bit bytes) was " ///
+        di as txt "note: text that was not valid UTF-8 (legacy bytes) was " ///
             "transcoded from " as res "`encoding'" as txt " to UTF-8: " ///
             as res `"`what'"' as txt " — see {bf:encoding()} in {help parqit}"
+        * ENC-3: the rest of the story, each part only when it happened
+        if (`revalid' > 0) {
+            di as txt "note: " as res strtrim("`: di %20.0fc `revalid''") ///
+                as txt " of those cells were valid UTF-8 and were decoded from " ///
+                as res "`encoding'" as txt " as well (" as res `"`revalidvars'"' ///
+                as txt "): text in a legacy encoding can be valid UTF-8 by accident"
+        }
+        if (`undecodable' > 0) {
+            di as txt "note: " as res strtrim("`: di %20.0fc `undecodable''") ///
+                as txt " text(s) held bytes " as res "`encoding'" ///
+                as txt " does not define; they became U+FFFD (the replacement character) — check the encoding"
+        }
+        if (`defaulted') _parqit_locale_hint "`encoding'"
     }
     if (`"`ext'"' != "") {
         di as txt "note: extended missing values (.a-.z) in " ///
             as res `"`ext'"' ///
             as txt " were written as nulls (Parquet has a single missing concept)"
+        * MISSKEY-NOTE-1: the collapse is cosmetic in a payload column, but
+        * not in a KEY. A reader of this file (maybe another session) merging
+        * on one of these columns pairs rows native Stata keeps apart, because
+        * .a and . are then the same missing. Kept as a separate di so the
+        * phrase "extended missing values" stays on its own line (v29, v77).
+        di as txt "note: in a " as res "merge" as txt "/" as res "joinby" ///
+            as txt " key these categories are no longer distinguishable from " ///
+            as res "." as txt ", so rows that native Stata did not match now " ///
+            "match; the join reports it — see " ///
+            "{help parqit##limitations:Limitations in the parqit help}"
+        * XMISS-1: the loss is now optional — say how to avoid it (only where
+        * the option exists: a save of the dataset in memory)
+        if ("`xmhint'" != "") {
+            di as txt "note: add the " as res "xmissing" as txt " option to " ///
+                as res "parqit save" as txt " to preserve them in companion " ///
+                "columns that parqit use restores"
+        }
+    }
+    if (`"`xmvars'"' != "") {
+        * XMISS-1: preserved, not lost — the reader restores them
+        di as txt "note: extended missing values (.a-.z) in " ///
+            as res `"`xmvars'"' ///
+            as txt " were preserved in companion columns (xmissing); " ///
+            "parqit use restores them, a lazy view reads them as ."
     }
     if (`"`frac'"' != "") {
         di as txt "note: non-integer date/period values in " ///
@@ -1795,11 +2660,96 @@ end
 
 program define _parqit_save, rclass
     version 16.0
-    syntax anything(name=target id="filename") [, replace Data ///
+    syntax anything(name=target id="filename") [using/] [, replace Data ///
         COMPression(string) compression_level(integer -1) PARTition_by(string) ///
-        Chunk(integer -1) ENCoding(string) COPYsource partitions(string)]
+        Chunk(integer -1) ENCoding(string) COPYsource partitions(string) XMISSing ///
+        OBJect(string)]
 
     local dest `target'
+    * ENC-3: encoding(name, all) — every non-ASCII text is in that encoding,
+    * also text that happens to be valid UTF-8 (legacy text can be)
+    _parqit_enc_parse "parqit save" `"`encoding'"'
+    local encoding `"`_enc_name'"'
+    local _sq_encall `_enc_all'
+    if ("`copysource'" != "" & `_sq_encall') {
+        di as err "parqit save: copysource cannot decode the unchanged payload;" ///
+            " omit copysource to use encoding(name, all)"
+        exit 198
+    }
+    if (`"`object'"' != "" & `"`using'"' == "") {
+        di as err "parqit save: object() names the data frame of an R data file" ///
+            " converted with {bf:parqit save} {it:newfile}{bf:.parquet using} {it:file}{bf:.RData}"
+        exit 198
+    }
+    * SPSS-READ-1 / R-READ-1: parqit save <file> using <x.sav|x.rds|x.RData>
+    * converts an SPSS system file or an R data file straight to Parquet — the
+    * complete file, extended missing codes included — without touching the
+    * dataset in memory or the open views; so it is settled before either is
+    * consulted
+    if (`"`using'"' != "") {
+        local _base = substr(`"`using'"', strrpos(`"`using'"', "/") + 1, .)
+        local _ext ""
+        if (strpos(`"`_base'"', ".")) ///
+            local _ext = lower(substr(`"`_base'"', strrpos(`"`_base'"', ".") + 1, .))
+        if (!inlist("`_ext'", "sav", "zsav", "rds", "rda", "rdata")) {
+            di as err "parqit save ... using: converts SPSS system files (.sav, .zsav) and" ///
+                " R data files (.rds, .rda, .RData); read other files with" ///
+                " {bf:parqit use} and save the view"
+            exit 198
+        }
+        if (`"`object'"' != "" & inlist("`_ext'", "sav", "zsav")) {
+            di as err "parqit save ... using: object() names the data frame of an R data file;" ///
+                " an SPSS file holds one dataset"
+            exit 198
+        }
+        foreach o in data copysource xmissing {
+            if ("``o''" != "") {
+                di as err "parqit save ... using: option `o' is not allowed; it describes" ///
+                    " a save of the dataset in memory"
+                exit 198
+            }
+        }
+        if (`"`partition_by'"' != "" | "`partitions'" != "" | `chunk' != -1) {
+            di as err "parqit save ... using: partition_by(), partitions() and chunk() are" ///
+                " not available; convert the file, then open it with {bf:parqit use} and" ///
+                " save the view partitioned"
+            exit 198
+        }
+        if (inlist("`_ext'", "rds", "rda", "rdata")) {
+            _parqit_r_convert, src(`"`using'"') dest(`"`dest'"') who("parqit save") ///
+                `replace' encoding(`"`encoding'"') compression(`"`compression'"') ///
+                compression_level(`compression_level') object(`"`object'"')
+            local _n = r(N)
+            local _k = r(k)
+            local _fn `"`r(filename)'"'
+            return add
+            di as txt "(" as res "`_n'" as txt " rows and " as res "`_k'" ///
+                as txt `" columns of the R data frame written to `_fn')"'
+            exit
+        }
+        _parqit_spss_convert, src(`"`using'"') dest(`"`dest'"') who("parqit save") ///
+            `replace' encoding(`"`encoding'"') compression(`"`compression'"') ///
+            compression_level(`compression_level')
+        local _n = r(N)
+        local _k = r(k)
+        local _fn `"`r(filename)'"'
+        return add
+        di as txt "(" as res "`_n'" as txt " cases and " as res "`_k'" ///
+            as txt `" SPSS variables written to `_fn')"'
+        exit
+    }
+    * XMISS-1: xmissing preserves .a-.z in companion columns; it belongs to a
+    * save of the dataset in memory (a view carries no extended missings and
+    * copysource copies the file as it is) and to a whole-tree write
+    if ("`xmissing'" != "" & "`copysource'" != "") {
+        di as err "parqit save: xmissing is not available with copysource (the source file is copied as it is)"
+        exit 198
+    }
+    if ("`xmissing'" != "" & "`partitions'" != "") {
+        di as err "parqit save: xmissing is not available with partitions(`partitions');" ///
+            " every file of a Hive tree must carry the same parqit metadata — write the whole tree (replace)"
+        exit 198
+    }
     * PART-MODE-1: partitions(replace|append) updates an existing Hive tree
     * partition by partition; it needs partition_by() and excludes replace
     local partitions = strlower(strtrim("`partitions'"))
@@ -1829,6 +2779,11 @@ program define _parqit_save, rclass
         exit 198
     }
     if ("`parqit_view_alive'" == "1" & "`data'" == "") {
+        if ("`xmissing'" != "") {
+            di as err "parqit save: xmissing applies to a save of the dataset in memory" ///
+                " (a lazy view carries no extended missings); add the data option (or close the view)"
+            exit 198
+        }
         mata: st_local("vname", _parqit_unhex(st_local("parqit_view_current")))
         di as txt "(materialising view " as res "`vname'" ///
             as txt " — the dataset in memory is untouched; use the " ///
@@ -1880,6 +2835,7 @@ program define _parqit_save, rclass
     local _sq_dtalabel `: data label'
     local _sq_sortedby `: sortedby'
     local _sq_direct = 0
+    local _sq_xmissing = ("`xmissing'" != "")
     * COPYSOURCE-1 (audit 2026-08-22, A4-1/A4-2): the source-copy path never
     * runs automatically any more — c(changed) cannot prove the dataset equals
     * the file (Stata exempts sort/gsort and Mata st_store/st_view writes). It
@@ -1927,7 +2883,8 @@ program define _parqit_save, rclass
         mata: st_local("destabs", _parqit_unhex(st_local("parqit_dest")))
         _parqit_lossy_notes, ext(`"`parqit_ext_missing'"') frac(`"`parqit_frac_dates'"') ///
             transvars(`"`parqit_transcoded_vars'"') transcells(`parqit_transcoded_cells') ///
-            transmeta(`parqit_transcoded_meta') encoding(`"`parqit_encoding'"')
+            transmeta(`parqit_transcoded_meta') encoding(`"`parqit_encoding'"') ///
+            undecodable(`parqit_undecodable') defaulted(`parqit_encoding_default')
         di as txt "(" as res "`parqit_written_n'" as txt " obs, " ///
             as res "`parqit_written_k'" as txt `" vars written to `destabs' — copied from the unchanged source file)"'
         return local filename `"`destabs'"'
@@ -1949,9 +2906,13 @@ program define _parqit_save, rclass
     mata: st_local("destabs", _parqit_unhex(st_local("parqit_dest")))
     _parqit_lossy_notes, ext(`"`parqit_ext_missing'"') frac(`"`parqit_frac_dates'"') ///
         transvars(`"`parqit_transcoded_vars'"') transcells(`parqit_transcoded_cells') ///
-        transmeta(`parqit_transcoded_meta') encoding(`"`parqit_encoding'"')
+        transmeta(`parqit_transcoded_meta') encoding(`"`parqit_encoding'"') ///
+        revalid(`parqit_transcoded_revalid') revalidvars(`"`parqit_transcoded_revalid_vars'"') ///
+        undecodable(`parqit_undecodable') defaulted(`parqit_encoding_default') ///
+        xmvars(`"`parqit_xm_vars'"') xmhint
     di as txt "(" as res "`parqit_written_n'" as txt " obs, " ///
         as res "`parqit_written_k'" as txt `" vars written to `destabs')"'
+    return local xmissing_vars `"`parqit_xm_vars'"'
     return local filename `"`destabs'"'
     return scalar N = `parqit_written_n'
     return scalar k = `parqit_written_k'
@@ -1959,6 +2920,11 @@ program define _parqit_save, rclass
     return scalar transcoded_cells = `parqit_transcoded_cells'
     return scalar transcoded_meta = `parqit_transcoded_meta'
     return local encoding `"`parqit_encoding'"'
+    * ENC-3
+    return scalar transcoded_revalid = `parqit_transcoded_revalid'
+    return local transcoded_revalid_vars `"`parqit_transcoded_revalid_vars'"'
+    return scalar undecodable = `parqit_undecodable'
+    return scalar encoding_default = `parqit_encoding_default'
     return local ext_missing `"`parqit_ext_missing'"'
     return local frac_dates `"`parqit_frac_dates'"'
 end
@@ -1974,6 +2940,7 @@ program define _parqit_open, rclass
         di as err "parqit open: only {bf:parqit open _data} is supported"
         exit 198
     }
+    _parqit_check_viewname "parqit open" "`name'"
     if (c(k) == 0) {
         di as err "no variables defined"
         exit 111
@@ -1985,6 +2952,7 @@ program define _parqit_open, rclass
     * distinguish concurrent sessions sharing TMPDIR (BRIDGE-XPROC-1).
     _parqit_bridge_new opendata
     local bridge `"`r(bridge)'"'
+    _parqit_tmpdir_note
     capture noisily {
         quietly _parqit_save `"`bridge'"', replace data encoding(`"`encoding'"')
     }
@@ -2004,6 +2972,10 @@ program define _parqit_open, rclass
     local _parqit_open_tcells = cond(r(transcoded_cells) < ., r(transcoded_cells), 0)
     local _parqit_open_tmeta = cond(r(transcoded_meta) < ., r(transcoded_meta), 0)
     local _parqit_open_enc `"`r(encoding)'"'
+    local _parqit_open_revalid = cond(r(transcoded_revalid) < ., r(transcoded_revalid), 0)
+    local _parqit_open_rvars `"`r(transcoded_revalid_vars)'"'
+    local _parqit_open_undec = cond(r(undecodable) < ., r(undecodable), 0)
+    local _parqit_open_deflt = cond(r(encoding_default) < ., r(encoding_default), 0)
     capture noisily {
         if ("`name'" == "") qui _parqit_use using `"`bridge'"', owned
         else                qui _parqit_use using `"`bridge'"', name(`name') owned
@@ -2017,10 +2989,14 @@ program define _parqit_open, rclass
         as txt "manipulate with parqit verbs, then parqit collect or parqit save)"
     _parqit_lossy_notes, ext(`"`_parqit_open_ext'"') frac(`"`_parqit_open_frac'"') ///
         transvars(`"`_parqit_open_tvars'"') transcells(`_parqit_open_tcells') ///
-        transmeta(`_parqit_open_tmeta') encoding(`"`_parqit_open_enc'"')
+        transmeta(`_parqit_open_tmeta') encoding(`"`_parqit_open_enc'"') ///
+        revalid(`_parqit_open_revalid') revalidvars(`"`_parqit_open_rvars'"') ///
+        undecodable(`_parqit_open_undec') defaulted(`_parqit_open_deflt')
     _parqit_return_losses, ext(`"`_parqit_open_ext'"') frac(`"`_parqit_open_frac'"') ///
         tvars(`"`_parqit_open_tvars'"') tcells("`_parqit_open_tcells'") ///
-        tmeta("`_parqit_open_tmeta'") enc(`"`_parqit_open_enc'"')
+        tmeta("`_parqit_open_tmeta'") enc(`"`_parqit_open_enc'"') ///
+        revalid("`_parqit_open_revalid'") rvars(`"`_parqit_open_rvars'"') ///
+        undec("`_parqit_open_undec'") deflt("`_parqit_open_deflt'")
     return add
     if (`nobs' >= 1000000) {
         local nstr : di %15.0fc `nobs'
@@ -2083,13 +3059,19 @@ program define _parqit_view, rclass
     if (_rc) exit _rc
     capture noisily parqit `0'
     local rc = _rc
-    if ("`prev'" != "" & "`prev'" != "`name'") {
+    * PREFIX-RESTORE-1: restore the previous view whenever the command left
+    * another one current (use or a view copy with name() switches too), unless
+    * the command closed the prefixed view that was itself the previous one
+    plugin call parqit_plugin, view_alive
+    mata: st_local("now", _parqit_unhex(st_local("parqit_view_current")))
+    if ("`prev'" != "" & "`now'" != "`prev'" & !("`now'" == "" & "`prev'" == "`name'")) {
+        local left = cond("`now'" != "", "`now'", "`name'")
         mata: st_local("phex", _parqit_hex(st_local("prev")))
         capture plugin call parqit_plugin, view_switch `phex'
         if (_rc) {
             local swrc = _rc
             di as err "parqit view: could not switch back to view `prev'; "  ///
-                "the current view is now `name' — use {bf:parqit view `prev'} to return"
+                "the current view is now `left' — use {bf:parqit view `prev'} to return"
             exit `swrc'
         }
     }
@@ -2128,12 +3110,35 @@ program define _parqit_set
      * the engine all receive the real path. */
     local value `0'
     local value = strtrim(`"`value'"')
-    if !inlist("`what'", "statamissing", "threads", "memory_limit", "tempdir") {
-        di as err "parqit set: expected statamissing|threads|memory_limit|tempdir <value>"
+    if !inlist("`what'", "statamissing", "int64", "encoding", "fill_threads", "stream_buffer_mb", "threads", "memory_limit", "tempdir") {
+        di as err "parqit set: expected statamissing|int64|encoding|fill_threads|stream_buffer_mb|threads|memory_limit|tempdir <value>"
+        exit 198
+    }
+    * ENC-3: the session's code page for text that declares none (the plugin
+    * validates the name against every encoding it decodes)
+    if ("`what'" == "encoding" & `"`value'"' == "") {
+        di as err "parqit set encoding: name the code page of undeclared legacy text (windows-1252 is the default)"
+        exit 198
+    }
+    * FILL-THREADS-SET-1 / CPUS-1: the in-session fill-worker count (auto, or a
+    * number up to the CPUs available to this process; larger is clamped and
+    * said); the plugin parses the number strictly and keeps it for the session
+    if ("`what'" == "fill_threads" & `"`value'"' == "") {
+        di as err "parqit set fill_threads: auto, or a whole number of fill workers (up to the CPUs available)"
+        exit 198
+    }
+    * STREAM-BUFFER-SET-1: the in-session streaming-buffer cap in megabytes
+    if ("`what'" == "stream_buffer_mb" & `"`value'"' == "") {
+        di as err "parqit set stream_buffer_mb: auto, 0 (the engine's default buffer) or a whole number of megabytes"
         exit 198
     }
     if ("`what'" == "statamissing" & !inlist("`value'", "on", "off")) {
         di as err "parqit set statamissing: on or off"
+        exit 198
+    }
+    * INT64-PROTECT-1: the session default for columns beyond 2^53
+    if ("`what'" == "int64" & !inlist(`"`value'"', "refuse", "round", "string")) {
+        di as err "parqit set int64: refuse, round or string"
         exit 198
     }
     * SET-TEMPDIR-1: DuckDB accepts a non-existent spill dir silently and only
@@ -2151,6 +3156,13 @@ program define _parqit_set
     mata: st_local("valhex", _parqit_hex(st_local("value")))
     capture noisily plugin call parqit_plugin, set `whathex' `valhex'
     if (_rc) exit _rc
+    * CPUS-1: a thread count above the CPUs available to this process is
+    * clamped, never refused — and always said
+    if (`"`parqit_set_note'"' != "") di as txt "note: parqit set `parqit_set_note'"
+    if ("`what'" == "encoding") {
+        di as txt "(legacy text that declares no encoding is decoded from " ///
+            as res "`parqit_set_value'" as txt " for the rest of this session)"
+    }
 end
 
 * ----------------------------------------------------------------------------
@@ -2181,7 +3193,8 @@ program define _parqit_merge, rclass
         di as err "parqit merge: key varlist required"
         exit 198
     }
-    syntax using/ [, keep(string) KEEPUSing(string) GENerate(name) NOGENerate ENCoding(string)]
+    syntax using/ [, keep(string) KEEPUSing(string) GENerate(name) NOGENerate ///
+        noNOTEs ENCoding(string)]
     if ("`generate'" != "" & "`nogenerate'" != "") {
         di as err "parqit merge: generate() and nogenerate are mutually exclusive"
         exit 198
@@ -2215,9 +3228,7 @@ program define _parqit_merge, rclass
     if (`rc') exit `rc'
     local using `"`r(path)'"'
     local bridge `"`r(bridge)'"'
-    _parqit_bridge_losses, ext(`"`r(ext_missing)'"') frac(`"`r(frac_dates)'"') ///
-        tvars(`"`r(transcoded_vars)'"') tcells("`r(transcoded_cells)'") ///
-        tmeta("`r(transcoded_meta)'") enc(`"`r(encoding)'"')
+    _parqit_bridge_losses
     tempfile req
     local _sq_op "merge"
     local _sq_kind "`kind'"
@@ -2226,6 +3237,7 @@ program define _parqit_merge, rclass
     local _sq_keepusing `"`keepusing'"'
     local _sq_gen "`generate'"
     local _sq_nogen = ("`nogenerate'" != "")
+    local _sq_nonotes = ("`notes'" == "nonotes")
     local _sq_mask `mask'
     local _sq_owned_n = (`"`bridge'"' != "")
     if (`_sq_owned_n') local _sq_owned_1 `"`bridge'"'
@@ -2237,17 +3249,19 @@ program define _parqit_merge, rclass
         exit `rc'
     }
     _parqit_return_losses, ext(`"`_bl_ext'"') frac(`"`_bl_frac'"') tvars(`"`_bl_tvars'"') ///
-        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"')
+        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"') ///
+        revalid("`_bl_revalid'") rvars(`"`_bl_rvars'"') undec("`_bl_undec'") ///
+        deflt("`_bl_deflt'") tlines("`_bl_tlines'") rvlines("`_bl_rvlines'")
     return add
     if (`"`bridge'"' != "") return local bridge `"`bridge'"'
 end
 
 program define _parqit_append, rclass
     version 16.0
-    * parqit append using <file> [<file> ...] [, generate(name)]
+    * parqit append using <file> [<file> ...] [, generate(name) keep(varlist) nonotes]
     gettoken usingtok 0 : 0, parse(" ")
     if (`"`usingtok'"' != "using") {
-        di as err "parqit append: syntax is parqit append using <files> [, generate()]"
+        di as err "parqit append: syntax is parqit append using <files> [, generate() keep() nonotes]"
         exit 198
     }
     local nf 0
@@ -2266,7 +3280,9 @@ program define _parqit_append, rclass
         di as err "parqit append: at least one using file required"
         exit 198
     }
-    syntax [, GENerate(name) ENCoding(string)]
+    * APPEND-KEEP-1: keep() names variables of the USING sources (native append
+    * semantics, wildcards allowed); the plugin checks it against every source
+    syntax [, GENerate(name) KEEP(string) noNOTEs ENCoding(string)]
     _parqit_ensure_plugin
     * import any dta/xls/xlsx/csv source to a Parquet bridge; encoding() names
     * the legacy code page of every bridged file (BRIDGE-LOSS-1); the losses of
@@ -2278,6 +3294,12 @@ program define _parqit_append, rclass
     local _bl_tcells 0
     local _bl_tmeta 0
     local _bl_enc ""
+    local _bl_revalid 0
+    local _bl_rvars ""
+    local _bl_undec 0
+    local _bl_deflt 0
+    local _bl_tlines 0
+    local _bl_rvlines 0
     forvalues i = 1/`nf' {
         global PARQIT_RS_IN `"`_sq_file_`i''"'
         global PARQIT_RS_ENC `"`encoding'"'
@@ -2306,12 +3328,22 @@ program define _parqit_append, rclass
             if (r(transcoded_cells) < .) local _bl_tcells = `_bl_tcells' + r(transcoded_cells)
             if (r(transcoded_meta) < .) local _bl_tmeta = `_bl_tmeta' + r(transcoded_meta)
             if (`"`r(encoding)'"' != "") local _bl_enc `"`r(encoding)'"'
+            * ENC-3 / CSV-ENC-1
+            local _one_rvars `"`r(transcoded_revalid_vars)'"'
+            local _bl_rvars : list _bl_rvars | _one_rvars
+            if (r(transcoded_revalid) < .) local _bl_revalid = `_bl_revalid' + r(transcoded_revalid)
+            if (r(undecodable) < .) local _bl_undec = `_bl_undec' + r(undecodable)
+            if (r(transcoded_lines) < .) local _bl_tlines = `_bl_tlines' + r(transcoded_lines)
+            if (r(transcoded_revalid_lines) < .) local _bl_rvlines = `_bl_rvlines' + r(transcoded_revalid_lines)
+            if (r(encoding_default) == 1) local _bl_deflt 1
         }
     }
     tempfile req
     local _sq_op "append"
     local _sq_nfiles `nf'
     local _sq_gen "`generate'"
+    local _sq_keep `"`keep'"'
+    local _sq_nonotes = ("`notes'" == "nonotes")
     mata: _parqit_wr_append_request("`req'")
     capture noisily plugin call parqit_plugin, view_twotable `reqhex'
     local rc = _rc
@@ -2324,7 +3356,9 @@ program define _parqit_append, rclass
         exit `rc'
     }
     _parqit_return_losses, ext(`"`_bl_ext'"') frac(`"`_bl_frac'"') tvars(`"`_bl_tvars'"') ///
-        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"')
+        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"') ///
+        revalid("`_bl_revalid'") rvars(`"`_bl_rvars'"') undec("`_bl_undec'") ///
+        deflt("`_bl_deflt'") tlines("`_bl_tlines'") rvlines("`_bl_rvlines'")
     return add
     return scalar n_bridges = `_sq_owned_n'
     if (`_sq_owned_n' > 0) {
@@ -2358,9 +3392,7 @@ program define _parqit_joinby, rclass
     if (`rc') exit `rc'
     local using `"`r(path)'"'
     local bridge `"`r(bridge)'"'
-    _parqit_bridge_losses, ext(`"`r(ext_missing)'"') frac(`"`r(frac_dates)'"') ///
-        tvars(`"`r(transcoded_vars)'"') tcells("`r(transcoded_cells)'") ///
-        tmeta("`r(transcoded_meta)'") enc(`"`r(encoding)'"')
+    _parqit_bridge_losses
     tempfile req
     local _sq_op "joinby"
     local _sq_keys "`keys'"
@@ -2375,7 +3407,9 @@ program define _parqit_joinby, rclass
         exit `rc'
     }
     _parqit_return_losses, ext(`"`_bl_ext'"') frac(`"`_bl_frac'"') tvars(`"`_bl_tvars'"') ///
-        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"')
+        tcells("`_bl_tcells'") tmeta("`_bl_tmeta'") enc(`"`_bl_enc'"') ///
+        revalid("`_bl_revalid'") rvars(`"`_bl_rvars'"') undec("`_bl_undec'") ///
+        deflt("`_bl_deflt'") tlines("`_bl_tlines'") rvlines("`_bl_rvlines'")
     return add
     if (`"`bridge'"' != "") return local bridge `"`bridge'"'
 end
@@ -2413,16 +3447,27 @@ program define _parqit_mergein, rclass
         exit 198
     }
     syntax using/ [, KEEPUSing(string) keep(string) GENerate(name)       ///
-        NOGENerate ASSERT(string) UPDATE replace NOLabel NONotes FORCE       ///
-        NOREPort]
+        NOGENerate ASSERT(string) UPDATE replace noLabels NONotes FORCE      ///
+        NOREPort INT64(string) ENCoding(string)]
+    _parqit_no_view_using mergein `"`using'"' merge
+    * INT64-PROTECT-1: the disk side is read by parqit use, so the protective
+    * default (and the remedy) apply here too — forward the option
+    _parqit_typeopts, who("parqit mergein") int64(`"`int64'"')
+    local i64
+    if ("`int64'" != "") local i64 int64(`int64')
+    * ENC-3: the code page of the disk side's legacy text, as for parqit use;
+    * the read is shown, so how its text was decoded stays visible
+    local encopt
+    if (`"`encoding'"' != "") local encopt `"encoding(`encoding')"'
 
     * read only keys + keepusing of the disk side (projection pushdown)
     tempname fr
     tempfile tmp
     frame create `fr'
     frame `fr' {
-        if ("`keepusing'" != "") qui parqit use `keys' `keepusing' using `"`using'"', clear
-        else                     qui parqit use using `"`using'"', clear
+        global PARQIT_USE_LOOKUP 1
+        if ("`keepusing'" != "") parqit use `keys' `keepusing' using `"`using'"', clear `i64' `encopt'
+        else                     parqit use using `"`using'"', clear `i64' `encopt'
         local disk_n = _N
         qui save `"`tmp'"', replace
     }
@@ -2442,7 +3487,7 @@ program define _parqit_mergein, rclass
     if (`"`assert'"'  != "") local opts `opts' assert(`assert')
     if ("`update'"    != "") local opts `opts' update
     if ("`replace'"   != "") local opts `opts' replace
-    if ("`nolabel'"   != "") local opts `opts' nolabel
+    if ("`labels'"    != "") local opts `opts' nolabel
     if ("`nonotes'"   != "") local opts `opts' nonotes
     if ("`force'"     != "") local opts `opts' force
     if ("`noreport'"  != "") local opts `opts' noreport
@@ -2453,16 +3498,28 @@ program define _parqit_appendin
     version 16.0
     * keep() names variables of the USING file (native append semantics), so it
     * must not be validated against the in-memory master — pass it through as a
-    * string and let native append judge it
-    syntax using/ [, KEEP(string) FORCE]
+    * string and let native append judge it; generate() marks the source of
+    * each observation (0 = master, 1 = the file), as native append does;
+    * nolabel and nonotes are native append's, as in mergein
+    syntax using/ [, KEEP(string) GENerate(name) noLabels NONotes FORCE ///
+        INT64(string) ENCoding(string)]
+    _parqit_no_view_using appendin `"`using'"' append
+    * INT64-PROTECT-1: the disk side is read by parqit use — forward the option
+    _parqit_typeopts, who("parqit appendin") int64(`"`int64'"')
+    local i64
+    if ("`int64'" != "") local i64 int64(`int64')
+    * ENC-3: as in parqit mergein
+    local encopt
+    if (`"`encoding'"' != "") local encopt `"encoding(`encoding')"'
 
     * read only the keep() columns of the disk side (projection pushdown)
     tempname fr
     tempfile tmp
     frame create `fr'
     frame `fr' {
-        if ("`keep'" != "") qui parqit use `keep' using `"`using'"', clear
-        else                qui parqit use using `"`using'"', clear
+        global PARQIT_USE_LOOKUP 1
+        if ("`keep'" != "") parqit use `keep' using `"`using'"', clear `i64' `encopt'
+        else                parqit use using `"`using'"', clear `i64' `encopt'
         local disk_n = _N
         qui save `"`tmp'"', replace
     }
@@ -2473,6 +3530,9 @@ program define _parqit_appendin
     }
     local opts
     if ("`keep'"  != "") local opts `opts' keep(`keep')
+    if ("`generate'" != "") local opts `opts' generate(`generate')
+    if ("`labels'" != "") local opts `opts' nolabel
+    if ("`nonotes'" != "") local opts `opts' nonotes
     if ("`force'" != "") local opts `opts' force
     append using `"`tmp'"', `opts'
 end
@@ -2534,6 +3594,7 @@ program define _parqit_sql, rclass
         exit 198
     }
     syntax [, clear Name(name)]
+    _parqit_check_viewname "parqit sql" "`name'"
     if ("`name'" != "" & "`clear'" != "") {
         di as err "parqit sql: name() applies to lazy views; omit clear"
         exit 198
@@ -2608,7 +3669,10 @@ end
 
 program define _parqit_summarize, rclass
     version 16.0
-    syntax [anything(name=vars)] [, Detail]
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit summarize"
+    syntax [, Detail]
     _parqit_ensure_plugin
     tempfile req resp
     local _sq_what = cond("`detail'" != "", "detail", "summarize")
@@ -2646,7 +3710,11 @@ end
 
 program define _parqit_tabulate, rclass
     version 16.0
-    syntax anything(name=vars) [, Missing ROW COL NOLabel]
+    * TAB-IF-1 / STATS-IF-1: the if condition belongs to the view, so it
+    * travels as text and is never evaluated against the dataset in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit tabulate"
+    syntax [, Missing Row COlumn NOLabel]
     local nv : word count `vars'
     if (`nv' < 1 | `nv' > 2) {
         di as err "parqit tabulate: one variable (oneway) or two (twoway)"
@@ -2670,7 +3738,7 @@ program define _parqit_tabulate, rclass
         exit
     }
     local parqit_tab2_row = ("`row'" != "")
-    local parqit_tab2_col = ("`col'" != "")
+    local parqit_tab2_col = ("`column'" != "")
     mata: _parqit_print_tab2("`resp'")
     return scalar N = `parqit_tab_n'
     return scalar r = `parqit_tab_r'
@@ -2681,14 +3749,20 @@ program define _parqit_misstable, rclass
     version 16.0
     gettoken maybe : 0, parse(" ,")
     local what "misstable"
-    if (`"`maybe'"' == "patterns") {
+    * CMD-ABBREV-1: native misstable's rule — patterns and summarize from three
+    * letters (pat, sum); a variable named like one is read as the subcommand
+    local l = max(3, strlen(`"`maybe'"'))
+    if (`"`maybe'"' == substr("patterns", 1, `l')) {
         gettoken maybe 0 : 0, parse(" ,")
         local what "misspatterns"
     }
-    else if (`"`maybe'"' == "summarize") {
+    else if (`"`maybe'"' == substr("summarize", 1, `l')) {
         gettoken maybe 0 : 0, parse(" ,")
     }
-    syntax [anything(name=vars)]
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit misstable"
+    syntax
     _parqit_ensure_plugin
     tempfile req resp
     local _sq_what "`what'"
@@ -2709,7 +3783,15 @@ end
 
 program define _parqit_levelsof, rclass
     version 16.0
-    syntax anything(name=var) [, Limit(integer 5000)]
+    * STATS-IF-1: [if exp] travels as text, never evaluated in memory
+    mata: _parqit_stats_split()
+    if (`_sq_if_noexp') _parqit_if_noexp "parqit levelsof"
+    local var `"`vars'"'
+    if (`"`var'"' == "") {
+        di as err "parqit levelsof: a variable is required"
+        exit 100
+    }
+    syntax [, Limit(integer 5000)]
     _parqit_ensure_plugin
     tempfile req resp
     local _sq_what "levelsof"
@@ -2856,6 +3938,41 @@ void _parqit_emit(string scalar req, string scalar payload)
 
 // ---- request writers --------------------------------------------------
 
+// CSV-OPT-1: the csv(...) sub-options as a JSON object of hex-encoded values.
+// types() travels as an ARRAY of hex `name:TYPE` tokens, tokenised here, so a
+// column name is never whitespace-split on the plugin side. "" when unused.
+string scalar _parqit_csv_opts_json()
+{
+    string rowvector keys, p
+    real scalar      i
+
+    keys = tokens(st_local("_sq_csv_keys"))
+    if (cols(keys) == 0) return("")
+    p = J(1, 0, "")
+    for (i = 1; i <= cols(keys); i++) {
+        if (keys[i] == "types")
+            p = (p, _parqit_jpair("types",
+                     _parqit_jlist(tokens(st_local("_sq_csv_v_types")))))
+        else
+            p = (p, _parqit_jtext(keys[i],
+                     st_local("_sq_csv_v_" + keys[i])))
+    }
+    return(_parqit_jobj(p))
+}
+
+// FILENAME-1 / CSV-OPT-1: the source-side read options both `parqit use`
+// forms carry (the eager use_prepare and the lazy view_open).
+string rowvector _parqit_source_opts(string rowvector p)
+{
+    string scalar cj
+
+    if (st_local("_sq_filename") != "")
+        p = (p, _parqit_jtext("filename", st_local("_sq_filename")))
+    cj = _parqit_csv_opts_json()
+    if (cj != "") p = (p, _parqit_jpair("csvopts", cj))
+    return(p)
+}
+
 void _parqit_wr_use_request(string scalar req, string scalar resp,
                              string scalar strl)
 {
@@ -2874,6 +3991,15 @@ void _parqit_wr_use_request(string scalar req, string scalar resp,
     if (st_local("_sq_fmt") == "csv") {
         p = (p, _parqit_jpair("csv", "true"))
     }
+    /* INT64-PROTECT-1 / BINARY-DECODE-1: hex-encoded like every other
+     * user-originated string; absent means "the session default" */
+    if (st_local("_sq_int64") != "") {
+        p = (p, _parqit_jtext("int64", st_local("_sq_int64")))
+    }
+    if (st_local("_sq_binary") != "") {
+        p = (p, _parqit_jtext("binary", st_local("_sq_binary")))
+    }
+    p = _parqit_source_opts(p)
     p = (p, _parqit_jtext("respfile", resp),
             _parqit_jtext("strlfile", strl),
             _parqit_jtext("tmpdir", st_global("c(tmpdir)")))
@@ -2902,7 +4028,32 @@ void _parqit_wr_view_open_request(string scalar req)
     if (st_local("_sq_fmt") == "csv") {
         p = (p, _parqit_jpair("csv", "true"))
     }
+    /* INT64-PROTECT-1: carried by the view and applied at collect.
+     * BINARY-DECODE-1: acts at the boundary, i.e. right here. */
+    if (st_local("_sq_int64") != "") {
+        p = (p, _parqit_jtext("int64", st_local("_sq_int64")))
+    }
+    if (st_local("_sq_binary") != "") {
+        p = (p, _parqit_jtext("binary", st_local("_sq_binary")))
+    }
+    p = _parqit_source_opts(p)
     p = (p, _parqit_jtext("tmpdir", st_global("c(tmpdir)")))
+    _parqit_emit(req, _parqit_jobj(p))
+}
+
+// VIEW-COPY-1: copy an open view's plan into a new view
+void _parqit_wr_view_copy_request(string scalar req)
+{
+    string rowvector p
+    string scalar    vl
+
+    p = (_parqit_jtext("cmd", "view_copy"),
+         _parqit_jtext("source", st_local("_sq_src")),
+         _parqit_jtext("name", st_local("_sq_vname")))
+    vl = st_local("_sq_namelist")
+    if (strtrim(vl) != "") {
+        p = (p, _parqit_jpair("varlist", _parqit_jlist(tokens(vl))))
+    }
     _parqit_emit(req, _parqit_jobj(p))
 }
 
@@ -2939,6 +4090,11 @@ void _parqit_wr_collect_request(string scalar req, string scalar resp,
     if (st_local("_sq_pf") != "" & st_local("_sq_pf") != "0") {
         p = (p, _parqit_jpair("f", st_local("_sq_pf")),
                 _parqit_jpair("l", st_local("_sq_pl")))
+    }
+    /* INT64-PROTECT-1: only `parqit collect` sets this; head/list leave it
+     * empty and the plugin previews >2^53 columns as exact text */
+    if (st_local("_sq_int64") != "") {
+        p = (p, _parqit_jtext("int64", st_local("_sq_int64")))
     }
     _parqit_emit(req, _parqit_jobj(p))
 }
@@ -2988,12 +4144,22 @@ void _parqit_wr_rename_many(string scalar req)
 
 void _parqit_wr_op_sample_request(string scalar req)
 {
-    _parqit_emit(req, _parqit_jobj((
-        _parqit_jtext("cmd", "view_op"),
-        _parqit_jtext("op", "sample"),
-        _parqit_jpair("amount", st_local("_sq_amount")),
-        _parqit_jpair("count", st_local("_sq_count")),
-        _parqit_jpair("seed", st_local("_sq_seed")))))
+    string rowvector p
+
+    p = (_parqit_jtext("cmd", "view_op"),
+         _parqit_jtext("op", "sample"),
+         _parqit_jpair("amount", st_local("_sq_amount")),
+         _parqit_jpair("count", st_local("_sq_count")),
+         _parqit_jpair("seed", st_local("_sq_seed")))
+    // SAMPLE-DESIGN-1: the design travels only when given
+    if (st_local("_sq_ifexpr") != "") p = (p, _parqit_jtext("ifexpr", st_local("_sq_ifexpr")))
+    if (strtrim(st_local("_sq_by")) != "") {
+        p = (p, _parqit_jpair("by", _parqit_jlist(tokens(st_local("_sq_by")))))
+    }
+    if (st_local("_sq_cluster") != "") p = (p, _parqit_jtext("cluster", st_local("_sq_cluster")))
+    if (st_local("_sq_rule") != "") p = (p, _parqit_jtext("frame_rule", st_local("_sq_rule")))
+    if (st_local("_sq_generate") != "") p = (p, _parqit_jtext("generate", st_local("_sq_generate")))
+    _parqit_emit(req, _parqit_jobj(p))
 }
 
 void _parqit_wr_op_gen_request(string scalar req, string scalar op)
@@ -3106,6 +4272,352 @@ void _parqit_wr_op_dupdrop_request(string scalar req)
         _parqit_jpair("force", st_local("_sq_force") == "1" ? "true" : "false"))))
 }
 
+// SPSS-READ-1: one SPSS system file -> one Parquet file (plugin spss_convert)
+void _parqit_wr_spss_request(string scalar req)
+{
+    _parqit_emit(req, _parqit_jobj((
+        _parqit_jtext("cmd", "spss_convert"),
+        _parqit_jtext("src", st_local("_sq_src")),
+        _parqit_jtext("dest", st_local("_sq_dest")),
+        _parqit_jtext("who", st_local("_sq_who")),
+        _parqit_jtext("tmpdir", st_global("c(tmpdir)")),
+        _parqit_jpair("replace", st_local("_sq_replace") == "1" ? "true" : "false"),
+        _parqit_jtext("compression", strlower(strtrim(st_local("_sq_comp")))),
+        _parqit_jpair("compression_level", st_local("_sq_complevel")),
+        _parqit_jtext("encoding", strlower(strtrim(st_local("_sq_encoding")))))))
+}
+
+// R-READ-1: the data frame of one R data file -> one Parquet file (plugin
+// rdata_convert); the object name is exact (R names are case-sensitive)
+void _parqit_wr_r_request(string scalar req)
+{
+    _parqit_emit(req, _parqit_jobj((
+        _parqit_jtext("cmd", "rdata_convert"),
+        _parqit_jtext("src", st_local("_sq_src")),
+        _parqit_jtext("dest", st_local("_sq_dest")),
+        _parqit_jtext("who", st_local("_sq_who")),
+        _parqit_jtext("tmpdir", st_global("c(tmpdir)")),
+        _parqit_jpair("replace", st_local("_sq_replace") == "1" ? "true" : "false"),
+        _parqit_jtext("compression", strlower(strtrim(st_local("_sq_comp")))),
+        _parqit_jpair("compression_level", st_local("_sq_complevel")),
+        _parqit_jtext("encoding", strlower(strtrim(st_local("_sq_encoding")))),
+        _parqit_jtext("object", st_local("_sq_object")))))
+}
+
+// SPSS-ENCODE-1: reader for the JSON parqit writes into char var[spss_value_labels]
+// of a string variable: [["code","label"],...], UTF-8 text, the escapes
+// \" \\ \/ \b \f \n \r \t \uXXXX. Anything else is refused, loudly.
+// var names the variable (char var[spss_value_labels]) or, for R-READ-1, the
+// characteristic itself (var[r_value_labels])
+void _parqit_js_bad(string scalar var, string scalar what)
+{
+    errprintf("parqit: char %s is not the label list parqit writes (%s)\n",
+        strpos(var, "[") ? var : var + "[spss_value_labels]", what)
+    exit(198)
+}
+
+void _parqit_js_end(string scalar var)
+{
+    errprintf("parqit: char %s ends before its label list does;\n",
+        strpos(var, "[") ? var : var + "[spss_value_labels]")
+    errprintf("Stata keeps at most 67,783 bytes of a characteristic (the file keeps the full text)\n")
+    exit(198)
+}
+
+// a numeric code, as the labels of a numeric SPSS variable carry them
+string scalar _parqit_js_num(string scalar s, real scalar i, string scalar var)
+{
+    real scalar j
+
+    j = i
+    while (i <= strlen(s)) {
+        if (!strpos("-+0123456789.eE", substr(s, i, 1))) break
+        i++
+    }
+    if (i == j) _parqit_js_bad(var, "a code that is neither a string nor a number")
+    return(substr(s, j, i - j))
+}
+
+void _parqit_js_ws(string scalar s, real scalar i)
+{
+    while (anyof((" ", char(9), char(10), char(13)), substr(s, i, 1))) i++
+}
+
+void _parqit_js_tok(string scalar s, real scalar i, string scalar c, string scalar var)
+{
+    _parqit_js_ws(s, i)
+    if (substr(s, i, 1) == "") _parqit_js_end(var)
+    if (substr(s, i, 1) != c) _parqit_js_bad(var, sprintf("%s expected at byte %g", c, i))
+    i++
+}
+
+real scalar _parqit_js_hex4(string scalar s, real scalar i, string scalar var)
+{
+    string scalar h
+
+    h = substr(s, i, 4)
+    if (!regexm(h, "^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]$"))
+        _parqit_js_bad(var, "a malformed \u escape")
+    i = i + 4
+    return(frombase(16, strlower(h)))
+}
+
+string scalar _parqit_js_str(string scalar s, real scalar i, string scalar var)
+{
+    string scalar out, c, e
+    real scalar cp, lo
+
+    _parqit_js_tok(s, i, `"""', var)
+    out = ""
+    while (1) {
+        c = substr(s, i, 1)
+        i++
+        if (c == "") _parqit_js_end(var)
+        if (c == `"""') return(out)
+        if (c != "\") {
+            if (ascii(c) < 32) _parqit_js_bad(var, "a control character inside a string")
+            out = out + c
+            continue
+        }
+        e = substr(s, i, 1)
+        i++
+        if (e == `"""' | e == "\" | e == "/") out = out + e
+        else if (e == "b") out = out + char(8)
+        else if (e == "f") out = out + char(12)
+        else if (e == "n") out = out + char(10)
+        else if (e == "r") out = out + char(13)
+        else if (e == "t") out = out + char(9)
+        else if (e == "u") {
+            cp = _parqit_js_hex4(s, i, var)
+            if (cp >= 56320 & cp <= 57343) _parqit_js_bad(var, "an unpaired surrogate")
+            if (cp >= 55296 & cp <= 56319) {
+                if (substr(s, i, 2) != "\u") _parqit_js_bad(var, "an unpaired surrogate")
+                i = i + 2
+                lo = _parqit_js_hex4(s, i, var)
+                if (lo < 56320 | lo > 57343) _parqit_js_bad(var, "an unpaired surrogate")
+                cp = 65536 + (cp - 55296) * 1024 + lo - 56320
+            }
+            if (cp == 0) _parqit_js_bad(var, "a NUL character, which a Stata string cannot hold")
+            out = out + uchar(cp)
+        }
+        else if (e == "") _parqit_js_end(var)
+        else _parqit_js_bad(var, "an unknown escape")
+    }
+}
+
+// numok: a numeric SPSS variable's codes are JSON numbers (describe lists
+// them); a string variable's codes must be strings (spssencode)
+string matrix _parqit_spss_pairs(string scalar s, string scalar var, real scalar numok)
+{
+    real scalar i, more
+    string matrix out
+    string scalar code
+
+    i = 1
+    out = J(0, 2, "")
+    _parqit_js_tok(s, i, "[", var)
+    _parqit_js_ws(s, i)
+    more = substr(s, i, 1) != "]"
+    while (more) {
+        _parqit_js_tok(s, i, "[", var)
+        _parqit_js_ws(s, i)
+        if (substr(s, i, 1) == "") _parqit_js_end(var)
+        if (substr(s, i, 1) == `"""') code = _parqit_js_str(s, i, var)
+        else if (numok) code = _parqit_js_num(s, i, var)
+        else _parqit_js_bad(var, "a code that is not a string, as in the labels of a numeric variable")
+        _parqit_js_tok(s, i, ",", var)
+        out = out \ (code, _parqit_js_str(s, i, var))
+        _parqit_js_tok(s, i, "]", var)
+        _parqit_js_ws(s, i)
+        more = substr(s, i, 1) == ","
+        if (more) i++
+    }
+    _parqit_js_tok(s, i, "]", var)
+    _parqit_js_ws(s, i)
+    if (i <= strlen(s)) _parqit_js_bad(var, "text after the closing bracket")
+    return(out)
+}
+
+// SPSS string missing values as char var[spss_missing] records them: "X", "Y"
+// with embedded quotes doubled; a numeric definition yields none
+string colvector _parqit_spss_strmiss(string scalar s)
+{
+    real scalar i, n
+    string colvector out
+    string scalar v, c
+
+    out = J(0, 1, "")
+    n = strlen(s)
+    i = 1
+    while (i <= n) {
+        c = substr(s, i, 1)
+        i++
+        if (c == " " | c == ",") continue
+        if (c != `"""') return(J(0, 1, ""))
+        v = ""
+        while (i <= n) {
+            c = substr(s, i, 1)
+            i++
+            if (c == `"""') {
+                if (substr(s, i, 1) != `"""') break
+                i++
+            }
+            v = v + c
+        }
+        out = out \ strrtrim(v)
+    }
+    return(out)
+}
+
+real colvector _parqit_spssenc_in(string colvector x, string colvector set)
+{
+    if (!rows(set) | !rows(x)) return(J(rows(x), 1, 0))
+    return(rowsum(x :== set') :> 0)
+}
+
+void _parqit_spssenc_dict(string scalar var, string colvector keys,
+    string colvector texts, string colvector miss)
+{
+    string matrix p
+    string scalar m
+
+    if (st_global(var + "[spss_value_labels]") != "") {
+        p = _parqit_spss_pairs(st_global(var + "[spss_value_labels]"), var, 0)
+        keys = strrtrim(p[., 1])
+        texts = p[., 2]
+        miss = uniqrows(_parqit_spss_strmiss(st_global(var + "[spss_missing]")))
+        return
+    }
+    // R-READ-1: the labels haven kept on an R character vector (an SPSS file
+    // read in R); R's text is not blank-padded, so it is taken as it is
+    p = _parqit_spss_pairs(st_global(var + "[r_value_labels]"), var + "[r_value_labels]", 0)
+    keys = p[., 1]
+    texts = p[., 2]
+    m = st_global(var + "[r_missing]")
+    miss = (substr(m, 1, 11) == "na_values: " ?
+        uniqrows(_parqit_spss_strmiss(substr(m, 12, .))) : J(0, 1, ""))
+}
+
+// the numbering follows the dictionary: the SPSS codes when every code other
+// than a user-missing one is a distinct integer a value label can hold
+void _parqit_spssenc_plan(string scalar var, real scalar seq)
+{
+    string colvector keys, texts, miss, k
+    real colvector code
+    string scalar why
+
+    if (st_global(var + "[spss_value_labels]") == "" & st_global(var + "[r_value_labels]") == "") {
+        errprintf("parqit spssencode: %s has no SPSS value labels (char %s[spss_value_labels],\n",
+            var, var)
+        errprintf("or %s[r_value_labels] of a labelled R character vector);\n", var)
+        errprintf("it applies to string variables read from an SPSS or R data file\n")
+        exit(198)
+    }
+    _parqit_spssenc_dict(var, keys, texts, miss)
+    // vec(): a one-row selection comes back as a row, an empty one as 1x0
+    k = vec(select(keys, !_parqit_spssenc_in(keys, miss)))
+    why = seq ? "option sequential" : ""
+    if (why == "" & rows(k)) {
+        if (!all(regexm(strtrim(k), "^-?[0-9]+$"))) why = "not every SPSS code is an integer"
+        else {
+            code = strtoreal(strtrim(k))
+            if (rows(uniqrows(code)) < rows(code)) why = "two SPSS codes are the same integer"
+            else if (max(abs(code)) > 2147483647)
+                why = "an SPSS code is beyond the range of a value label"
+        }
+    }
+    st_local("_sq_mode", why == "" ? "codes" : "sequential")
+    st_local("_sq_why", why)
+}
+
+// sequential numbering: the dictionary's codes first, 1, 2, ... in code order
+void _parqit_spssenc_keys(string scalar var, string scalar lab)
+{
+    string colvector keys, texts, miss, u
+
+    _parqit_spssenc_dict(var, keys, texts, miss)
+    u = uniqrows(vec(select(keys, !_parqit_spssenc_in(keys, miss) :& keys :!= "")))
+    if (rows(u)) st_vlmodify(lab, (1::rows(u)), u)
+}
+
+void _parqit_spssenc_apply(string scalar var, string scalar num, string scalar lab,
+    string scalar mode, string scalar gen)
+{
+    string colvector keys, texts, miss, S, t, u
+    real colvector X, idx, v, code, keep, j
+    real rowvector xm
+    real scalar i, nextra, nempty
+    string scalar map
+
+    _parqit_spssenc_dict(var, keys, texts, miss)
+    st_sview(S, ., var)
+    st_view(X, ., num)
+    xm = (.a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r,
+        .s, .t, .u, .v, .w, .x, .y, .z)
+    // SPSS user-missing codes -> .a, .b, ... in code order (more than 26 share .z)
+    map = ""
+    for (i = 1; i <= rows(miss); i++) {
+        idx = vec(selectindex(S :== miss[i]))
+        if (rows(idx)) X[idx] = J(rows(idx), 1, xm[min((i, 26))])
+        map = map + (i > 1 ? " " : "") + "." + char(96 + min((i, 26))) + "=" +
+            `"""' + subinstr(miss[i], `"""', `""""', .) + `"""'
+    }
+    nempty = 0
+    nextra = 0
+    if (mode == "codes") {
+        idx = vec(selectindex((X :== .) :& (S :!= "")))
+        if (!rows(idx)) idx = vec(selectindex((X :< .) :& (X :!= floor(X))))
+        if (rows(idx)) {
+            u = uniqrows(S[idx])
+            u = `"""' :+ u[|1 \ min((rows(u), 5))|] :+ `"""'
+            errprintf("parqit spssencode: %s holds values that are not integer codes: %s\n",
+                var, invtokens(u', ", "))
+            errprintf("(option sequential numbers the codes 1, 2, ... instead)\n")
+            exit(198)
+        }
+        keep = !_parqit_spssenc_in(keys, miss)
+        nempty = sum(keep :& texts :== "")
+        keep = keep :& texts :!= ""
+        code = strtoreal(strtrim(vec(select(keys, keep))))
+        if (rows(code)) st_vlmodify(lab, code, vec(select(texts, keep)))
+        v = st_data(., num)                  // a copy: vec() refuses a view
+        v = uniqrows(vec(select(v, v :< .)))
+        nextra = rows(uniqrows(v \ strtoreal(strtrim(keys)))) - rows(uniqrows(strtoreal(strtrim(keys))))
+    }
+    else {
+        // encode's labels are the codes themselves: give them the SPSS texts
+        st_vlload(lab, v, t)
+        for (i = 1; i <= rows(v); i++) {
+            if (anyof(miss, t[i])) {
+                st_vlmodify(lab, v[i], "")
+                continue
+            }
+            j = vec(selectindex(keys :== t[i]))
+            if (!rows(j)) nextra++
+            else if (texts[j[1]] == "") nempty++
+            else st_vlmodify(lab, v[i], texts[j[1]])
+        }
+    }
+    for (i = 1; i <= rows(miss); i++) {
+        j = vec(selectindex(keys :== miss[i]))
+        if (rows(j)) {
+            if (texts[j[1]] != "") st_vlmodify(lab, xm[min((i, 26))], texts[j[1]])
+            else nempty++
+        }
+    }
+    displayas("text")
+    if (map != "") printf("note: SPSS user-missing codes of %s are extended missing values in %s: %s (char %s[spss_missing_map])\n",
+        var, gen, map, gen)
+    if (nextra) printf("note: %g value%s of %s %s no SPSS label%s\n", nextra,
+        nextra > 1 ? "s" : "", var, nextra > 1 ? "have" : "has",
+        mode == "codes" ? "" : " (labelled by the value itself)")
+    if (nempty) printf("note: %g SPSS label%s of %s %s empty; Stata cannot store an empty label\n",
+        nempty, nempty > 1 ? "s" : "", var, nempty > 1 ? "are" : "is")
+    st_local("_sq_map", map)
+    st_local("_sq_nlab", strofreal(rows(keys) - nempty))
+    st_local("_sq_nextra", strofreal(nextra))
+}
+
 void _parqit_wr_view_save_request(string scalar req)
 {
     _parqit_emit(req, _parqit_jobj((
@@ -3138,12 +4650,16 @@ void _parqit_wr_save_request(string scalar req)
                               _parqit_jlist(tokens(st_local("_sq_sortedby"))))
     j = j + "," + _parqit_jpair("replace",
                               st_local("_sq_replace") == "1" ? "true" : "false")
+    j = j + "," + _parqit_jpair("xmissing",
+                              st_local("_sq_xmissing") == "1" ? "true" : "false")
     j = j + "," + _parqit_jtext("compression",
                               strlower(strtrim(st_local("_sq_comp"))))
     j = j + "," + _parqit_jpair("compression_level", st_local("_sq_complevel"))
     j = j + "," + _parqit_jpair("chunk", st_local("_sq_chunk"))
     j = j + "," + _parqit_jtext("encoding",
                               strlower(strtrim(st_local("_sq_encoding"))))
+    j = j + "," + _parqit_jpair("encoding_all",
+                              st_local("_sq_encall") == "1" ? "true" : "false")
     if (st_local("_sq_direct") == "1") {
         j = j + "," + _parqit_jtext("source_file", st_local("_sq_source"))
         j = j + "," + _parqit_jtext("source_size", st_local("_sq_source_size"))
@@ -3222,7 +4738,74 @@ void _parqit_wr_save_request(string scalar req)
     _parqit_emit(req, j)
 }
 
+// CMD-ABBREV-1: the abbreviations Stata core accepts for the commands parqit
+// mirrors, as -which- resolves every prefix: a built-in takes any prefix from
+// its minimum length, and histogram's only short form is the shipped hist.ado.
+// Any other word comes back unchanged, so each exact parqit verb (ds, drop,
+// tabstat, sample, selftest, appendin, ...) still reaches its own program.
+string scalar _parqit_cmd_name(string scalar todo)
+{
+    string rowvector full, verb
+    real rowvector   least
+    real scalar      i, n
+
+    if (todo == "hist") return("histogram")
+    full  = ("use", "save", "describe", "generate", "rename", "sort", "count",
+             "list", "merge", "append", "summarize", "tabulate", "correlate", "set")
+    verb  = ("use", "save", "describe", "gen", "rename", "sort", "count",
+             "list", "merge", "append", "summarize", "tabulate", "correlate", "set")
+    least = (1, 2, 1, 1, 3, 2, 3, 1, 3, 2, 2, 2, 3, 2)
+    n = strlen(todo)
+    for (i = 1; i <= cols(full); i++) {
+        if (n >= least[i] & substr(full[i], 1, n) == todo) return(verb[i])
+    }
+    return(todo)
+}
+
 // split "expr [if cond]" at the first top-level bare `if'
+// SAMPLE-DESIGN-1: split "<head>, <options>" at the first comma outside
+// parentheses, double quotes and (nested) compound quotes, so an if
+// expression may hold commas
+void _parqit_split_opts(string scalar src)
+{
+    real scalar   i, n, depth, instr, comp
+    string scalar c
+
+    n = strlen(src)
+    depth = 0
+    instr = 0
+    comp = 0
+    for (i = 1; i <= n; i++) {
+        c = substr(src, i, 1)
+        if (c == char(96) & substr(src, i + 1, 1) == char(34)) {
+            comp++
+            i++
+            continue
+        }
+        if (comp) {
+            if (c == char(34) & substr(src, i + 1, 1) == char(39)) {
+                comp--
+                i++
+            }
+            continue
+        }
+        if (instr) {
+            if (c == char(34)) instr = 0
+            continue
+        }
+        if (c == char(34)) instr = 1
+        else if (c == "(") depth++
+        else if (c == ")") depth--
+        else if (c == "," & depth == 0) {
+            st_local("parqit_head", strtrim(substr(src, 1, i - 1)))
+            st_local("parqit_opts", strtrim(substr(src, i + 1, .)))
+            return
+        }
+    }
+    st_local("parqit_head", strtrim(src))
+    st_local("parqit_opts", "")
+}
+
 void _parqit_split_if(string scalar src)
 {
     real scalar      i, n, depth, instr
@@ -3255,6 +4838,27 @@ void _parqit_split_if(string scalar src)
     }
     st_local("parqit_expr", strtrim(src))
     st_local("parqit_ifexpr", "")
+}
+
+// STATS-IF-1: "<varlist> [if exp] [, options]" of a statistics command. The
+// condition belongs to the view, so it travels as text: syntax's [if] would
+// look its variables up in the dataset in memory. Leaves vars, _sq_ifexpr and
+// 0 rewritten as ", options" for syntax, and _sq_if_noexp = 1 when an if has
+// no expression after it.
+void _parqit_stats_split()
+{
+    string rowvector w
+
+    _parqit_split_opts(st_local("0"))
+    _parqit_split_if(st_local("parqit_head"))
+    w = tokens(st_local("parqit_expr"))
+    st_local("_sq_if_noexp", "0")
+    if (cols(w) > 0) {
+        if (w[cols(w)] == "if") st_local("_sq_if_noexp", "1")
+    }
+    st_local("vars", st_local("parqit_expr"))
+    st_local("_sq_ifexpr", st_local("parqit_ifexpr"))
+    st_local("0", st_local("parqit_opts") == "" ? "" : ", " + st_local("parqit_opts"))
 }
 
 string rowvector _parqit_fields(string scalar line, real scalar n)
@@ -3461,7 +5065,7 @@ void _parqit_resp_decorate(string scalar resp)
                 if (strlen(txt) > 32000) {
                     printf("note: value label %s: text for key %s truncated to 32,000 bytes\n",
                            labname, vraw)
-                    txt = substr(txt, 1, 32000)
+                    txt = _parqit_ubytes(txt, 32000)
                 }
                 vlk++
                 vl_owner[vlk] = labname
@@ -3497,7 +5101,7 @@ void _parqit_resp_decorate(string scalar resp)
                 if (strlen(txt) > 67783) {
                     printf("note: characteristic %s[%s] holds %g bytes; Stata keeps at most 67,783 — truncated (the file keeps the full text)\n",
                            tgt, cname, strlen(txt))
-                    txt = substr(txt, 1, 67783)
+                    txt = _parqit_ubytes(txt, 67783)
                 }
                 st_global(tgt + "[" + cname + "]", txt)
             }
@@ -3534,22 +5138,138 @@ void _parqit_resp_decorate(string scalar resp)
     }
 }
 
-void _parqit_resp_describe(string scalar resp)
+// DESCRIBE-META-1: user text in a column of w display columns — control
+// characters made visible, SMCL braces escaped, cut with "..." when longer
+// ENC-3: the Windows code page a locale's legacy text is usually in ("" =
+// windows-1252, parqit's default, or no legacy code page at all): the hint
+// parqit gives when it decoded undeclared text with its default code page and
+// the locale suggests another. loc is an ICU locale: lang[_Script][_REGION]
+// (zh_Hant_TW, sr_Latn_RS, pt_PT; a BCP 47 "-" works too).
+string scalar _parqit_locale_codepage(string scalar loc)
 {
-    real scalar      i, k, _li, _nl
-    real colvector   sel
-    string scalar    line, dt
+    string rowvector part
+    string scalar lang, script, region
+    real scalar i
+
+    part = tokens(subinstr(subinstr(subinstr(subinstr(loc, "_", " "), "-", " "), ".", " "), "@", " "))
+    if (cols(part) == 0) return("")
+    lang = strlower(part[1])
+    script = region = ""
+    for (i = 2; i <= cols(part); i++) {
+        if (strlen(part[i]) == 4 & script == "" & region == "") script = strlower(part[i])
+        else if (strlen(part[i]) == 2 & region == "") region = strupper(part[i])
+    }
+    if (script == "cyrl") return("windows-1251")
+    if (anyof(("sr", "bs"), lang)) return(script == "latn" | lang == "bs" ? "windows-1250" : "windows-1251")
+    if (anyof(("az", "uz"), lang)) return("windows-1254")
+    if (anyof(("ru", "uk", "be", "bg", "mk", "kk", "ky", "tg", "mn", "tt", "ba"), lang)) return("windows-1251")
+    if (anyof(("pl", "cs", "sk", "hu", "sl", "hr", "ro", "sq", "tk"), lang)) return("windows-1250")
+    if (lang == "el") return("windows-1253")
+    if (lang == "tr") return("windows-1254")
+    if (anyof(("he", "iw", "yi"), lang)) return("windows-1255")
+    if (anyof(("ar", "fa", "ur", "ps", "ug", "sd"), lang)) return("windows-1256")
+    if (anyof(("lt", "lv", "et"), lang)) return("windows-1257")
+    if (lang == "vi") return("windows-1258")
+    if (lang == "th") return("windows-874")
+    if (lang == "ja") return("windows-932")
+    if (lang == "ko") return("windows-949")
+    if (lang == "zh") return(script == "hant" | anyof(("TW", "HK", "MO"), region) ? "windows-950" : "windows-936")
+    return("")
+}
+
+// CSV-ENC-1: how one delimited text file is read (plugin text_prepare)
+void _parqit_wr_text_request(string scalar req)
+{
+    _parqit_emit(req, _parqit_jobj((
+        _parqit_jtext("cmd", "text_prepare"),
+        _parqit_jtext("src", st_local("_sq_src")),
+        _parqit_jtext("tmpdir", st_global("c(tmpdir)")),
+        _parqit_jtext("mode", st_local("_sq_mode")),
+        _parqit_jtext("encoding", strlower(strtrim(st_local("_sq_encoding")))),
+        _parqit_jpair("all", st_local("_sq_encall") == "1" ? "true" : "false"))))
+}
+
+// F19: a directory of the path that the engine reads as a Hive partition
+// key=value: exactly one "=", after a non-empty key (duckdb 1.5.3: a=b and a=
+// are read as columns; =b, a==b and x=1=2 are not)
+real scalar _parqit_hive_segment(string scalar path)
+{
+    string rowvector part
+    real scalar i
+
+    part = tokens(subinstr(path, char(92), "/"), "/")
+    for (i = 1; i <= cols(part); i++) {
+        if (part[i] == "/") continue
+        if (strlen(part[i]) - strlen(subinstr(part[i], "=", "")) == 1 & substr(part[i], 1, 1) != "=") return(1)
+    }
+    return(0)
+}
+
+// CSV-ENC-1: text shown as it is — braces would be read as SMCL directives
+string scalar _parqit_smcl_plain(string scalar s)
+{
+    string scalar t
+
+    t = subinstr(s, "{", char(1))
+    t = subinstr(t, "}", "{c )-}")
+    return(subinstr(t, char(1), "{c -(}"))
+}
+
+// ENC-3: the longest prefix of s within n bytes that does not cut a UTF-8
+// character in two (Stata itself cuts a value-label text at 32,000 bytes
+// mid-character, leaving invalid UTF-8); a text already invalid there is cut
+// at n
+string scalar _parqit_ubytes(string scalar s, real scalar n)
+{
+    real scalar i, b, need
+
+    if (strlen(s) <= n) return(s)
+    i = n
+    while (i > 1 & i > n - 3) {
+        b = ascii(substr(s, i, 1))
+        if (b < 128 | b >= 192) break
+        i--
+    }
+    b = ascii(substr(s, i, 1))
+    if (b < 192) return(substr(s, 1, n))
+    need = (b < 224 ? 2 : (b < 240 ? 3 : 4))
+    if (i + need - 1 > n) return(substr(s, 1, i - 1))
+    return(substr(s, 1, n))
+}
+
+string scalar _parqit_dcol(string scalar s, real scalar w, real scalar pad)
+{
+    string scalar t
+
+    t = subinstr(_parqit_controls(s), char(9), " ")
+    if (udstrlen(t) > w) t = udsubstr(t, 1, max((w - 3, 0))) + "..."
+    return(_parqit_text(t) + (pad ? max((w - udstrlen(t), 0)) * " " : ""))
+}
+
+string scalar _parqit_plural(real scalar n, string scalar what)
+{
+    return(sprintf("%g %s%s", n, what, n == 1 ? "" : "s"))
+}
+
+void _parqit_resp_describe(string scalar resp, real scalar listlab, real scalar listnotes)
+{
+    real scalar      i, j, k, _li, _nl, nw, tw, sw, fw, vw, lw, nnotes, dnotes, nvl, ls
+    real colvector   sel, o, num, hasnote, spss, rlab, isnote
+    string scalar    dlabel, t
     string rowvector f
-    string colvector dnames, dtypes, snames, stypes, sfmts, _lines
+    string matrix    p
+    string colvector dnames, dtypes, snames, stypes, sfmts, svarlab, svallab, _lines,
+                     lkey, lname, ltext, ctgt, cname, cval, dts, vls, sets, tg
 
     /* fread()+split, not fget(): a >32768-byte record (e.g. a long hex source
      * name) would be split by fget's line cap and abort the load — META-1 */
     _lines = _parqit_resp_lines(resp)
     _nl = rows(_lines)
-    dnames = dtypes = snames = stypes = sfmts = J(0, 1, "")
+    dnames = dtypes = snames = stypes = sfmts = svarlab = svallab = J(0, 1, "")
+    lkey = lname = ltext = ctgt = cname = cval = J(0, 1, "")
+    dlabel = ""
     for (_li = 1; _li <= _nl; _li++) {
-        line = _lines[_li]
-        f = _parqit_fields(line, 8)
+        f = _parqit_fields(_lines[_li], 8)
         if (f[1] == "dtype") {
             dnames = dnames \ _parqit_unhex(f[2])
             dtypes = dtypes \ _parqit_unhex(f[3])
@@ -3558,7 +5278,20 @@ void _parqit_resp_describe(string scalar resp)
             snames = snames \ _parqit_unhex(f[3])
             stypes = stypes \ _parqit_unhex(f[5])
             sfmts  = sfmts  \ _parqit_unhex(f[6])
+            svarlab = svarlab \ _parqit_unhex(f[7])
+            svallab = svallab \ _parqit_unhex(f[8])
         }
+        else if (f[1] == "vlab") {
+            lkey  = lkey  \ _parqit_unhex(f[2])
+            lname = lname \ _parqit_unhex(f[3])
+            ltext = ltext \ _parqit_unhex(f[4])
+        }
+        else if (f[1] == "char") {
+            ctgt  = ctgt  \ _parqit_unhex(f[2])
+            cname = cname \ _parqit_unhex(f[3])
+            cval  = cval  \ _parqit_unhex(f[4])
+        }
+        else if (f[1] == "dlabel") dlabel = _parqit_unhex(f[2])
         else if (f[1] == "drop") {
             displayas("error")
             printf("  (column %s not loadable: %s)\n",
@@ -3566,25 +5299,126 @@ void _parqit_resp_describe(string scalar resp)
         }
     }
 
-    displayas("text")
-    printf("  %-32s %-18s %-10s %s\n", "variable", "parquet type", "stata type", "format")
-    printf("  %s\n", 72 * "-")
+    // DESCRIBE-META-1: the file's parqit metadata arrive in the records use
+    // applies (labels, value-label sets, characteristics, notes); say what the
+    // file holds, as Stata's describe does for a dataset
     k = rows(snames)
+    isnote = (rows(cname) ? (regexm(cname, "^note[1-9][0-9]*$") :& (cval :!= "")) : J(0, 1, 0))
+    hasnote = spss = rlab = J(k, 1, 0)
+    dts = vls = J(k, 1, "")
     for (i = 1; i <= k; i++) {
+        if (rows(cname)) {
+            hasnote[i] = sum((ctgt :== snames[i]) :& isnote) > 0
+            spss[i] = sum((ctgt :== snames[i]) :& (cname :== "spss_value_labels")) > 0
+            rlab[i] = sum((ctgt :== snames[i]) :& (cname :== "r_value_labels")) > 0
+        }
         /* DESCRIBE-ALIGN-1 (audit 2026-09-01, F3): the engine type is looked
          * up by the variable's NAME (the dtype records now carry the Stata
          * name, in the var records' manifest order); a positional fallback
          * only when the name is absent. The old positional zip shifted every
          * type after a Hive partition key, which the scan lists last while the
          * manifest keeps it in its original place. */
-        sel = selectindex(dnames :== snames[i])
-        dt = (rows(sel) >= 1 ? dtypes[sel[1]] : (i <= rows(dtypes) ? dtypes[i] : ""))
-        printf("  %-32s %-18s %-10s %s\n", snames[i], dt, stypes[i], sfmts[i])
+        sel = vec(selectindex(dnames :== snames[i]))
+        dts[i] = (rows(sel) >= 1 ? dtypes[sel[1]] : (i <= rows(dtypes) ? dtypes[i] : ""))
+        vls[i] = (svallab[i] != "" ? svallab[i] : (spss[i] ? "(spss)" : (rlab[i] ? "(r)" : "")))
+    }
+    dnotes = rows(cname) ? sum((ctgt :== "_dta") :& isnote) : 0
+    nnotes = sum(isnote)
+    sets = uniqrows(lname)
+    nvl = rows(sets)
+
+    displayas("text")
+    if (dlabel != "") printf("  dataset label: %s\n", _parqit_dcol(dlabel, 200, 0))
+    if (dnotes) printf("  (_dta has notes)\n")
+    printf("\n")
+    ls = c("linesize")
+    nw = min((32, max((8, (k ? max(udstrlen(snames)) : 0)))))
+    tw = min((18, max((12, (k ? max(udstrlen(dts)) : 0)))))
+    sw = max((10, (k ? max(strlen(stypes)) + 1 : 0)))
+    fw = max((6, (k ? max(strlen(sfmts)) : 0)))
+    vw = min((20, max((11, (k ? max(udstrlen(vls)) : 0)))))
+    lw = max((14, ls - (nw + tw + sw + fw + vw + 7)))
+    printf("  %s %s %s %s %s variable label\n", _parqit_dcol("variable", nw, 1),
+        _parqit_dcol("parquet type", tw, 1), _parqit_dcol("stata type", sw, 1),
+        _parqit_dcol("format", fw, 1), _parqit_dcol("value label", vw, 1))
+    printf("  %s\n", (nw + tw + sw + fw + vw + 5 + min((lw, 14))) * "-")
+    for (i = 1; i <= k; i++) {
+        printf("  %s %s %s %s %s %s\n", _parqit_dcol(snames[i], nw, 1),
+            _parqit_dcol(dts[i], tw, 1), _parqit_dcol(stypes[i] + (hasnote[i] ? "*" : ""), sw, 1),
+            _parqit_dcol(sfmts[i], fw, 1), _parqit_dcol(vls[i], vw, 1),
+            _parqit_dcol(svarlab[i], lw, 0))
         st_local("parqit_dname_" + strofreal(i), snames[i])
-        st_local("parqit_dtype_" + strofreal(i), dt)
+        st_local("parqit_dtype_" + strofreal(i), dts[i])
         st_local("parqit_dstype_" + strofreal(i), stypes[i])
+        st_local("parqit_dvarlab_" + strofreal(i), svarlab[i])
+        st_local("parqit_dvallab_" + strofreal(i), svallab[i])
     }
     printf("\n")
+    if (sum(hasnote)) printf("  * indicated variables have notes\n")
+    if (sum(spss :& (svallab :== "")))
+        printf("  (spss) SPSS labels in char var[spss_value_labels]; see parqit spssencode\n")
+    if (sum(rlab :& !spss :& (svallab :== "")))
+        printf("  (r) R labels in char var[r_value_labels]; see parqit spssencode\n")
+    t = ""
+    if (sum(svarlab :!= "")) t = t + ", " + _parqit_plural(sum(svarlab :!= ""), "variable label")
+    if (nvl) t = t + ", " + _parqit_plural(nvl, "value-label set")
+    if (sum(spss)) t = t + ", SPSS labels on " + _parqit_plural(sum(spss), "variable")
+    if (sum(rlab)) t = t + ", R labels on " + _parqit_plural(sum(rlab), "variable")
+    if (t != "") printf("  labels: %s\n", substr(t, 3, .))
+    if (nnotes) printf("  notes:  %g%s\n", nnotes, dnotes ? sprintf(" (_dta %g)", dnotes) : "")
+    if ((nvl | sum(spss) | sum(rlab) | nnotes) & !(listlab | listnotes))
+        printf("  (options labels and notes list them)\n")
+
+    if (listlab) {
+        if (!nvl & !sum(spss) & !sum(rlab)) printf("\n  (no value labels)\n")
+        for (j = 1; j <= nvl; j++) {
+            sel = vec(selectindex(lname :== sets[j]))
+            num = strtoreal(lkey[sel])
+            o = order(num, 1)
+            printf("\n  %s:\n", _parqit_dcol(sets[j], 32, 0))
+            for (i = 1; i <= rows(o); i++)
+                printf("  %12s %s\n", lkey[sel[o[i]]], _parqit_dcol(ltext[sel[o[i]]], 32000, 0))
+        }
+        for (i = 1; i <= k; i++) {
+            if (!spss[i]) continue
+            sel = vec(selectindex((ctgt :== snames[i]) :& (cname :== "spss_value_labels")))
+            p = _parqit_spss_pairs(cval[sel[1]], snames[i], 1)
+            // in code order, as label list shows a value label
+            num = strtoreal(p[., 1])
+            o = (hasmissing(num) ? order(p, 1) : order(num, 1))
+            printf("\n  %s (SPSS labels, char %s[spss_value_labels]):\n", snames[i], snames[i])
+            for (j = 1; j <= rows(p); j++)
+                printf("  %12s %s\n", _parqit_dcol(p[o[j], 1], 32000, 0), _parqit_dcol(p[o[j], 2], 32000, 0))
+        }
+        // R-READ-1: the labels haven kept, in R's order (the order R prints)
+        for (i = 1; i <= k; i++) {
+            if (!rlab[i]) continue
+            sel = vec(selectindex((ctgt :== snames[i]) :& (cname :== "r_value_labels")))
+            p = _parqit_spss_pairs(cval[sel[1]], snames[i] + "[r_value_labels]", 1)
+            printf("\n  %s (R labels, char %s[r_value_labels]):\n", snames[i], snames[i])
+            for (j = 1; j <= rows(p); j++)
+                printf("  %12s %s\n", _parqit_dcol(p[j, 1], 32000, 0), _parqit_dcol(p[j, 2], 32000, 0))
+        }
+    }
+    if (listnotes) {
+        if (!nnotes) printf("\n  (no notes)\n")
+        tg = "_dta" \ snames
+        for (i = 1; i <= rows(tg); i++) {
+            sel = (rows(cname) ? vec(selectindex((ctgt :== tg[i]) :& isnote)) : J(0, 1, .))
+            if (!rows(sel)) continue
+            num = strtoreal(substr(cname[sel], 5, .))
+            o = order(num, 1)
+            printf("\n  %s:\n", tg[i])
+            for (j = 1; j <= rows(o); j++)
+                printf("  %4.0f.  %s\n", num[o[j]], _parqit_dcol(cval[sel[o[j]]], 67784, 0))
+        }
+    }
+    if (listlab | listnotes) printf("\n")
+    st_local("parqit_dlabel", dlabel)
+    st_local("parqit_dnotes", strofreal(nnotes))
+    st_local("parqit_dnvl", strofreal(nvl))
+    st_local("parqit_dspss", sum(spss) ? invtokens(select(snames, spss)') : "")
+    st_local("parqit_drlab", sum(rlab) ? invtokens(select(snames, rlab)') : "")
 }
 
 void _parqit_print_resp(string scalar resp, string scalar kind)
@@ -3667,6 +5501,8 @@ void _parqit_wr_twotable_request(string scalar req)
                 _parqit_jtext("gen", st_local("_sq_gen")),
                 _parqit_jpair("nogen",
                             st_local("_sq_nogen") == "1" ? "true" : "false"),
+                _parqit_jpair("nonotes",
+                            st_local("_sq_nonotes") == "1" ? "true" : "false"),
                 _parqit_jpair("keep_mask", st_local("_sq_mask")))
     }
     _parqit_emit(req, _parqit_jobj(p))
@@ -3691,7 +5527,11 @@ void _parqit_wr_append_request(string scalar req)
         _parqit_jpair("files", flist),
         _parqit_jpair("keys", "[]"),
         _parqit_jtext("gen", st_local("_sq_gen")),
+        _parqit_jpair("nonotes", st_local("_sq_nonotes") == "1" ? "true" : "false"),
         _parqit_jtext("tmpdir", st_global("c(tmpdir)")))
+    if (st_local("_sq_keep") != "") {
+        p = (p, _parqit_jpair("keep", _parqit_jlist(tokens(st_local("_sq_keep")))))
+    }
     no = strtoreal(st_local("_sq_owned_n"))
     if (missing(no)) no = 0
     if (no > 0) {
@@ -3749,6 +5589,9 @@ void _parqit_wr_stats_request(string scalar req, string scalar resp)
     if (st_local("_sq_expr") != "") {
         p = (p, _parqit_jtext("expr", st_local("_sq_expr")))
     }
+    if (st_local("_sq_ifexpr") != "") {
+        p = (p, _parqit_jtext("ifexpr", st_local("_sq_ifexpr")))
+    }
     if (st_local("_sq_joint") == "1") {
         p = (p, _parqit_jpair("joint", "true"))
     }
@@ -3805,6 +5648,85 @@ string scalar _parqit_rtext(string scalar src, real scalar width)
     return(max((0,width-udstrlen(s))) * " " + _parqit_text(s))
 }
 
+// TAB-LAYOUT-1: native tabulate wraps a variable's label into lines of at
+// most `width' BYTES, word by word (a label with accents wraps sooner, as
+// native); a word longer than a line is cut at the last whole character that
+// fits and its remainder starts the next line
+string colvector _parqit_tab_wrap(string scalar src, real scalar width)
+{
+    string colvector out
+    string scalar    rest, word, cur, cand, piece
+    real scalar      p
+
+    out = J(0, 1, "")
+    cur = ""
+    rest = src
+    while (rest != "") {
+        p = strpos(rest, " ")
+        word = p ? substr(rest, 1, p - 1) : rest
+        rest = p ? substr(rest, p + 1, .) : ""
+        if (word == "") continue
+        cand = cur == "" ? word : cur + " " + word
+        if (strlen(cand) <= width) {
+            cur = cand
+            continue
+        }
+        if (cur != "") out = out \ cur
+        while (strlen(word) > width) {
+            piece = _parqit_ubytes(word, width)
+            if (piece == "") piece = substr(word, 1, width)
+            out = out \ piece
+            word = substr(word, strlen(piece) + 1, .)
+        }
+        cur = word
+    }
+    if (cur != "" | rows(out) == 0) out = out \ cur
+    return(out)
+}
+
+// TAB-LAYOUT-1: native tabulate's cut of a value wider than its field: a
+// value label is cut at the width (how 0), a string value keeps width-2
+// characters and ".." (how 1); a number (how 2) is never cut — native shows
+// it in a width-9 format, which fits (see _parqit_tab_fmt)
+string scalar _parqit_tab_fit(string scalar src, real scalar width, real scalar how)
+{
+    string scalar s
+    s = _parqit_controls(src)
+    if (udstrlen(s) <= width | how == 2) return(s)
+    return(how == 1 ? udsubstr(s, 1, width - 2) + ".." : udsubstr(s, 1, width))
+}
+
+// TAB-LAYOUT-1: native tabulate shows a number in its variable's format at
+// width 9 (%12.0g as %9.0g, %10.2f as %9.2f, %15.0fc as %9.0fc), so a wide
+// value turns to e-notation or loses its commas instead of widening the table
+string scalar _parqit_tab_fmt(string scalar fmt)
+{
+    if (!regexm(fmt, "^%-?[0-9]+(\.[0-9]+)?([fge]c?)$")) return(fmt)
+    return(regexr(fmt, "^%-?[0-9]+", "%9"))
+}
+
+// TAB-LAYOUT-1: a numeric value as native tabulate shows it, in 9 columns: a
+// %g/%f/%e format at width 9; a date or time in its own format when that fits,
+// else in its class's default format (%tdCCYY-NN-DD as 01jan2020), else
+// abbreviated with ".." (a %tc value as 01jan20..)
+string scalar _parqit_tab_num(string scalar raw, string scalar fmt)
+{
+    string scalar s, cls
+
+    s = _parqit_render_num(raw, _parqit_tab_fmt(fmt))
+    if (udstrlen(s) <= 9 | !regexm(fmt, "^%-?t[cCdwmqhy]")) return(s)
+    cls = regexs(0)
+    s = _parqit_render_num(raw, "%t" + substr(cls, strlen(cls), 1))
+    return(udstrlen(s) <= 9 ? s : udsubstr(s, 1, 7) + "..")
+}
+
+// the storage width of a str# variable (tabulate sizes its stub by it), else 0
+real scalar _parqit_tab_strwidth(string rowvector meta)
+{
+    if (meta[4] != "s" | substr(meta[5], 1, 3) != "str" | meta[5] == "strL") return(0)
+    return(strtoreal(substr(meta[5], 4, .)))
+}
+
 string scalar _parqit_clip(string scalar src, real scalar width)
 {
     string scalar s
@@ -3813,6 +5735,18 @@ string scalar _parqit_clip(string scalar src, real scalar width)
     s = _parqit_controls(s)
     if (udstrlen(s)<=width) return(s)
     return(udsubstr(s,1,width-1)+"~")
+}
+
+// VIEW-COPY-1: a long view source keeps both ends, so the listing still shows
+// the file name and a copy's view:<origin> prefix
+string scalar _parqit_clip_mid(string scalar src, real scalar width)
+{
+    string scalar s
+    real scalar   head
+    s = _parqit_controls(src)
+    if (udstrlen(s)<=width) return(s)
+    head = floor((width-1)/3)
+    return(udsubstr(s,1,head)+"~"+udsubstr(s,udstrlen(s)-(width-1-head)+1,.))
 }
 
 transmorphic scalar _parqit_statsmeta(string scalar resp)
@@ -3921,14 +5855,14 @@ void _parqit_print_tabulate(string scalar resp)
     real scalar      fh, total, rows, n, i, uselab, stub
     string scalar    line, kind, fmt, raw, lab, title
     string rowvector f, vars, meta
-    string colvector vals, lkeys, ltexts
-    real colvector   counts
+    string colvector vals, lkeys, ltexts, tl
+    real colvector   counts, how
     transmorphic scalar metadata
 
     metadata = _parqit_statsmeta(resp)
     fh = fopen(resp, "r")
     vals = J(0, 1, "")
-    counts = J(0, 1, .)
+    counts = how = J(0, 1, .)
     lkeys = ltexts = J(0, 1, "")
     uselab = (st_local("parqit_tab_nolabel") != "1")
     kind = "n"
@@ -3951,7 +5885,8 @@ void _parqit_print_tabulate(string scalar resp)
         /* a labelled numeric level shows its label, like native tabulate */
         lab = (kind == "n" & uselab) ? _parqit_vlabel(raw, lkeys, ltexts) : ""
         vals = vals \ (lab != "" ? lab
-                                 : (kind == "n" ? _parqit_render_num(raw, fmt) : raw))
+                                 : (kind == "n" ? _parqit_tab_num(raw, fmt) : raw))
+        how = how \ (kind == "s" ? 1 : (lab != "" ? 0 : 2))
     }
     fclose(fh)
     total = sum(counts)
@@ -3966,20 +5901,22 @@ void _parqit_print_tabulate(string scalar resp)
     vars = tokens(st_local("_sq_vars"))
     meta = _parqit_statmeta(metadata,vars[1])
     title = meta[2]=="" ? meta[1] : meta[2]
-    stub = max((11,min((40,st_numscalar("c(linesize)")-37,
-                max((udstrlen(title),max(udstrlen(vals))))+1))))
-    if (meta[4]=="s" & substr(meta[5],1,3)=="str" & meta[5]!="strL")
-        stub = max((stub,min((40,st_numscalar("c(linesize)")-37,
-                              strtoreal(substr(meta[5],4,.))))))
-    printf("\n{txt}%s {c |}%11s%12s%12s\n", _parqit_rtext(_parqit_clip(title,stub),stub),
+    /* TAB-LAYOUT-1: native one-way layout — the stub is as wide as the values
+     * (a str# variable's storage width), 11 to 39 columns; the label never
+     * widens it: it wraps, ending on the header line */
+    stub = max((11, min((39, max((max(udstrlen(vals)), _parqit_tab_strwidth(meta)))))))
+    tl = _parqit_tab_wrap(title, stub)
+    printf("\n")
+    for (i = 1; i < rows(tl); i++) printf("{txt}%s {c |}\n", _parqit_rtext(tl[i], stub))
+    printf("{txt}%s {c |}%11s%12s%12s\n", _parqit_rtext(tl[rows(tl)], stub),
            "Freq.", "Percent", "Cum.")
     printf("{hline %g}{c +}{hline 35}\n", stub+1)
     n = 0
     for (i = 1; i <= rows; i++) {
         n = n + counts[i]
         printf("{txt}%s {c |}{res}%11s%12.2f%12.2f\n",
-               _parqit_rtext(_parqit_clip(vals[i],stub),stub), strofreal(counts[i],"%10.0gc"),
-               100 * counts[i] / total, 100 * n / total)
+               _parqit_rtext(_parqit_tab_fit(vals[i], stub, how[i]), stub),
+               strofreal(counts[i],"%10.0gc"), 100 * counts[i] / total, 100 * n / total)
     }
     printf("{txt}{hline %g}{c +}{hline 35}\n", stub+1)
     printf("%s {c |}{res}%11s%12.2f\n", _parqit_rtext("Total",stub),
@@ -4005,7 +5942,7 @@ void _parqit_print_views(string scalar resp)
         if (f[1] != "view") continue
         cur = (f[2] == "1" ? "* " : "  ")
         printf("  %s%-20s %8s %8s   %s\n", cur, _parqit_unhex(f[5]), f[3], f[4],
-               _parqit_text(_parqit_clip(_parqit_unhex(f[6]),40)))
+               _parqit_text(_parqit_clip_mid(_parqit_unhex(f[6]),40)))
     }
     fclose(fh)
     printf("    (* = current)\n\n")
@@ -4134,9 +6071,10 @@ string colvector _parqit_axis_order(string colvector vals, string scalar kind)
 void _parqit_print_tab2(string scalar resp)
 {
     real scalar      fh, i, j, r, c, n, total, stub, capacity, b, last, row, col, pad
+    real scalar      rs, width, h, l
     string scalar    line, rt, ct
     string rowvector f, vars, meta
-    string colvector rv, cv, cells_r, cells_c
+    string colvector rv, cv, cells_r, cells_c, rl, cl
     real colvector   cells_n
     real matrix      M
     real colvector   rowtot
@@ -4144,6 +6082,7 @@ void _parqit_print_tab2(string scalar resp)
 
     string scalar    k1, k2, f1, f2, lab
     string colvector rvd, cvd, lk1, lt1, lk2, lt2
+    real colvector   rhow, chow
     real scalar      uselab
     transmorphic scalar metadata
 
@@ -4197,16 +6136,20 @@ void _parqit_print_tab2(string scalar resp)
      * TAB-LABEL-1: a labelled level shows its value label unless nolabel */
     rvd = rv
     cvd = cv
+    rhow = J(r, 1, k1 == "s" ? 1 : 2)
+    chow = J(c, 1, k2 == "s" ? 1 : 2)
     if (k1 == "n") {
         for (i = 1; i <= r; i++) {
             lab = uselab ? _parqit_vlabel(rv[i], lk1, lt1) : ""
-            rvd[i] = (lab != "" ? lab : _parqit_render_num(rv[i], f1))
+            rvd[i] = (lab != "" ? lab : _parqit_tab_num(rv[i], f1))
+            if (lab != "") rhow[i] = 0
         }
     }
     if (k2 == "n") {
         for (j = 1; j <= c; j++) {
             lab = uselab ? _parqit_vlabel(cv[j], lk2, lt2) : ""
-            cvd[j] = (lab != "" ? lab : _parqit_render_num(cv[j], f2))
+            cvd[j] = (lab != "" ? lab : _parqit_tab_num(cv[j], f2))
+            if (lab != "") chow[j] = 0
         }
     }
 
@@ -4221,6 +6164,7 @@ void _parqit_print_tab2(string scalar resp)
     vars = tokens(st_local("_sq_vars"))
     meta = _parqit_statmeta(metadata,vars[1])
     rt = meta[2]=="" ? meta[1] : meta[2]
+    rs = _parqit_tab_strwidth(meta)
     meta = _parqit_statmeta(metadata,vars[2])
     ct = meta[2]=="" ? meta[1] : meta[2]
     row = st_local("parqit_tab2_row")=="1"
@@ -4232,21 +6176,39 @@ void _parqit_print_tab2(string scalar resp)
         if (col) printf("{c |} column percentage {c |}\n")
         printf("{c BLC}{hline 19}{c BRC}\n")
     }
-    stub = max((10,min((20,max((udstrlen(rt),max(udstrlen(rvd))))))))
-    capacity = max((1,floor((st_numscalar("c(linesize)")-stub-13)/11)))
+    /* TAB-LAYOUT-1: native two-way layout — the row stub is as wide as the
+     * row values (a str# variable's storage width), 10 to 21 columns; the
+     * variables' labels never widen anything: the row label wraps to the stub
+     * and ends on the column-value line, the column label wraps to the
+     * columns' width and ends on the line above it, centred; column values
+     * show 9 characters; a panel holds the columns that fit the line size */
+    stub = min((21, max((10, max(udstrlen(rvd)), rs))))
+    for (i = 1; i <= r; i++) rvd[i] = _parqit_tab_fit(rvd[i], stub, rhow[i])
+    for (j = 1; j <= c; j++) cvd[j] = _parqit_tab_fit(cvd[j], 9, chow[j])
+    rl = _parqit_tab_wrap(rt, stub)
+    capacity = max((1,floor((st_numscalar("c(linesize)")-stub-14)/11)))
     for (b=1; b<=c; b=b+capacity) {
         last = min((c,b+capacity-1))
-        if (capacity<c) printf("\n{txt}Columns %g-%g of %g\n",b,last,c)
-        pad = max((1,floor((11*(last-b+1)-1-udstrlen(ct))/2)+1))
-        printf("\n{txt}%s {c |}%s%s\n", _parqit_rtext("",stub),pad*" ",_parqit_text(ct))
-        printf("%s {c |}",_parqit_rtext(_parqit_clip(rt,stub),stub))
-        for (j=b; j<=last; j++) printf("%s%s",j>b ? " " : "",_parqit_rtext(_parqit_clip(cvd[j],10),10))
+        width = 11*(last-b+1) - 1
+        cl = _parqit_tab_wrap(ct, width)
+        h = max((rows(rl), rows(cl) + 1))
+        printf("\n")
+        for (l = 1; l < h; l++) {
+            printf("{txt}%s {c |}", _parqit_rtext(l > h - rows(rl) ? rl[l - h + rows(rl)] : "", stub))
+            if (l >= h - rows(cl)) {
+                pad = floor((width - udstrlen(cl[l - h + rows(cl) + 1])) / 2) + 1
+                printf("%s%s", pad*" ", _parqit_text(cl[l - h + rows(cl) + 1]))
+            }
+            printf("\n")
+        }
+        printf("{txt}%s {c |}",_parqit_rtext(rl[rows(rl)],stub))
+        for (j=b; j<=last; j++) printf("%s%s",j>b ? " " : "",_parqit_rtext(cvd[j],10))
         printf(" {c |}%10s\n","Total")
         printf("{hline %g}{c +}{hline %g}{c +}{hline 10}\n",stub+1,11*(last-b+1))
         for (i=1; i<=r+1; i++) {
             if (i>1 & (row | col | i==r+1))
                 printf("{txt}{hline %g}{c +}{hline %g}{c +}{hline 10}\n",stub+1,11*(last-b+1))
-            printf("{txt}%s {c |}{res}",_parqit_rtext(i<=r ? _parqit_clip(rvd[i],stub) : "Total",stub))
+            printf("{txt}%s {c |}{res}",_parqit_rtext(i<=r ? rvd[i] : "Total",stub))
             for (j=b; j<=last; j++) printf("%s%10s",j>b ? " " : "",
                 strofreal(i<=r ? M[i,j] : coltot[j],"%9.0gc"))
             printf("{txt} {c |}{res}%10s\n",strofreal(i<=r ? rowtot[i] : total,"%9.0gc"))
@@ -4427,15 +6389,20 @@ void _parqit_print_codebook(string scalar resp)
 
 void _parqit_print_distinct(string scalar resp)
 {
-    real scalar      fh, lastd
+    real scalar      fh, lastd, total, withmiss, excluded
+    real rowvector   obs
     string scalar    line
     string rowvector f
 
+    obs = J(1, 0, .)
     fh = fopen(resp, "r")
     displayas("text")
     printf("\n    Variable {c |}    Distinct           Obs\n")
     printf("{hline 13}{c +}{hline 28}\n")
     lastd = .
+    total = .
+    withmiss = 0
+    excluded = 0
     while ((line = fget(fh)) != J(0, 0, "")) {
         f = _parqit_fields(line, 4)
         if (f[1] == "dst") {
@@ -4443,14 +6410,26 @@ void _parqit_print_distinct(string scalar resp)
                    _parqit_rtext(abbrev(_parqit_unhex(f[4]),12),12),
                    _parqit_num(f[2],"%12.0gc"),_parqit_num(f[3],"%14.0gc"))
             lastd = strtoreal(f[2])
+            obs = obs, strtoreal(f[3])
         }
         else if (f[1] == "dstj") {
             printf("{txt}%s {c |}{res}%12s%14s\n",_parqit_rtext("(joint)",12),
                    _parqit_num(f[2],"%12.0gc"),_parqit_num(f[3],"%14.0gc"))
             lastd = strtoreal(f[2])
+            obs = obs, strtoreal(f[3])
+        }
+        else if (f[1] == "dstn") {
+            total = strtoreal(f[2])
+            withmiss = (f[3] == "1")
         }
     }
     fclose(fh)
+    /* DISTINCT-OBS-1: say when missing values were left out of the counts */
+    if (!withmiss & cols(obs) > 0 & total < .) excluded = any(obs :< total)
+    if (excluded) {
+        printf("{txt}(missing values excluded: Obs counts the nonmissing observations, out of %s; option {bf:missing} counts missing as one more value)\n",
+               strtrim(_parqit_num(strofreal(total, "%21.0g"), "%21.0gc")))
+    }
     printf("\n")
     st_local("parqit_ndistinct", strofreal(lastd, "%21.0g"))
 }
@@ -4463,7 +6442,8 @@ void _parqit_print_dupreport(string scalar resp)
 
     fh = fopen(resp, "r")
     displayas("text")
-    printf("\nDuplicates in terms of %s\n",_parqit_text(st_local("_sq_vars")))
+    printf("\nDuplicates in terms of %s\n",
+           st_local("_sq_vars") == "" ? "all variables" : _parqit_text(st_local("_sq_vars")))
     printf("\n{hline 38}\n%9s {c |}%13s%14s\n", "Copies", "Observations", "Surplus")
     printf("{hline 10}{c +}{hline 27}\n")
     uniq = 0
@@ -4487,49 +6467,93 @@ void _parqit_print_dupreport(string scalar resp)
     st_local("parqit_dup_total", strofreal(total, "%21.0g"))
 }
 
+/* DUP-LIST-1: the duplicated observations, shown as native duplicates list
+ * shows them: native list of Group (omitted when there is one group), Obs and
+ * the key variables, with their formats and value labels. Runs in a scratch
+ * frame (the ado creates and drops it); the key values arrive as text. */
 void _parqit_print_duplist(string scalar resp)
 {
-    real scalar      fh, i, k
-    string scalar    line, value
-    string rowvector f, parts, names, meta
+    real scalar      i, j, k, n, total, shown, ngroups, width
+    string scalar    gname, oname, vname, varlist
+    string rowvector f, keys, row, meta
+    string matrix    cells
+    real matrix      go
+    string colvector lines
     transmorphic scalar metadata
 
     metadata = _parqit_statsmeta(resp)
-    names = J(1,0,"")
+    lines = _parqit_resp_lines(resp)
+    keys = J(1, 0, "")
     k = 0
-    fh = fopen(resp, "r")
-    displayas("text")
-    while ((line = _parqit_fget(fh)) != J(0, 0, "")) {
-        f = _parqit_fields(line, 2)
-        if (f[1] == "duph2") {
+    cells = J(0, 0, "")
+    go = J(0, 2, .)
+    total = shown = ngroups = 0
+    for (i = 1; i <= rows(lines); i++) {
+        f = _parqit_fields(lines[i], 2)
+        if (f[1] == "dlh") {
             k = strtoreal(f[2])
-            f = _parqit_fields(line,k+2)
-            parts = J(1,k,"")
-            for (i=1; i<=k; i++) parts[i] = _parqit_unhex(f[i+2])
-            names = parts
-            printf("\n  ")
-            for (i = 1; i <= k; i++) printf("%-14s", _parqit_text(abbrev(parts[i],13)))
-            printf("\n  %s\n", (14 * cols(parts)) * "-")
+            f = _parqit_fields(lines[i], k + 2)
+            keys = J(1, k, "")
+            for (j = 1; j <= k; j++) keys[j] = _parqit_unhex(f[j + 2])
+            cells = J(0, k, "")
         }
-        else if (f[1] == "dupl2") {
-            f = _parqit_fields(line,k+1)
-            printf("  ")
-            for (i = 1; i <= k; i++) {
-                value = _parqit_unhex(f[i+1])
-                meta = _parqit_statmeta(metadata,names[i])
-                if (meta[4]!="s") value = _parqit_render_num(value,meta[3])
-                value = _parqit_clip(value,13)
-                printf("%s%s",_parqit_text(value),max((0,14-udstrlen(value)))*" ")
-            }
-            printf("\n")
+        else if (f[1] == "dlr") {
+            f = _parqit_fields(lines[i], k + 3)
+            go = go \ (strtoreal(f[2]), strtoreal(f[3]))
+            row = J(1, k, "")
+            for (j = 1; j <= k; j++) row[j] = _parqit_unhex(f[j + 3])
+            cells = cells \ row
         }
-        else if (f[1]=="duph" | f[1]=="dupl") {
-            errprintf("parqit: duplicate output needs the rebuilt plugin; restart Stata\n")
-            _error(198)
+        else if (f[1] == "dlt") {
+            f = _parqit_fields(lines[i], 4)
+            total = strtoreal(f[2])
+            shown = strtoreal(f[3])
+            ngroups = strtoreal(f[4])
         }
     }
-    fclose(fh)
-    printf("\n")
+    if (shown == 0) {
+        printf("\n{txt}(0 observations are duplicates)\n")
+        return
+    }
+    n = rows(go)
+    st_addobs(n)
+    gname = st_tempname()
+    oname = st_tempname()
+    (void) st_addvar("double", (gname, oname))
+    st_store(., gname, go[., 1])
+    st_store(., oname, go[., 2])
+    st_varformat(gname, "%10.0g")
+    st_varformat(oname, "%12.0g")
+    st_global(gname + "[varname]", "Group")
+    st_global(oname + "[varname]", "Obs")
+    varlist = (ngroups > 1 ? gname + " " : "") + oname
+    for (j = 1; j <= k; j++) {
+        meta = _parqit_statmeta(metadata, keys[j])
+        vname = meta[1] != "" ? meta[1] : keys[j]
+        if (meta[4] == "s") {
+            width = max((1, max(strlen(cells[., j]))))
+            (void) st_addvar(width > 2045 ? "strL" : "str" + strofreal(width), vname)
+            st_sstore(., vname, cells[., j])
+        }
+        else {
+            (void) st_addvar("double", vname)
+            st_store(., vname, strtoreal(cells[., j]))
+        }
+        if (meta[3] != "") st_varformat(vname, meta[3])
+        varlist = varlist + " " + vname
+    }
+    for (i = 1; i <= rows(lines); i++) {
+        f = _parqit_fields(lines[i], 5)
+        if (f[1] != "dlv") continue
+        vname = _parqit_statmeta(metadata, _parqit_unhex(f[2]))[1]
+        st_vlmodify(_parqit_unhex(f[3]), strtoreal(_parqit_unhex(f[4])), _parqit_unhex(f[5]))
+        st_varvaluelabel(vname, _parqit_unhex(f[3]))
+    }
+    stata("list " + varlist + ", subvarname noobs")
+    if (shown < total) {
+        printf("{txt}(first %s of %s observations in duplicate groups; option {bf:limit()} lists more)\n",
+               strtrim(strofreal(shown, "%21.0gc")), strtrim(strofreal(total, "%21.0gc")))
+    }
 }
 
 void _parqit_print_misspatterns(string scalar resp)
@@ -4781,6 +6805,11 @@ void _parqit_print_corr(string scalar resp)
     names = J(0, 1, "")
     while ((line = fget(fh)) != J(0, 0, "")) {
         f = _parqit_fields(line, 7)
+        /* CORR-ALL-1: a string variable skipped by a varlist-free call */
+        if (f[1] == "corrign") {
+            printf("{txt}(%s ignored because string variable)\n", _parqit_text(_parqit_unhex(f[2])))
+            continue
+        }
         if (f[1] != "cor") continue
         i = strtoreal(f[2])
         if (i > rows(names)) names = names \ _parqit_unhex(f[6])

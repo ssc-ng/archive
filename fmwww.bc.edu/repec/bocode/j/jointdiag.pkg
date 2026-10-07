@@ -1,0 +1,63 @@
+d 'JOINTDIAG': module to perform joint and simultaneous diagnostic tests for time-series models
+d
+d	The diagnostic tests in routine use -- Jarque-Bera,
+d Breusch-Pagan,    Breusch-Godfrey, RESET, Engle's ARCH LM -- each
+d test one departure from    the classical assumptions while
+d assuming the remaining assumptions hold.    Bera and Jarque
+d (1982) named the two consequences: undertesting (a	significant
+d AR statistic that is really a misspecified functional form)	
+d and overtesting (four separate 5% tests whose true joint size is
+d nearer    20%).    jointdiag implements the literature that
+d addresses this. It provides	 eleven subcommands of tests that
+d either detect several misspecifications    simultaneously, or
+d remain valid in the presence of the misspecification	  not
+d currently being tested. 
+d
+d KW: time series
+d KW: joint tests
+d KW: diagnostics
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261005
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f jointdiag.ado
+f jointdiag.sthlp
+f jointdiag_all.ado
+f jointdiag_all.sthlp
+f jointdiag_arch.ado
+f jointdiag_arch.sthlp
+f jointdiag_bc.ado
+f jointdiag_bc.sthlp
+f jointdiag_bilinear.ado
+f jointdiag_bilinear.sthlp
+f jointdiag_example.do
+f jointdiag_im.ado
+f jointdiag_im.sthlp
+f jointdiag_lm.ado
+f jointdiag_lm.sthlp
+f jointdiag_mata.do
+f jointdiag_methods.sthlp
+f jointdiag_mpi.ado
+f jointdiag_mpi.sthlp
+f jointdiag_nonnest.ado
+f jointdiag_nonnest.sthlp
+f jointdiag_port.ado
+f jointdiag_port.sthlp
+f jointdiag_postestimation.sthlp
+f jointdiag_score.ado
+f jointdiag_score.sthlp
+f jointdiag_spec.ado
+f jointdiag_spec.sthlp
+f ../_/_jd_coln.ado
+f ../_/_jd_efetch.ado
+f ../_/_jd_foot.ado
+f ../_/_jd_gstyle.ado
+f ../_/_jd_head.ado
+f ../_/_jd_parse.ado
+f ../_/_jd_row.ado
+f ../_/_jd_stars.ado
+f ../l/ljointdiag.mlib

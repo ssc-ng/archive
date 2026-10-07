@@ -8,6 +8,7 @@ p jmpierce module to perform Juhn-Murphy-Pierce decomposition
 p jmpierce2 module to compute trend decomposition of outcome differentials
 p jnsn module to fit Johnson distributions
 p johans module to perform Johansen-Juselius ML estimates of cointegration
+p jointdiag module to perform joint and simultaneous diagnostic tests for time-series models
 p joinvars module to join values of variables
 p jonter module to perform Jonckheere-Terpstra test
 p joy_plot module to produce joy plots

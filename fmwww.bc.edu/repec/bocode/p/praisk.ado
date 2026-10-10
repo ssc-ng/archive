@@ -5,7 +5,7 @@
 *! 1.0.0 Ariel Linden 09Mar2026
 
 program define praisk, eclass
-	version 14
+	version 11
 
 	if replay() {
 		if "`e(cmd)'" != "praisk" {

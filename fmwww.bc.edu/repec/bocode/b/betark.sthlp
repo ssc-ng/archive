@@ -1,4 +1,5 @@
 {smcl}
+{* *! version 2.0.0 30Sep2026}{...}
 {* *! version 1.0.0 27Jun2026}{...}
 {title:Title}
 
@@ -59,12 +60,13 @@ Typing {cmd:betark} without arguments replays the last estimation results.{p_end
 The following {helpb predict} options are available after {cmd:betark}:
 
 {p 8 17 2}
-{cmdab:predict} {newvar} {ifin} [{cmd:,} {it:statistic}]
+{cmdab:predict} {newvar} {ifin} [{cmd:,} {it:statistic} {cmd:ci(}{it:lclname ucIname}{cmd:)} {cmd:reps(}{it:#}{cmd:)} {cmd:level(}{it:#}{cmd:)} {cmd:seed(}{it:#}{cmd:)}]
 
-{synoptset 16 tabbed}{...}
+{synoptset 20 tabbed}{...}
 {synopthdr:statistic}
 {synoptline}
 {synopt:{opt cmean}}conditional (AR-adjusted, one-step-ahead) mean of {it:depvar}; the default{p_end}
+{synopt:{opt clinear}}conditional (AR-adjusted) linear predictor (logit scale) of {it:depvar}, before the inverse-link transform{p_end}
 {synopt:{opt cvar:iance}}conditional (AR-adjusted) variance of {it:depvar}{p_end}
 {synopt:{opt xb}}linear prediction in the mean equation, {bf:without} the AR adjustment{p_end}
 {synopt:{opt xbsc:ale}}linear prediction in the scale equation{p_end}
@@ -72,9 +74,40 @@ The following {helpb predict} options are available after {cmd:betark}:
 {p2colreset}{...}
 
 {pstd}
-{opt xb} and {opt xbscale} are available both in and out of sample. {opt cmean} and
-{opt cvariance} require lagged values of {it:depvar} and are therefore computed only
-where the full AR({it:k}) history is available within a contiguous time segment.
+{opt xb} and {opt xbscale} are available both in and out of sample. {opt cmean},
+{opt clinear}, and {opt cvariance} require lagged values of {it:depvar} and are
+therefore computed only where the full AR({it:k}) history is available within a
+contiguous time segment.
+
+{synoptset 20 tabbed}{...}
+{synopthdr:options}
+{synoptline}
+{synopt:{opt ci(lclname ucIname)}}compute a confidence interval for {opt cmean},
+{opt clinear}, or {opt cvariance}, storing the lower and upper bounds in the two
+specified new variables{p_end}
+{synopt:{opt reps(#)}}number of simulation replications used by {opt ci()}; default
+is {cmd:reps(100)}{p_end}
+{synopt:{opt level(#)}}confidence level for {opt ci()}; default is {cmd:level(95)}{p_end}
+{synopt:{opt seed(#)}}sets the random-number seed{p_end}
+{synoptline}
+{p2colreset}{...}
+
+{pstd}
+{opt ci()} is available only with {opt cmean}, {opt clinear}, or {opt cvariance}. It
+is not available with {opt xb} or {opt xbscale}, as {helpb predictnl} already 
+provides a delta-method confidence interval for those.
+
+{pstd}
+{opt ci()} computes a simulation-based (Krinsky-Robb) confidence interval
+({help betark##references:Krinsky and Robb 1986}) by drawing {opt reps(#)}
+coefficient vectors from the estimated asymptotic distribution N(e(b), e(V)), and
+recomputing the specified prediction under each draw. The {opt level(#)} percentile
+interval of the resulting distribution at each observation is reported.
+
+{pstd}
+Because {opt ci()} recomputes the requested prediction {opt reps(#)} times, it is
+slower than a single {cmd:predict} call. The default of 100 replications is
+useful for a quick, approximate check before committing to a full run. 
 
 
 
@@ -143,31 +176,41 @@ a static {cmd:betareg} fit (rho = 0) on the same mean and scale specification.
 {title:Examples}
 
 {pstd}Set-up{p_end}
-{phang2}{cmd:. use betark_example.dta}{p_end}
+{phang2}{cmd:. use barber.dta}{p_end}
 {phang2}{cmd:. tsset t}{p_end}
 
 {pstd}Fit an AR(1) model{p_end}
-{phang2}{cmd:. betark y t _x150 _x_t150, lag(1)}{p_end}
+{phang2}{cmd:. betark outcome _t _x2003m7 _x_t2003m7 , lag(1)}{p_end}
+
+{pstd}Assess fit after AR(1) adjustment {p_end}
+{phang2}{cmd:. predict mu1, cmean}{p_end}
+{phang2}{cmd:. predict v1, cvariance}{p_end}
+{phang2}{cmd:. gen rstd1 = (outcome-mu1)/sqrt(v1)}{p_end}
+{phang2}{cmd:. ac rstd1, lags(12)}{p_end}
+{phang2}{cmd:. wntestq rstd1, lags(12)}{p_end}
 
 {pstd}Fit an AR(2) model{p_end}
-{phang2}{cmd:. betark y t _x150 _x_t150, lag(2)}{p_end}
+{phang2}{cmd:. betark outcome _t _x2003m7 _x_t2003m7 , lag(2)}{p_end}
 
-{pstd}Covariates in the scale (precision) equation{p_end}
-{phang2}{cmd:. betark y t _x150 _x_t150, lag(2) scale(t)}{p_end}
+{pstd}Assess fit after AR(2) adjustment {p_end}
+{phang2}{cmd:. predict mu2, cmean}{p_end}
+{phang2}{cmd:. predict v2, cvariance}{p_end}
+{phang2}{cmd:. gen rstd2 = (outcome-mu2)/sqrt(v2)}{p_end}
+{phang2}{cmd:. ac rstd2, lags(12)}{p_end}
+{phang2}{cmd:. wntestq rstd2, lags(12)}{p_end}
 
-{pstd}Suppress the iteration log{p_end}
-{phang2}{cmd:. betark y t _x150 _x_t150, lag(2) nolog}{p_end}
+{pstd}Use predict to generate mean estimates and confidence limits{p_end}
+{phang2}{cmd:. betark outcome _t _x2003m7 _x_t2003m7 , lag(1)}{p_end}
+{phang2}{cmd:. predict cmean, cmean ci(lcl ucl) reps(2000) seed(123456789)}{p_end}
+{phang2}{cmd:. tsline outcome cmean lcl ucl, tline(2003m7)}{p_end}
 
-{pstd}Postestimation -- AR-adjusted conditional mean and variance{p_end}
-{phang2}{cmd:. betark y t _x150 _x_t150, lag(2)}{p_end}
-{phang2}{cmd:. predict mu_hat, cmean}{p_end}
-{phang2}{cmd:. predict var_hat, cvariance}{p_end}
-{phang2}{cmd:. tsline y mu_hat, xline(150)}{p_end}
-
-{pstd}Compare to the linear prediction without the AR adjustment{p_end}
-{phang2}{cmd:. predict xb_hat, xb}{p_end}
-{phang2}{cmd:. gen mu_noar = invlogit(xb_hat)}{p_end}
-{phang2}{cmd:. tsline y mu_hat mu_noar, xline(150)}{p_end}
+{pstd}Use predictnl to generate the fitted trend and confidence limits, calculated on the logit scale and then back-transformed{p_end}
+{phang2}{cmd:. betark outcome _t _x2003m7 _x_t2003m7 , lag(1)}{p_end}
+{phang2}{cmd:. predictnl eta = predict(xb) if e(sample), ci(eta_lcl eta_ucl)}{p_end}
+{phang2}{cmd:. gen trend = invlogit(eta)}{p_end}
+{phang2}{cmd:. gen trend_lcl = invlogit(eta_lcl)}{p_end}
+{phang2}{cmd:. gen trend_ucl = invlogit(eta_ucl)}{p_end}
+{phang2}{cmd:. tsline outcome trend trend_lcl trend_ucl, tline(2003m7)}{p_end}
 
 
 
@@ -234,6 +277,10 @@ Ferreira, G., J. I. Figueroa-Zuniga, and M. de Castro. 2015. Partially linear be
 regression model with autoregressive errors. {it:TEST} 24(4): 752-775.
 
 {phang}
+Krinsky, I., and A. L. Robb. 1986. On approximating the statistical properties of
+elasticities. {it:Review of Economics and Statistics} 68(4): 715-719.
+
+{phang}
 Linden, A. 2026. Beta regression with autoregressive errors for interrupted time
 series analysis of proportion and rate outcomes: A simulation study.
 Preprint. 
@@ -269,5 +316,5 @@ by joint conditional maximum likelihood. Statistical Software Components s459773
 {title:Also see}
 
 {psee}
-Online: {helpb betareg}, {helpb poissark} (if installed),
+Online: {helpb betareg}, {helpb xtbetark} (if installed), {helpb poissark} (if installed),
 {helpb praisk} (if installed), {helpb xtpraisk} (if installed) {p_end}

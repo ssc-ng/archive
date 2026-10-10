@@ -1,4 +1,5 @@
 {smcl}
+{* 06Oct2026}{...}
 {* 01Apr2026}{...}
 {* 10Feb2026}{...}
 {* 19Sep2025}{...}
@@ -57,7 +58,8 @@ must be declared. See {helpb tsset}.
 and {cmd:single} is specified {p_end}
 {synopt:{opt cont:id}{cmd:({it:{help numlist:numlist}}})}specify a list of identifiers to be used as control units in the multiple-group analysis; default is to use all{p_end}
 {synopt:{opt contid2}{cmd:({it:{help numlist:numlist}}})}specify a list of identifiers to be used as a second set of control units in a triple difference analysis (DDD-ITSA) {p_end}
-{synopt:{opt praisk}}fit a {helpb praisk} model. Default is to fit a {helpb glm} model with Newey-West standard errors {p_end}
+{synopt:{opt praisk}}fit a {helpb praisk} model for continuous dependent variables. Default is to fit a {helpb glm} model with Newey-West standard errors {p_end}
+{synopt:{opt betark}}fit a {helpb betark} model for proportion or rate dependent variables that are greater than 0 and less than 1{p_end}
 {synopt:{opt fig:ure}[{cmd:(}{it:{help twoway_options:twoway_options}}{cmd:)}]}produce an interrupted time-series plot. Specifying {cmd:figure} without options uses the default 
 graph settings {p_end}
 {synopt:{opt low:ess}}plot a lowess smoothed line of {it:depvar} on {it:timevar} on the figure{p_end}
@@ -70,7 +72,7 @@ graph settings {p_end}
 {synopt:{opt posttr:end}}produce post-intervention trend estimates using {helpb lincom}, for the specified model {p_end}
 {synopt:{opt repl:ace}}replace variables created by {cmd:itsa} if they already exist {p_end}
 {synopt:{opt pre:fix}{cmd:(}{it:string}{cmd:)}}add a prefix to the names of variables created by {cmd:itsa}. Short prefixes are recommended {p_end}
-{synopt:[{it:model_options}]}specify all available options for {helpb praisk} or {helpb glm}, depending on model chosen {p_end}
+{synopt:[{it:model_options}]}specify all available options for {helpb praisk}, {helpb betark}, or {helpb glm}, depending on model chosen {p_end}
 {synoptline}
 {p 4 6 2}* {opt trperiod()} and {opt lag()} are required. {p_end}
 {pstd}
@@ -104,6 +106,9 @@ to be heteroskedastic and possibly autocorrelated up to some user-defined lag.
 It can optionally be a wrapper for {helpb praisk}, which uses the generalized 
 least-squares method to estimate the parameters in a linear regression model 
 in which the errors are assumed to follow a {it:k}-order autoregressive process.
+If the dependent variable is a proportion or rate (greater than 0 and less than 1),
+the {helpb betark} option can be implemented as an alternative to glm with
+family(binomial) and HAC standard errors.
 
 {pstd}
 {cmd:itsa} estimates treatment effects for (1) a single treatment unit
@@ -111,8 +116,8 @@ in which the errors are assumed to follow a {it:k}-order autoregressive process.
 comparison (that is, the single treatment unit is compared to a control
 group), and (3) a "triple-difference" ITSA, in which a treatment unit is compared
 to two different sets of controls. Additionally, {cmd:itsa} can estimate treatment 
-effects for multiple treatment periods. Because itsa is a wrapper for {helpb glm}, all
-available model options are allowed. {p_end}
+effects for multiple treatment periods. Because itsa is a wrapper for {helpb glm}, 
+{helpb praisk}, and {helpb betark}, all available model options are allowed. {p_end}
 
 
 
@@ -161,6 +166,12 @@ in the same units as the panel variable specified in {cmd:tsset} {it:panelvar}
 {cmd:praisk} specifies to fit a {helpb praisk} model. If {cmd:praisk} is
 not specified, {cmd:itsa} will use {helpb glm} with Newey-West standard errors, 
 as the default model.
+
+{phang}
+{cmd:betark} specifies to fit a {helpb betark} model. This model is for dependent variables 
+that are a rate or proportion (greater than 0 and less than 1). {cmd:betark} is an alternative
+to a fractional continuous model specified with GLM using family(binomial).
+
 
 {phang}
 {cmd:figure}[{cmd:(}{it:{help twoway_options:twoway_options}}{cmd:)}] produces
@@ -378,6 +389,11 @@ Now we use the rescaled outcome ({opt cigsale_scaled}) which lies between 0 and 
 {phang3}{bf:{stata "actest, lags(12)": . actest, lags(12)}}{p_end}
 
 {pmore}
+Same as above but we now specify {cmd:betark} to fit a beta AR(1) model instead of a GLM {p_end}
+
+{phang3}{bf:{stata "itsa cigsale_scaled, single trperiod(1989) lag(1) fig posttrend betark replace ci": . itsa cigsale_scaled, single trperiod(1989) lag(1) fig posttrend betark replace ci}}{p_end}
+
+{pmore}
 Now we use the rescaled count outcome ({opt cigsale_count}) which is a non-negative integer, and accordingly, we specify the poisson GLM family with log link. Additionally, we add CIs and a
 lowess smoother to the graph {p_end}
 
@@ -467,9 +483,14 @@ We now indicate specific control groups to use in the analysis that were identif
 {phang3}{bf:{stata "itsa cigsale, treatid(3) trperiod(1989) contid(4 8 19) lag(1) replace figure(xlabel(1970(5)2000)) posttr low": . itsa cigsale, treatid(3) trperiod(1989) contid(4 8 19) lag(1) replace figure(xlabel(1970(5)2000)) posttr low}}
 
 {pmore}
-We now use the rescaled binary [0,1] version of the outcome ({opt cigsale_scaled}) with the best single match identified using {helpb itsamatch}. We also add a lowess smoother to the graph.
+We now use a proportion outcome ({opt cigsale_scaled}) with the best single match identified using {helpb itsamatch}. We also add a lowess smoother to the graph.
 
 {phang3}{bf:{stata "itsa cigsale_scaled, trperiod(1989) treatid(3) lag(1) contid(23) replace posttrend f(binomial) fig low": . itsa cigsale_scaled, trperiod(1989) treatid(3) lag(1) contid(23) replace posttrend f(binomial) fig low}}
+
+{pmore}
+Same as above but we now specify {cmd:betark} to fit a beta AR(1) model instead of a GLM.
+
+{phang3}{bf:{stata "itsa cigsale_scaled, trperiod(1989) treatid(3) lag(1) contid(23) replace posttrend betark fig low": . itsa cigsale_scaled, trperiod(1989) treatid(3) lag(1) contid(23) replace posttrend betark fig low}}
 
 {pmore}
 Now we use the rescaled count version of the outcome ({opt cigsale_count}) with matches identified using {helpb itsamatch}. We also add CIs to the graph.
@@ -649,12 +670,18 @@ Preprint. Research Square.
 
 {phang}
 ------. 2026.
-{browse "https://arxiv.org/abs/2603.24814": Multiple-group (controlled) interrupted time series analysis with higher-order autoregressive errors: A simulation study comparing Newey–West and Prais–Winsten methods}. 
-Preprint. arXiv 
+Multiple-group (controlled) interrupted time series analysis with higher-order autoregressive errors: A simulation study comparing Newey–West and Prais–Winsten methods. 
+{it:Journal of Statistical Computation and Simulation}
+DOI: 10.1080/00949655.2026.2697351
 
 {phang}
 ------. 2026.
 {browse "https://doi.org/10.48550/arXiv.2603.17281": Improving causal inference in interrupted time series analysis: the triple difference design}. 
+Preprint. arXiv
+
+{phang}
+------. 2026.
+{browse "https://arxiv.org/abs/2607.07914": Beta regression with autoregressive errors for interrupted time series analysis of proportion and rate outcomes: A simulation study}.
 Preprint. arXiv
 
 {phang} 
@@ -713,5 +740,5 @@ Simonton, D. K. 1977b. Erratum to Simonton. {it:Psychological Bulletin}
                     {it:Stata Journal}, volume 15, number 2: {browse "http://www.stata-journal.com/article.html?article=st0389":st0389}
 
 
-{p 7 14 2}Help: {helpb glm}, {helpb newey}, {helpb praisk} (if installed), {helpb actest} (if installed), {helpb itsamatch} (if installed), {helpb itsaperm} (if installed), 
-{helpb power_itsa} (if installed), {helpb xtitsa} (if installed) {p_end}
+{p 7 14 2}Help: {helpb glm}, {helpb newey}, {helpb praisk} (if installed), {helpb betark} (if installed), {helpb actest} (if installed), 
+{helpb itsamatch} (if installed), {helpb itsaperm} (if installed), {helpb power_itsa} (if installed), {helpb xtitsa} (if installed) {p_end}

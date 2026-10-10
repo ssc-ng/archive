@@ -79,6 +79,8 @@ p theildeco module to produce refined Theil index decomposition by group and qua
 p theilr2 module to compute Theil R2 Multicollinearity Effect
 p thesis_diagram module to generate LaTeX code for thesis framework diagrams with 5 templates
 p threshcoint module to execute threshold cointegration tests and models 
+p threshkit module to estimate hreshold models for cross-section and time series
+p threshkitdata module providing sample data files for threshkit
 p thsearch module to evaluate threshold search model for non-linear models based on information criterion
 p tictoc module to provide simplified timer commands
 p tidy module to ease reshaping of data

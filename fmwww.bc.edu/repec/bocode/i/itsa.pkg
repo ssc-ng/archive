@@ -14,23 +14,26 @@ d to be heteroskedastic and possibly autocorrelated up to some
 d user-defined lag.  It can optionally be a wrapper for praisk,
 d which uses the generalized least-squares method to estimate the
 d parameters in a linear regression model in which the errors are
-d assumed to follow a k-order autoregressive process. itsa
-d estimates treatment effects for (1) a single treatment unit (with
-d preintervention and postintervention observations), (2) a
+d assumed to follow a k-order autoregressive process.  If the
+d dependent variable is a proportion or rate (greater than 0 and
+d less than 1), the betark option can be implemented as an
+d alternative to glm with family(binomial) and HAC standard errors.
+d itsa estimates treatment effects for (1) a single treatment unit
+d (with preintervention and postintervention observations), (2) a
 d multiple-group comparison (that is, the single treatment unit is
 d compared to a control group), and (3) a "triple-difference" ITSA,
 d in which a treatment unit is compared to two different sets of
 d controls. Additionally, itsa can estimate treatment effects for
 d multiple treatment periods. Because itsa is a wrapper for glm,
-d all available model options are allowed. 
+d praisk, and betark, all available model options are allowed. 
 d
 d KW: interrupted time series
 d KW: quasi-experimental studies
 d KW: causal inference
 d
-d Requires: Stata version 14
+d Requires: Stata version 11
 d
-d Distribution-Date: 20260403
+d Distribution-Date: 20261009
 d
 d Author: Ariel Linden, Linden Consulting Group, LLC
 d Support: email alinden@@lindenconsulting.org
@@ -41,5 +44,8 @@ f ../g/glm2.ado
 f ../p/praisk.ado
 f ../p/praisk_p.ado
 f ../p/praisk.sthlp
+f ../b/betark.ado
+f ../b/betark_p.ado
+f ../b/betark.sthlp
 f ../c/cigsales.dta
 f ../c/cigsales_single.dta

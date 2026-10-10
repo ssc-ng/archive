@@ -1,3 +1,5 @@
+*! 1.3.1	Ariel Linden 05Oct2026	// fixed moptimize error when if/in excludes observations
+*! 1.2.0	Ariel Linden 01Oct2026  // fixed from()
 *! 1.1.0	Ariel Linden 29Sep2026	// changed version to 11.0; fixed sort ordering
 *! 1.0.0	Ariel Linden 27Jun2026
 
@@ -105,9 +107,6 @@ program define Estimate, eclass
 	local slinkf `s(slinkf)'
 	local slinkt `s(slinkt)'
 
-	// for v0.1.0, only logit/log are actually wired up in the Mata
-	// likelihood; other links are parsed (for forward compatibility
-	// with betareg's option menu) but not yet implemented
 	if "`link'" != "logit" {
 		di as err "link(`link') is not yet implemented in betark; only link(logit) is currently supported"
 		exit 198
@@ -184,36 +183,37 @@ program define Estimate, eclass
 	local k1_est : word count `indepvars_est'
 	if !`nocons_mean' local k1_est = `k1_est' + 1
 	local k2_est : word count `scale_est'
-	local k2_est = `k2_est' + 1		// scale always has _cons in v0.1.0
+	local k2_est = `k2_est' + 1		// scale always has _cons
 
-	// starting values: static betareg fit (rho = 0), on the reduced
-	// sample. Sorted by panel/time first so the fit -- and therefore the
-	// starting values passed to betark_main() -- no longer depends on
-	// whatever physical row order the data happened to arrive in. This
-	// sort is intentionally left in place (not restored) when Estimate
-	// exits, so the data remain in proper tsset order for predict's
-	// L./L2. operators afterward.
+	// starting values: static betareg fit (rho = 0), on the reduced sample. 
 	sort `panvar' `timevar'
-	tempname b0
-	if "`scale_est'" != "" local scaleopt "scale(`scale_est')"
-	else                   local scaleopt ""
-	capture quietly betareg `depvar' `indepvars_est' if `touse', `constant' `scaleopt'
-	if _rc {
-		di as err "could not obtain starting values from a static betareg fit; try from()"
-		exit 430
-	}
-	tempname bmean bscale
-	matrix `bmean'  = e(b)[1, 1..`k1_est']
-	matrix `bscale' = e(b)[1, `k1_est'+1..`k1_est'+`k2_est']
-
 	tempname b_init
-	matrix `b_init' = `bmean', `bscale', J(1, `k3', 0.1/`lag')
-
 	if `"`from'"' != "" {
 		matrix `b_init' = `from'
 	}
+	else {
+		tempname b0
+		if "`scale_est'" != "" local scaleopt "scale(`scale_est')"
+		else                   local scaleopt ""
+		capture quietly betareg `depvar' `indepvars_est' if `touse', `constant' `scaleopt'
+		if _rc {
+			di as err "could not obtain starting values from a static betareg fit; try from()"
+			exit 430
+		}
+		tempname bmean bscale
+		matrix `bmean'  = e(b)[1, 1..`k1_est']
+		matrix `bscale' = e(b)[1, `k1_est'+1..`k1_est'+`k2_est']
+
+		matrix `b_init' = `bmean', `bscale', J(1, `k3', 0.1/`lag')
+	}
 
 	di ""
+	quietly count if !`touse'
+	local nexcl_rows = r(N)
+	if `nexcl_rows' > 0 {
+		preserve
+		quietly keep if `touse'
+	}
 	mata: betark_main("`depvar'", "`indepvars_est'", "`scale_est'",	///
 	                   `lag', "`touse'", "`timevar'", "`panvar'",		///
 	                   `nocons_mean', `k1_est', `k2_est', `k3',		///
@@ -226,6 +226,10 @@ program define Estimate, eclass
 	local nobs_post  = r(nobs)
 	local niter_post = r(niter)
 	local conv_post  = r(converged)
+
+	if `nexcl_rows' > 0 {
+		restore
+	}
 
 	if `conv_post' == 0 {
 		di as txt "{p}Warning: optimizer did not report convergence within iterate(`iterate'). " ///

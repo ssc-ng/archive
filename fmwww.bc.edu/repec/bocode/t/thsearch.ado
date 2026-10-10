@@ -1,511 +1,367 @@
-*!  version 1.0.8 Ho Fai Chan 22Mar2017
+*! thsearch 1.0.0  05oct2026
+*! Dr Merwan Roudane (merwanroudane920@gmail.com) github.com/merwanroudane
+*!
+*! Which threshold variable, and which delay?
+*!
+*! Searching a SET of candidate threshold variables and then reporting the
+*! best one's ordinary p-value is one of the commonest ways to manufacture a
+*! threshold that is not there. Hansen's (1996) equation (7) defines the
+*! statistic as a supremum over the threshold value AND the candidate set, and
+*! thsearch computes exactly that: the bootstrap repeats the whole search on
+*! every replication, so the p-value it reports is a p-value of the searched
+*! statistic.
+*!
+*! Hansen (1996) Econometrica 64:413-430, doi:10.2307/2171789
+*! Hansen (1999) J. Economic Surveys 13:551-576, doi:10.1111/1467-6419.00098
+*! Tsay (1989) JASA 84:231-240, doi:10.1080/01621459.1989.10478760
+*! Terasvirta (1994) JASA 89:208-218, doi:10.1080/01621459.1994.10476462
+*! Lundbergh, Terasvirta & van Dijk (2003) JBES 21:104-121,
+*!   doi:10.1198/073500102288618810
 
-cap program drop thsearch
-program define thsearch, rclass 
+program define thsearch, rclass sortpreserve
+    version 15
 
-	version 7
-	syntax varlist [if] [in] , ///
-		THVAR(varname numeric) /// Specify the variable which threshold(s) to be determined 
-		[INTVAR(varlist numeric)] /// optional: Specify the independent variable for construction of the interaction term
-		THNUM(numlist >0 <7 integer) /// Specify number of threshold value, e.g. 1 = 2 groups; maximum is 6
-		EMODEL(string) /// Specify [estimation] model to use (put estimation options after a comma, should support all estimation options (need to pay attention whether it affects the calculation of the IC))
-		[Stepsize(real 1)] /// optional: Specify the interval in which the threshold increase, default is 1
-		[CRIteria(string)] /// optional: Criteria for model selection, default BIC
-		[SAVEfile(string)] /// optional: Name and location of the output
-		[REPLACE] ///
-		[MINth(numlist min=1)] /// optional: Specify the minimum threshold value
-		[MAXth(numlist min=1)] /// optional: Specify the maximum threshold value
-		
-	marksample touse 
-	
-	preserve
+    syntax varlist(numeric fv ts min=1) [if] [in] ,  ///
+        [ CANDidates(varlist numeric fv ts)          ///
+          DELAY(numlist integer >0 sort)             ///
+          DVar(varname numeric ts)                   ///
+          TRIM(real 0.15)                            ///
+          GRIDn(integer 0)                           ///
+          MINOBS(integer 0)                          ///
+          noCONStant                                 ///
+          STAT(string)                               ///
+          VCE(string)                                ///
+          ORDer(integer 3)                           ///
+          CRITerion(string)                          ///
+          REPS(integer 500)                          ///
+          SEED(string)                               ///
+          GRaph                                      ///
+          SAVing(string asis) ]
 
-	// Define outcome variable and set of controls
-	gettoken lhs rhs : varlist 
-	gettoken emodel eoption: emodel, parse(",")
-	gettoken next eoption: eoption, parse(",")
-	// Keeping variables listed
-	qui keep if `touse'
-	qui keep `lhs' `rhs' `thvar' `intvar' `touse'
-	
-	// Check if threshold variable has more level than number of BP specified
-	/*
-	qui levelsof `thvar' if `touse' 
-	if `thnum' >= wordcount("`r(levels)'") {
-		di as err "Too many break points specified"
-		exit 198
-	}
-	*/
-	// Check if thnum is correctly specified [positive value]
-	if `thnum' <= 0 {
-		di as err "Please specify positive number for break point value"
-		exit 198		
-	}
-	// Check if Stepsize is correctly specified [positive value]
-	if "`stepsize'" != "" {
-		if `stepsize' <= 0 {
-			di as err "Please specify positive number for break point value"
-			exit 198		
-		}
-	}
-	
-	// If intvar is not specified at all; i.e. no interaction
-	if "`intvar'" == "" {
-		tempvar all1s 
-		gen `all1s' = 1
-		local intvar = `all1s'
-	}
-	// Obtain the lower and upper bound of the threshold variable
-	qui sum `thvar' if `touse' 
-	local lowb = `r(min)'
-	local upb = `r(max)'
-	// If lowest threshold value is specified
-	if "`minth'" != "" {
-		local lowb = `minth'
-	}
-	// If highest threshold value is specified
-	if "`maxth'" != "" {
-		local upb = `maxth'
-	}
-	
-	// Post estimation results to data file 
-	forval b = 1/`thnum' {
-		local thnumlist `thnumlist' tau_`b'
-	}
-	
-	if "`savefile'" == "" {
-		tempfile tsavefile
-		tempname resultlog
-		postfile `resultlog' str20 emodel bic aic aicc hqic num_threshold `thnumlist' using `tsavefile', `replace'
+    * ------------------------------------------------ option checks
+    if "`candidates'" == "" & "`delay'" == "" {
+        display as error "specify {bf:candidates()}, {bf:delay()}, or both"
+        display as error "{bf:thsearch} has nothing to search over otherwise"
+        exit 198
+    }
+    if `trim' <= 0 | `trim' >= 0.5 {
+        display as error "{bf:trim()} must be in (0, 0.5)"
+        exit 198
+    }
+    if `order' < 0 | `order' > 3 {
+        display as error "{bf:order()} must be 0, 1, 2 or 3"
+        exit 198
+    }
+    if `reps' < 0 {
+        display as error "{bf:reps()} must be 0 or more ({bf:reps(0)} skips the bootstrap)"
+        exit 198
+    }
+    if "`stat'" == "" local stat sup
+    if !inlist("`stat'", "sup", "ave", "exp") {
+        display as error "{bf:stat()} must be sup, ave or exp"
+        exit 198
+    }
+    local statno = cond("`stat'"=="sup", 1, cond("`stat'"=="ave", 2, 3))
+    if "`criterion'" == "" local criterion ssr
+    if !inlist("`criterion'", "ssr", "lmp", "stat") {
+        display as error "{bf:criterion()} must be ssr, lmp or stat"
+        exit 198
+    }
+    if "`criterion'" == "lmp" & `order' == 0 {
+        display as error "{bf:criterion(lmp)} needs the Taylor test: do not set {bf:order(0)}"
+        exit 198
+    }
+    local robust 0
+    if "`vce'" != "" {
+        local v = lower(trim("`vce'"))
+        if inlist("`v'", "robust", "hc0", "hetero") local robust 1
+        else if "`v'" == "ols" | "`v'" == "homoskedastic" local robust 0
+        else {
+            display as error "{bf:vce()} must be robust or ols"
+            exit 198
+        }
+    }
+    if "`seed'" != "" set seed `seed'
+    local hascons = cond("`constant'"=="", 1, 0)
 
-	}
-	else if "`savefile'" != "" {
-		tempname resultlog
-		postfile `resultlog' str20 emodel bic aic aicc hqic num_threshold `thnumlist' using `savefile', `replace'
-	}
-	// estiamte maximum number of iterations
-	local uniquelv = round((`upb' - `lowb')/`stepsize')
-	local maxint = comb(`uniquelv',`thnum')
-	
-	// Start main routine
-	di as txt _newline
-	di as txt "{hline}"
-	di "Start main routine: maximum number of iterations = `maxint'"
-	di as txt "{hline}"
-	nois _dots 0, title(Progress) 
-	global dotcounter = 0
-	local ii = 0 // re-numbering so initial can be in negative values
-	forval i = `lowb'(`stepsize')`upb' {
-		if `i' < `upb' {
-			tempvar d1_`ii' int1_`ii' int0_`ii'
-			gen `d1_`ii'' = `thvar' <= `i' // First thnum
-			gen `int1_`ii'' = `d1_`ii''*`intvar' // Dummy*Main intvar
-			local skipiteration = 0 // if two dummies are the same, skip this iteration
-			if `ii' > 0 { 
-				tempvar d1_`ii'a int1_`ii'a 
-				gen `d1_`ii'a' = `thvar' <= `i'-`stepsize'
-				gen `int1_`ii'a' = `d1_`ii'a'*`intvar' 
-				cap assert `int1_`ii'' == `int1_`ii'a' 
-				if _rc == 0 {
-					local skipiteration = 1
-				}
-			}
-			cap drop `d1_`ii'a' `int1_`ii'a'
-			if `skipiteration' == 0 {
-				if `thnum' == 1 {
-					gen `int0_`ii'' = (1-`d1_`ii'')*`intvar' // 1-Dummy*Main intvar
-					// Run model and store results
-					local intlist `int1_`ii'' `int0_`ii''
-					_estmodel `emodel' `lhs' `rhs' `intlist', eoption(`eoption')
-					// Post results
-					post `resultlog' (["`emodel'"]) ([`r(bic)']) ([`r(aic)']) ([`r(aicc)']) ([`r(hqic)']) ([`thnum']) ([`i'])  
-				}
-				else {
-					local jj = 0
-					forval j = `i'(`stepsize')`upb' {
-						if `j' > `i' & `j' < `upb' {
-							tempvar d2_`jj' int2_`jj' 
-							gen `d2_`jj'' = `thvar' <= `j'
-							gen `int2_`jj'' = (`d2_`jj''-`d1_`ii'')*`intvar'
-							local skipiteration = 0 // if two dummies are the same, skip this iteration
-							if `jj' == 0 {
-								cap assert `int2_`jj'' == `int1_`ii''
-								if _rc == 0 {
-									local skipiteration = 1
-								}
-							}
-							if `jj' > 0 { 
-								tempvar d2_`jj'a int2_`jj'a 
-								gen `d2_`jj'a' = `thvar' <= `j'-`stepsize'
-								gen `int2_`jj'a' = `d2_`jj'a'*`intvar' 
-								cap assert `int2_`jj'' == `int2_`jj'a'
-								if _rc == 0 {
-									local skipiteration = 1
-								}
-							}
-							cap drop `d2_`jj'a' `int2_`jj'a'
-							if `skipiteration' == 0 {
-								if `thnum' == 2 {
-									gen `int0_`ii'' = (1-`d2_`jj'')*`intvar'					
-									// Run model and store results
-									local intlist `int1_`ii'' `int2_`jj'' `int0_`ii'' 
-									_estmodel `emodel' `lhs' `rhs' `intlist', eoption(`eoption') 
-									// Post results
-									post `resultlog' (["`emodel'"]) ([`r(bic)']) ([`r(aic)']) ([`r(aicc)']) ([`r(hqic)']) ([`thnum']) ([`i']) ([`j'])  
-									cap drop `d2_`jj'' `int2_`jj'' `int0_`ii''
-								}
-								else {
-									local kk = 0
-									forval k = `j'(`stepsize')`upb' {
-										if `k' > `j' & `k' < `upb'{
-											tempvar d3_`kk' int3_`kk' 
-											gen `d3_`kk'' = `thvar' <= `k'
-											gen `int3_`kk'' = (`d3_`kk''-`d2_`jj'')*`intvar'
-											local skipiteration = 0 // if two dummies are the same, skip this iteration
-											if `kk' == 0 {
-												cap assert `int3_`kk'' == `int2_`jj''
-												if _rc == 0 {
-													local skipiteration = 1
-												}
-											}											
-											if `kk' > 0 { 
-												tempvar d3_`kk'a int3_`kk'a 
-												gen `d3_`kk'a' = `thvar' <= `k'-`stepsize'
-												gen `int3_`kk'a' = `d3_`kk'a'*`intvar'
-												cap assert `int3_`kk'' == `int3_`kk'a' 
-												if _rc == 0 {
-													local skipiteration = 1
-												}
-											}
-											cap drop `d3_`kk'a' `int3_`kk'a' 
-											if `skipiteration' == 0 {											
-												if `thnum' == 3 {
-													gen `int0_`ii'' = (1-`d3_`kk'')*`intvar'
-													// Run model and store results
-													local intlist `int1_`ii'' `int2_`jj'' `int3_`kk'' `int0_`ii''
-													_estmodel `emodel' `lhs' `rhs' `intlist', eoption(`eoption') 
-													// Post results
-													post `resultlog' (["`emodel'"]) ([`r(bic)']) ([`r(aic)']) ([`r(aicc)']) ([`r(hqic)']) ([`thnum']) ([`i']) ([`j']) ([`k'])
-													cap drop `d3_`kk'' `int3_`kk'' `int0_`ii''
-												}
-												else {
-													local ll = 0
-													forval l = `k'(`stepsize')`upb' {
-														if `l' > `k' & `l' < `upb' {
-															tempvar d4_`ll' int4_`ll' 
-															gen `d4_`ll'' = `thvar' <= `l'
-															gen `int4_`ll'' = (`d4_`ll''-`d3_`kk'')*`intvar'
-															local skipiteration = 0 // if two dummies are the same, skip this iteration
-															if `ll' == 0 {
-																cap assert `int4_`ll'' == `int3_`kk''
-																if _rc == 0 {
-																	local skipiteration = 1
-																}
-															}											
-															if `ll' > 0 { 
-																tempvar d4_`ll'a int4_`ll'a 
-																gen `d4_`ll'a' = `thvar' <= `l'-`stepsize'
-																gen `int4_`ll'a' = `d4_`ll'a'*`intvar' 
-																cap assert `int4_`ll'' == `int4_`ll'a' 
-																if _rc == 0 {
-																	local skipiteration = 1
-																}
-															}
-															cap drop `d4_`ll'a' `int4_`ll'a' 
-															if `skipiteration' == 0 {														
-																if `thnum' == 4 {
-																	gen `int0_`ii'' = (1-`d4_`ll'')*`intvar'
-																	// Run model and store results
-																	local intlist `int1_`ii'' `int2_`jj'' `int3_`kk'' `int4_`ll'' `int0_`ii'' 
-																	_estmodel `emodel' `lhs' `rhs' `intlist', eoption(`eoption') 
-																	// Post results
-																	post `resultlog' (["`emodel'"]) ([`r(bic)']) ([`r(aic)']) ([`r(aicc)']) ([`r(hqic)']) ([`thnum']) ([`i']) ([`j']) ([`k']) ([`l'])
-																	cap drop `d4_`ll'' `int4_`ll'' `int0_`ii''
-																}
-																else {
-																	local mm = 0
-																	forval m = `l'(`stepsize')`upb' {
-																		if `m' > `l' & `m' < `upb' {
-																			tempvar d5_`mm' int5_`mm'
-																			gen `d5_`mm'' = `thvar' <= `m'
-																			gen `int5_`mm'' = (`d5_`mm''-`d4_`ll'')*`intvar'
-																			local skipiteration = 0 // if two dummies are the same, skip this iteration
-																			if `mm' == 0 {
-																				cap assert `int5_`mm'' == `int4_`ll''
-																				if _rc == 0 {
-																					local skipiteration = 1
-																				}
-																			}
-																			if `mm' > 0 { 
-																				tempvar d5_`mm'a int5_`mm'a 
-																				gen `d5_`mm'a' = `thvar' <= `m'-`stepsize'
-																				gen `int5_`mm'a' = `d5_`mm'a'*`intvar'
-																				cap assert `int5_`mm'' == `int5_`mm'a' 
-																				if _rc == 0 {
-																					local skipiteration = 1
-																				}
-																			}
-																			cap drop `d5_`mm'a' `int5_`mm'a'
-																			if `skipiteration' == 0 {
-																				if `thnum' == 5 {
-																					gen `int0_`ii'' = (1-`d5_`mm'')*`intvar'
-																					// Run model and store results
-																					local intlist `int1_`ii'' `int2_`jj'' `int3_`kk'' `int4_`ll'' `int5_`mm'' `int0_`ii'' 
-																					_estmodel `emodel' `lhs' `rhs' `intlist', eoption(`eoption') 
-																					// Post results
-																					post `resultlog' (["`emodel'"]) ([`r(bic)']) ([`r(aic)']) ([`r(aicc)']) ([`r(hqic)']) ([`thnum']) ([`i']) ([`j']) ([`k']) ([`l']) ([`m'])
-																					cap drop `d5_`mm'' `int5_`mm'' `int0_`ii''
-																				}
-																				else {
-																					local nn = 0
-																					forval n = `m'(`stepsize')`upb' {
-																						if `n' > `m' & `n' < `upb' {
-																							tempvar d6_`nn' int6_`nn' 
-																							gen `d6_`nn'' = `thvar' <= `n'
-																							gen `int6_`nn'' = (`d6_`nn''-`d5_`mm'')*`intvar'
-																							local skipiteration = 0 // if two dummies are the same, skip this iteration
-																							if `nn' == 0 {
-																								cap assert `int6_`nn'' == `int5_`mm''
-																								if _rc == 0 {
-																									local skipiteration = 1
-																								}
-																							}
-																							if `nn' > 0 { 
-																								tempvar d6_`nn'a int6_`nn'a 
-																								gen `d6_`nn'a' = `thvar' <= `n'-`stepsize'
-																								gen `int6_`nn'a' = `d6_`nn'a'*`intvar'
-																								cap assert `int6_`nn'' == `int6_`nn'a' 
-																								if _rc == 0 {
-																									local skipiteration = 1
-																								}
-																							}
-																							cap drop `d6_`nn'a' `int6_`nn'a'
-																							if `skipiteration' == 0 {
-																								if `thnum' == 6 {
-																									gen `int0_`ii'' = (1-`d6_`nn'')*`intvar'
-																									// Run model and store results
-																									local intlist `int1_`ii'' `int2_`jj'' `int3_`kk'' `int4_`ll'' `int5_`mm'' `int6_`nn'' `int0_`ii'' 
-																									_estmodel `emodel' `lhs' `rhs' `intlist', eoption(`eoption') 
-																									// Post results
-																									post `resultlog' (["`emodel'"]) ([`r(bic)']) ([`r(aic)']) ([`r(aicc)']) ([`r(hqic)']) ([`thnum']) ([`i']) ([`j']) ([`k']) ([`l']) ([`m']) ([`n'])
-																									cap drop `d6_`nn'' `int6_`nn'' `int0_`ii''
-																								}
-																								else {
-																									di as err "Too many threshold"
-																									exit 198
-																								}
-																							}
-																							local ++nn
-																						}
-																						cap drop `d6_`nn'' `int6_`nn'' 
-																					}
-																				}
-																			}
-																			local ++mm
-																		}
-																		cap drop `d5_`mm'' `int5_`mm''
-																	}
-																}
-															}
-															local ++ll
-														}
-														cap drop `d4_`ll'' `int4_`ll'' 
-													}
-												}
-											}
-											local ++kk
-										}
-										cap drop `d3_`kk'' `int3_`kk''
-									}
-								}
-							}
-							local ++jj
-						}
-						cap drop `d2_`jj'' `int2_`jj'' 
-					}
-				}
-			}
-			local ++ii
-		}
-		cap drop `d1_`ii'' `int1_`ii'' `int0_`ii''
-	}	
-	
-	postclose `resultlog'
-	restore
-	
-	// Print results 
-	preserve
-	
-	if "`savefile'" == "" {
-		use `tsavefile', clear
-	}
-	else if "`savefile'" != "" {
-		use `savefile', clear
-	}
-	
-	if "`criteria'" == "" {
-		local criteria "bic"
-	}
-	sort `criteria'
-	egen min`criteria'=min(`criteria')
+    * ------------------------------------------------ sample and regressors
+    marksample touse
+    gettoken depv indeps : varlist
+    _fv_check_depvar `depv'
 
-	// Store results
-	return local emodel = "`emodel'"
-	return local cri = "`criteria'"
-	qui sum `criteria' if `criteria'==min`criteria' 
-	local mincri = `r(min)'
-	return local mincri = `mincri'
-	forval b = 1/`thnum' {
-		qui sum tau_`b' if `criteria'==min`criteria' 
-		local tau_`b' = `r(min)'
-		return local tau_`b' = `r(min)'
-		local blist `blist' `tau_`b''
-	}
-	
-	di as txt _newline
-	di as txt "{hline}"
-	di as txt "Threshold Search Model"
-	di as txt "{hline}"
-	di as txt "Regression method: {cmd:`emodel'}"
-	di as txt "Optimal threshold value(s) of -`thvar'- at {cmd:`blist'}"
-	di as txt "Information criteria selected: {cmd:`criteria'} with lowest value {cmd:`mincri'}"
-	di as txt "Total number of regressions performed: {cmd:${dotcounter}}"
-	di as txt "{hline}"
+    if "`delay'" != "" {
+        if "`dvar'" == "" local dvar `depv'
+        capture tsset
+        if _rc {
+            display as error "{bf:delay()} builds lags, so the data must be {bf:tsset}"
+            exit 459
+        }
+    }
 
-	restore
-	
-	// Re-estimate model with the minimum IC 
-	cap drop int*_th`thnum'
-	qui sum `thvar' if `touse' 
-	*local lowb = `r(min)'
-	forval b = 1/`thnum' {
-		tempvar d`b'
-		gen `d`b'' = `thvar' <= `tau_`b''
-	}
-	gen int1_th`thnum' = `d1'*`intvar'
-	forval b = 2/`thnum' {
-		local a = `b'-1
-		gen int`b'_th`thnum' = (`d`b''-`d`a'')*`intvar'
-	}
-	gen int0_th`thnum' = (1-`d`thnum'')*`intvar'
-	
-	// Rename variable to meaningful name for dummy only and interaction terms
-	local nvlist ""
-	if "`intvar'" != "1" {
-		forval b = 1/`thnum' {
-			cap drop `thvar'X`intvar'_`b'_th`thnum'
-			rename int`b'_th`thnum' `thvar'X`intvar'_`b'_th`thnum'
-			label var `thvar'X`intvar'_`b'_th`thnum' "tau`b' at `tau_`b''"
-			local nvlist `nvlist' `thvar'X`intvar'_`b'_th`thnum'
-		}
-		cap drop `thvar'X`intvar'_0_th`thnum'
-		rename int0_th`thnum' `thvar'X`intvar'_0_th`thnum'
-		label var `thvar'X`intvar'_0_th`thnum' "Basline"
-		local nvlist `nvlist' `thvar'X`intvar'_0_th`thnum'
-	}
-	else if "`intvar'" == "1" {
-		cap drop int0_th`thnum'
-		forval b = 1/`thnum' {
-			cap drop `thvar'_D`b'_th`thnum'
-			rename int`b'_th`thnum' `thvar'_D`b'_th`thnum'
-			label var `thvar'_D`b'_th`thnum' "tau`b' at `tau_`b''"
-			local nvlist `nvlist' `thvar'_D`b'_th`thnum'
-		}
-	}
-	
-	di _newline
-	di as txt "{hline}"
-	di as text "Regression model with lowest IC: " _newline "{cmd:`emodel' `lhs' `nvlist' `rhs'`next'`eoption'}"
-	di as txt "{hline}"
-	
-	`emodel' `lhs' `nvlist' `rhs' if `touse', `eoption'
-	
-	di as txt _newline
+    local xlist ""
+    local xvars ""
+    if "`indeps'" != "" {
+        fvexpand `indeps' if `touse'
+        local xlist `r(varlist)'
+        fvrevar `xlist' if `touse'
+        local xvars `r(varlist)'
+        markout `touse' `xvars'
+    }
+    if "`xvars'" == "" & !`hascons' {
+        display as error "with {bf:noconstant} at least one regressor is required"
+        exit 198
+    }
 
+    * ------------------------------------------------ the candidate set
+    local qvars ""
+    local qnames ""
+    if "`candidates'" != "" {
+        fvexpand `candidates' if `touse'
+        local clist `r(varlist)'
+        fvrevar `clist' if `touse'
+        local qvars `r(varlist)'
+        local qnames `clist'
+    }
+    if "`delay'" != "" {
+        foreach d of local delay {
+            tempvar qd`d'
+            quietly generate double `qd`d'' = L`d'.`dvar'
+            local qvars  `qvars'  `qd`d''
+            local qnames `qnames' L`d'.`dvar'
+        }
+    }
+    local nc : word count `qvars'
+    markout `touse' `qvars'
+    quietly count if `touse'
+    local nobs = r(N)
+    if `nobs' == 0 error 2000
+    if `nobs' < 10 * (`nc' > 0) & `nobs' < 20 {
+        display as error "only `nobs' usable observations after lagging"
+        exit 2001
+    }
+
+    * ------------------------------------------------ engine
+    capture mata: tk_thsearch()
+    if _rc {
+        display as error "the search engine failed (rc=" _rc ")"
+        display as error "check that the Mata library is indexed: {bf:mata mlib index}"
+        exit _rc
+    }
+
+    tempname TAB PM BD
+    matrix `TAB' = __tk_srtab
+    matrix `PM'  = __tk_srp
+    local n      = __tk_srn
+    local ssr0   = __tk_srssr0
+    local obsmax = __tk_srmax
+    local pjoint = __tk_srpj
+    local bestc  = __tk_srbest
+    local bestlm = __tk_srbestlm
+    capture matrix `BD' = __tk_srbd
+
+    local bestname : word `bestc' of `qnames'
+    local lmname ""
+    if `bestlm' < . local lmname : word `bestlm' of `qnames'
+
+    * the column holding the statistic the bootstrap reproduced
+    local off = cond(`robust', 6, 2)
+    local scol = `off' + `statno'
+    local sname = cond(`robust', "`stat'-LM", "`stat'-F")
+
+    * which candidate attains the maximum of that statistic
+    local bests = .
+    local bestsc = .
+    forvalues c = 1/`nc' {
+        if `TAB'[`c',`scol'] < . {
+            if `bests' == . | `TAB'[`c',`scol'] > `bests' {
+                local bests = `TAB'[`c',`scol']
+                local bestsc = `c'
+            }
+        }
+    }
+    local bestsname ""
+    if `bestsc' < . local bestsname : word `bestsc' of `qnames'
+
+    * ------------------------------------------------ display
+    display ""
+    display as text "Searching for the threshold variable"
+    display as text "  Model" _col(24) as result "`depv'" as text " on " ///
+        as result "`xlist'" cond(`hascons'," _cons","")
+    display as text "  Candidates" _col(24) as result "`nc'" as text ///
+        "   N = " as result "`n'" as text "   trim = " as result %4.2f `trim'
+    display as text "  Statistic" _col(24) as result "`sname'" as text ///
+        cond(`robust', "   (heteroskedasticity-robust)", "   (homoskedastic)")
+    display ""
+    display as text "{hline 79}"
+    display as text "  candidate" _col(26) "min SSR" _col(40) "gamma" ///
+        _col(52) "`sname'" _col(64) "boot p"
+    display as text "{hline 79}"
+    forvalues c = 1/`nc' {
+        local nm : word `c' of `qnames'
+        local mark = ""
+        if `c' == `bestc' local mark = "*"
+        display as text "  `mark'" _continue
+        display as text %-22s abbrev("`nm'", 22) _continue
+        if `TAB'[`c',1] < . {
+            display as result _col(26) %13.6f `TAB'[`c',1] ///
+                _col(40) %11.6g `TAB'[`c',2] _col(50) %11.4f `TAB'[`c',`scol'] _continue
+        }
+        else {
+            display as text _col(26) %13s "(no grid)" _continue
+        }
+        if `PM'[`c',1] < . {
+            display as result _col(62) %10.4f `PM'[`c',1]
+        }
+        else display ""
+    }
+    display as text "{hline 79}"
+    display as text "  * smallest residual sum of squares"
+    if `order' > 0 {
+        display ""
+        display as text "Linearity against a smooth transition in each candidate"
+        display as text "  (order-`order' Taylor LM of Terasvirta 1994; rank-based df)"
+        display as text "{hline 79}"
+        display as text "  candidate" _col(30) "LM" _col(44) "df" _col(56) "p"
+        display as text "{hline 79}"
+        forvalues c = 1/`nc' {
+            local nm : word `c' of `qnames'
+            local mark = cond(`c' == `bestlm', "+", " ")
+            display as text "  `mark'" _continue
+            display as text %-24s abbrev("`nm'", 24) _continue
+            if `TAB'[`c',13] < . {
+                display as result _col(28) %12.4f `TAB'[`c',13] ///
+                    _col(42) %10.0f `TAB'[`c',14] _col(52) %12.4f `TAB'[`c',15]
+            }
+            else display as text _col(28) %12s "(not estimable)"
+        }
+        display as text "{hline 79}"
+        display as text "  + smallest linearity p-value"
+    }
+
+    * ------------------------------------------------ the verdict
+    display ""
+    display as text "{hline 79}"
+    display as text "Verdict"
+    display as text "{hline 79}"
+    display as text "  argmin SSR" _col(34) as result "`bestname'" ///
+        as text "   at gamma = " as result %10.6g `TAB'[`bestc',2]
+    if `bestsc' < . {
+        display as text "  argmax `sname'" _col(34) as result "`bestsname'" ///
+            as text "   stat = " as result %10.4f `bests'
+    }
+    if `order' > 0 & `bestlm' < . {
+        display as text "  argmin linearity p" _col(34) as result "`lmname'" ///
+            as text "   p = " as result %10.4f `TAB'[`bestlm',15]
+    }
+    if `pjoint' < . {
+        local mcse = sqrt(`pjoint' * (1 - `pjoint') / `reps')
+        display as text "{hline 79}"
+        display as text "  search-corrected p-value" _col(40) as result %12.4f `pjoint' ///
+            as text "   MC s.e. " as result %6.4f `mcse'
+        display as text "  (sup over gamma AND over all `nc' candidates, `reps' replications)"
+        display as text "{hline 79}"
+        display as text "  THIS is the p-value to report when the threshold variable was"
+        display as text "  chosen from the data. The ""boot p"" column above is each"
+        display as text "  candidate's own marginal p-value: valid only for a candidate"
+        display as text "  fixed a priori, and anti-conservative if it was selected here."
+    }
+    else {
+        display as text "{hline 79}"
+        display as text "  No bootstrap was run ({bf:reps(0)}), so no p-value is reported."
+        display as text "  The nominal distribution of a statistic maximised over `nc'"
+        display as text "  candidates is not chi-squared and not tabulated: without the"
+        display as text "  bootstrap this table is a ranking, not a test."
+    }
+    display as text "{hline 79}"
+    if `nc' > 1 {
+        display as text "  The three criteria need not agree. Minimum SSR is the"
+        display as text "  least-squares choice and is what {bf:thtar}/{bf:thregress} will"
+        display as text "  reproduce; the smallest linearity p-value is the"
+        display as text "  Lundbergh-Terasvirta-van Dijk rule and is the right one when a"
+        display as text "  SMOOTH transition is intended. When they disagree, the threshold"
+        display as text "  variable is not sharply identified: report that, and fit both."
+    }
+    display as text "  Next: {bf:thtar} or {bf:thregress} with the chosen variable, or"
+    display as text "  {bf:thselect} for how many thresholds it supports."
+
+    * ------------------------------------------------ graph
+    if "`graph'" != "" {
+        preserve
+            quietly {
+                clear
+                local ne = `nc'
+                set obs `ne'
+                generate int cand = _n
+                generate double ssr  = .
+                generate double stat = .
+                generate double lmp  = .
+                forvalues c = 1/`ne' {
+                    replace ssr  = `TAB'[`c',1]      in `c'
+                    replace stat = `TAB'[`c',`scol'] in `c'
+                    replace lmp  = `TAB'[`c',15]     in `c'
+                }
+                label define __tkcand 1 "x", modify
+                forvalues c = 1/`ne' {
+                    local nm : word `c' of `qnames'
+                    label define __tkcand `c' "`nm'", modify
+                }
+                label values cand __tkcand
+            }
+            twoway (connected ssr cand, sort msymbol(O) lcolor(navy) mcolor(navy)) ///
+                , ytitle("minimised SSR") xtitle("candidate threshold variable")   ///
+                  xlabel(1(1)`nc', valuelabel angle(45) labsize(small))            ///
+                  title("Which threshold variable minimises the SSR?")             ///
+                  subtitle("lower is better; a flat profile means no candidate is preferred")
+            if `"`saving'"' != "" _tk_gsave `saving'
+        restore
+    }
+
+    * ------------------------------------------------ return
+    matrix colnames `TAB' = ssr gamma_ssr supF aveF expF gamma_F ///
+        supLM aveLM expLM gamma_LM ngrid nskip LM3 df_LM3 p_LM3
+    matrix colnames `PM' = p_marginal
+    local rn ""
+    forvalues c = 1/`nc' {
+        local nm : word `c' of `qnames'
+        local rn `rn' `nm'
+    }
+    capture matrix rownames `TAB' = `rn'
+    capture matrix rownames `PM'  = `rn'
+
+    * , copy because return matrix MOVES the matrix: without it the tempname
+    * is destroyed and any later subscript of it fails with "not found".
+    return matrix table    = `TAB', copy
+    return matrix pmarg    = `PM', copy
+    capture return matrix bootdist = `BD', copy
+    return scalar N        = `n'
+    return scalar ssr0     = `ssr0'
+    return scalar n_cand   = `nc'
+    return scalar stat_max = `obsmax'
+    if `pjoint' < . {
+        return scalar p     = `pjoint'
+        return scalar p_mcse = sqrt(`pjoint' * (1 - `pjoint') / `reps')
+        return scalar reps  = `reps'
+    }
+    return scalar best     = `bestc'
+    return local  bestvar  "`bestname'"
+    return scalar gamma    = `TAB'[`bestc',2]
+    if `bestlm' < . {
+        return scalar best_lm  = `bestlm'
+        return local  bestvar_lm "`lmname'"
+    }
+    if `bestsc' < . {
+        return scalar best_stat = `bestsc'
+        return local  bestvar_stat "`bestsname'"
+    }
+    return local candidates "`qnames'"
+    return local criterion  "`criterion'"
+    return local statistic  "`sname'"
+    return local depvar     "`depv'"
+    return local indepvars  "`xlist'"
+    return local cmd        "thsearch"
+
+    * matrix drop and scalar drop take _all or exact names, NOT wildcards:
+    * "matrix drop __tk_sr*" silently drops nothing.
+    _tk_drop __tk_srn __tk_srssr0 __tk_srmax __tk_srpj __tk_srbest __tk_srbestlm
+    _tk_drop __tk_srtab __tk_srp __tk_srbd
 end
-
-// Sub-rotuine _estmodel for estimation and storing IC
-cap program drop _estmodel
-program _estmodel, rclass
-	version 13.1
-	syntax namelist, [eoption(string)]
-	gettoken emodel vars: namelist
-	// Run model 
-	qui `emodel' `vars', `eoption'
-	
-	// Ordered probit
-	if "`emodel'" == "oprobit" {
-		// Store and calculate IC
-		local n		=e(N)
-		local lnn	=log(`n')
-		local llnn	=log(`lnn')
-		local np2	=e(k_aux)
-		local np3	=e(df_m)
-		local np4	=`np2'+`np3'
-		local l1	=e(ll)
-		local ll2	=-2*e(ll)
-		local aic	=`ll2'+ 2*`np4'
-		local np5	=`np4'+1
-		local bic	=`ll2'+(`np4'*`lnn')
-		local aicc	=`ll2'+(`np4'*(1+`lnn'))
-		local hqic	=`ll2'+(`np4'*(2*`llnn'))						
-	}
-	// Probit
-	if "`emodel'" == "probit" {
-		// Store and calculate IC
-		local n		=e(N)
-		local lnn	=log(`n')
-		local llnn	=log(`lnn')
-		local np3	=e(df_m)+1
-		local np4	=`np3'
-		local l1	=e(ll)
-		local ll2 	=-2*e(ll)
-		local aic	=`ll2'+ 2*`np4'
-		local np5	=`np4'+1
-		local bic	=`ll2'+(`np4'*`lnn')
-		local aicc	=`ll2'+(`np4'*(1+`lnn'))
-		local hqic	=`ll2'+(`np4'*(2*`llnn'))
-	}
-	// Linear model
-	if regexm("`emodel'", "^ *reg(ress)? *$") == 1 | (regexm("`emodel'", "^ *xtreg *$") == 1 & regexm("`eoption'", "^ *fe") == 1) {
-		// Store and calculate IC
-		local n		=e(N)
-		local lnn	=log(`n')
-		local llnn	=log(`lnn')
-		*local np2	=e(k_aux)
-		local np3	=e(df_m)+1
-		local np4	=`np3'
-		local l1	=e(ll)
-		local ll2 	=-2*e(ll)
-		local aic	=`ll2'+ 2*`np4'
-		local np5	=`np4'+1
-		local bic	=`ll2'+(`np4'*`lnn')
-		local aicc	=`ll2'+(`np4'*(1+`lnn'))
-		local hqic	=`ll2'+(`np4'*(2*`llnn'))
-	}
-	// Other models (using -estimates stats- for BIC and AIC)
-	/*
-	else { 
-		// Store and calculate IC
-		qui estimates stats
-		mat b = r(S)
-		local bic=b[1,6]
-		local aic=b[1,5]
-		local aicc=.
-		local hqic=.
-	}
-	*/
-	return local bic = `bic'
-	return local aic = `aic'
-	return local aicc = `aicc'
-	return local hqic = `hqic'
-	
-	global dotcounter = ${dotcounter} + 1 
-	nois _dots ${dotcounter} 0
-	
-end
- 
-********************************************************************************************************************************************
-
-/*Routine end*/
-

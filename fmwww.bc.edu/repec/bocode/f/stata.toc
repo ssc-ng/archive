@@ -122,6 +122,7 @@ p frcount module to estimate fractional response model under the presence of cou
 p fre module to display one-way frequency table
 p freduse module to Import FRED (Federal Reserve Economic Database) data
 p fredusex module to import FRED data DISCONTINUED
+p freeiv module for instrument-free estimation of a linear structural model with an endogenous regressor
 p fren module to batch rename files (Windows only)
 p freplace module to batch convert ASCII text or binary patterns in files
 p freqindex module to generate an index of terms from string variable

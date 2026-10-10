@@ -1,0 +1,135 @@
+d 'THRESHKIT': module to estimate hreshold models for cross-section and time series
+d
+d    threshkit brings the threshold-model family into a single
+d package: abrupt (jump) thresholds, continuous kinks, smooth
+d transitions, asymmetric adjustment and bands of inaction,
+d together with the multivariate counterparts -- threshold VAR,
+d threshold VECM and vector smooth transition VAR. It covers the
+d three stages a threshold analysis actually goes through. First,
+d whether there is a threshold at all. The threshold is not
+d identified under the null, so the linearity and
+d threshold-existence tests carry the bootstrap p-values that
+d requires, with Davies' analytic bound available as a cheap
+d alternative (Hansen 1996, 2000; Davies 1987). Second, estimation
+d and inference. Least-squares, quantile, instrumental- variable
+d and endogenous-threshold estimators, with
+d inverted-likelihood-ratio confidence sets for the threshold
+d rather than a standard error its limit distribution does not
+d support, and the conservative intervals of Donayre, Eo and Morley
+d (2018) alongside. Third, post-estimation. Regime diagnostics
+d against the regime-split design, generalised impulse responses
+d (Koop, Pesaran and Potter 1996), the deterministic skeleton with
+d its limit cycles, forecasting, and publication-ready tables and
+d graphs. 
+d
+d KW: threshold models
+d KW: smooth transitions
+d KW: asymmetric adjuistment
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261009
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f thbandur.ado
+f thbandur.sthlp
+f thendog.ado
+f thendog.sthlp
+f thexport.ado
+f thexport.sthlp
+f thforecast.ado
+f thforecast.sthlp
+f thivreg_estat.ado
+f thivreg_p.ado
+f thivreg.ado
+f thivreg.sthlp
+f thivtest.ado
+f thivtest.sthlp
+f thkink_estat.ado
+f thkink_p.ado
+f thkink.ado
+f thkink.sthlp
+f thmtar_estat.ado
+f thmtar_p.ado
+f thmtar.ado
+f thmtar.sthlp
+f thnltest.ado
+f thnltest.sthlp
+f thnregimes.ado
+f thnregimes.sthlp
+f thnseq.ado
+f thnseq.sthlp
+f thqkink_estat.ado
+f thqkink_p.ado
+f thqkink.ado
+f thqkink.sthlp
+f thqreg_estat.ado
+f thqreg_p.ado
+f thqreg.ado
+f thqreg.sthlp
+f thqtest.ado
+f thqtest.sthlp
+f thregress_estat.ado
+f thregress_p.ado
+f thregress.ado
+f thregress.sthlp
+f threshkit_choose.sthlp
+f threshkit.sthlp
+f thsearch.ado
+f thsearch.sthlp
+f thselect.ado
+f thselect.sthlp
+f thsim.ado
+f thsim.sthlp
+f thstar_estat.ado
+f thstar_p.ado
+f thstar.ado
+f thstar.sthlp
+f thstarcycle.ado
+f thstarcycle.sthlp
+f thstr.ado
+f thstr.sthlp
+f thstrtype.ado
+f thstrtype.sthlp
+f thstvar_estat.ado
+f thstvar_p.ado
+f thstvar.ado
+f thstvar.sthlp
+f thsubci.ado
+f thsubci.sthlp
+f thsubtar_estat.ado
+f thsubtar_p.ado
+f thsubtar.ado
+f thsubtar.sthlp
+f thtar.ado
+f thtar.sthlp
+f thtarma.ado
+f thtarma.sthlp
+f thtarsel.ado
+f thtarsel.sthlp
+f thtest.ado
+f thtest.sthlp
+f thtqar.ado
+f thtqar.sthlp
+f thtvar_estat.ado
+f thtvar_p.ado
+f thtvar.ado
+f thtvar.sthlp
+f thtvarsel.ado
+f thtvarsel.sthlp
+f thtvecm_estat.ado
+f thtvecm_p.ado
+f thtvecm.ado
+f thtvecm.sthlp
+f thunitroot_estat.ado
+f thunitroot_p.ado
+f thunitroot.ado
+f thunitroot.sthlp
+f ../_/_tk_drop.ado
+f ../_/_tk_gsave.ado
+f ../_/_tk_irf.ado
+f ../_/_tk_mvdiag.ado
+f ../_/_tk_resdiag.ado
+f ../l/lthreshkit.mlib

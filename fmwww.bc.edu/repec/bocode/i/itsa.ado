@@ -1,4 +1,5 @@
-*! 1.0.0 Ariel Linden 12Mar2026						// replaced prais with praisk; lag() required with no default
+*! 4.0.0 Ariel Linden 05Oct2026						// added betark
+*! 3.8.0 Ariel Linden 12Mar2026						// replaced prais with praisk; lag() required with no default
 *! 3.7.0 Ariel Linden 12Jan2026						// streamlined graphing section of MG-ITSA. Now when xvar is specified, graph will be consistent with SG-ITSA
 *! 3.6.2 Ariel Linden 06Jan2026						// fixed bug in multigroup graph with xvars without CI.
 *! 3.6.1 Ariel Linden 16Dec2025						// fixed CI lines on graphs to consistently display as solid lines
@@ -38,7 +39,7 @@
 *! 2.0.3 Ariel Linden 14Mar2016 					// set _t to start at zero
 *! 2.0.2 Steve Samuels 28Apr2015 					// fixed lincom error for control group, multiple interventions
 *! 2.0.1 Ariel Linden 								// fixed loop for -posttrend- table with multiple periods and minor changes to verbiage on figures
-*! 2.0.0 Ariel Linden and Steve Samuels 17Sep2014 	// major changes include adding posttrend and segmented linear fits in figures
+*! 2.0.0 Ariel Linden and Steve Samuels 17Sep2014 	// added posttrend and segmented linear fits in figures
 *! 1.1.1 Ariel Linden 06Aug2014 					// added lag(#) to note and "avg." to graphs with controls. Fixed missing `touse' qualifiers
 *! 1.0.1 Ariel Linden 24Mar2014
 *! 1.0.0 Ariel Linden 12Feb2014
@@ -55,6 +56,7 @@ version 11.0
 	CONTid(numlist int sort)									/// IDs of controls (type 3: MG-ITSA)
 	CONTid2(numlist int sort)									/// IDs of second set of controls for type 4 (DDD-ITSA)
 	PRAISK														/// estimate Prais(k) model
+	BETARK														///
     POSTTRend													/// produce post-trend estimates
 	FIGure   FIGure2(str asis)									/// generate figure
 	SHADe(string)												/// shading area of graph (for wash-out)
@@ -67,8 +69,18 @@ version 11.0
 	NAT(int 5)													/// UNDOCUMENTED change _natscale #_n (for shade())
 	REPLace PREfix(str) *]
 
+	if "`praisk'" != "" & "`betark'" != "" {
+		di as err "praisk and betark options may not be combined"
+		exit 198
+	}
+
 	if "`exp'" != "" & "`praisk'" != "" {
 		di as err "weights may not be specified with praisk option"
+		exit 101
+	}
+
+	if "`exp'" != "" & "`betark'" != "" {
+		di as err "weights may not be specified with betark option"
 		exit 101
 	}
 
@@ -81,6 +93,10 @@ version 11.0
 	local lag = int(`lag')
 	if "`praisk'" != "" & `lag' < 1 {
 		di as err "lag() must be >= 1 when praisk is specified"
+		exit 198
+	}
+	if "`betark'" != "" & `lag' < 1 {
+		di as err "lag() must be >= 1 when betark is specified"
 		exit 198
 	}
 	if `lag' < 0 {
@@ -400,6 +416,35 @@ version 11.0
 			local itsavars `dvar' `rhs' `prefix'_s_`dvar1'_pred
 			char def _dta[`prefix'_itsavars] "`itsavars'"
 		} // end praisk
+		/* if betark is specified */
+		else if "`betark'" != "" {
+			betark `dvar' `rhs' `xvar' if `touse' , lag(`lag') `options'
+			capture matrix table = r(table)
+			if _rc {
+				quietly _coef_table
+				matrix table = r(table)
+			}
+			
+			local z_t z
+			local z_t_p P>|z|
+			
+			local clv `r(level)'
+			local cil `=length("`clv'")'
+			
+			if "`ci'" == "" {
+				quietly predict `prefix'_s_`dvar1'_pred if e(sample), xb
+				quietly replace `prefix'_s_`dvar1'_pred = invlogit(`prefix'_s_`dvar1'_pred) if e(sample)
+			}
+			else {
+				tempvar lcl ucl
+				quietly predictnl `prefix'_s_`dvar1'_pred = predict(xb) if e(sample), ci(`lcl' `ucl') level(`clv')
+				quietly replace `prefix'_s_`dvar1'_pred = invlogit(`prefix'_s_`dvar1'_pred) if e(sample)
+				quietly replace `lcl' = invlogit(`lcl') if e(sample)
+				quietly replace `ucl' = invlogit(`ucl') if e(sample)
+			}
+			local itsavars `dvar' `rhs' `prefix'_s_`dvar1'_pred
+			char def _dta[`prefix'_itsavars] "`itsavars'"
+		}
 		/* run a GLM model */
 		else {
 			* first run is to get values for vfactor
@@ -431,6 +476,18 @@ version 11.0
 		if "`cf'" != "" {
 			// get xvars from r(table)
 			local colnames: colnames table
+			if "`betark'" != "" {
+				local coleqs: coleq table
+				local eq1: word 1 of `coleqs'
+				local cn_all `colnames'
+				local colnames
+				local j = 0
+				foreach cn of local cn_all {
+					local ++j
+					local eqj: word `j' of `coleqs'
+					if "`eqj'" == "`eq1'" local colnames `colnames' `cn'
+				}
+			}
 			gen_cf , cmdlne(`colnames') prefix(`prefix')
 			local text = r(expr)
 			tempvar _cf
@@ -511,6 +568,10 @@ version 11.0
 				}
 			} // end glm
 			
+			else if e(cmd) == "betark" {
+				qui gen `_cf' = invlogit(`text') if `touse'
+			}
+			
 			// Prais model
 			else {
 				qui gen `_cf' = `text' if `touse'				
@@ -576,6 +637,9 @@ version 11.0
 			if `"`tdesc'"' == "" local tdesc "`tvar'"
 			if "`praisk'" !="" {
 				local note "Prais-Winsten AR(`lag') regression"
+			}
+			else if "`betark'" != "" {
+				local note "Beta AR(`lag') regression, link(`e(linkt)')"
 			}
 			else {
 				local note "GLM model: family(`e(varfunct)'), link(`e(linkt)') with Newey-West standard errors - lag(`lag')"
@@ -827,6 +891,35 @@ version 11.0
 			char def _dta[`prefix'_itsavars] "`itsavars'"
 		
 		} // end praisk
+		/* if betark is specified */
+		else if "`betark'" != "" {
+			betark `dvar' `rhs' `xvar' if `touse' & `pvar'==`treatid' , lag(`lag') `options'
+			capture matrix table = r(table)
+			if _rc {
+				quietly _coef_table
+				matrix table = r(table)
+			}
+			
+			local z_t z
+			local z_t_p P>|z|
+			
+			local clv `r(level)'
+			local cil `=length("`clv'")'
+			
+			if "`ci'" == "" {
+				quietly predict `prefix'_s_`dvar1'_pred if e(sample), xb
+				quietly replace `prefix'_s_`dvar1'_pred = invlogit(`prefix'_s_`dvar1'_pred) if e(sample)
+			}
+			else {
+				tempvar lcl ucl
+				quietly predictnl `prefix'_s_`dvar1'_pred = predict(xb) if e(sample), ci(`lcl' `ucl') level(`clv')
+				quietly replace `prefix'_s_`dvar1'_pred = invlogit(`prefix'_s_`dvar1'_pred) if e(sample)
+				quietly replace `lcl' = invlogit(`lcl') if e(sample)
+				quietly replace `ucl' = invlogit(`ucl') if e(sample)
+			}
+			local itsavars `dvar' `rhs' `prefix'_s_`dvar1'_pred
+			char def _dta[`prefix'_itsavars] "`itsavars'"
+		}
 		/* GLM */
 		else {
 			* first run is to get values for vfactor
@@ -859,6 +952,18 @@ version 11.0
 		if "`cf'" != "" {
 			// get xvars from r(table)
 			local colnames: colnames table
+			if "`betark'" != "" {
+				local coleqs: coleq table
+				local eq1: word 1 of `coleqs'
+				local cn_all `colnames'
+				local colnames
+				local j = 0
+				foreach cn of local cn_all {
+					local ++j
+					local eqj: word `j' of `coleqs'
+					if "`eqj'" == "`eq1'" local colnames `colnames' `cn'
+				}
+			}
 			gen_cf , cmdlne(`colnames') prefix(`prefix')
 			local text = r(expr)
 			tempvar _cf
@@ -938,6 +1043,10 @@ version 11.0
 					qui gen `_cf' = `text' if `touse'
 				}
 			} // end glm
+			/* if betark is specified */
+			else if e(cmd) == "betark" {
+				qui gen `_cf' = invlogit(`text') if `touse'
+			}
 			
 			// Prais model
 			else {
@@ -1008,6 +1117,9 @@ version 11.0
 
 			if "`praisk'" !="" {
 				local note "Prais-Winsten AR(`lag') regression"
+			}
+			else if "`betark'" != "" {
+				local note "Beta AR(`lag') regression, link(`e(linkt)')"
 			}
 			else {
 				local note "GLM model: family(`e(varfunct)'), link(`e(linkt)') with Newey-West standard errors - lag(`lag')"
@@ -1246,6 +1358,17 @@ version 11.0
 			local z_t t
 			local z_t_p P>|t|				
 		}
+		/* if betark is specified */
+		else if "`betark'" != "" {
+			betark `dvar' `rhs' `xvar' if `touse' `if2' , lag(`lag') `options'
+			capture matrix table = r(table)
+			if _rc {
+				quietly _coef_table
+				matrix table = r(table)
+			}
+			local z_t z
+			local z_t_p P>|z|
+		}
 		else {
 			* first run is to get values for vfactor
 			qui glm2 `dvar' `rhs' `xvar' if `touse' `if2' [`weight' `exp'], force nodisplay `options'
@@ -1264,9 +1387,15 @@ version 11.0
 		local clv `r(level)'
 		local cil `=length("`clv'")'
 		
-		/* generating CI values depending on whether the model was praisk or GLM */
+		/* generating CI values depending on whether the model was praisk, GLM, or betark */
 		if "`ci'" == "" {
-			quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample)
+			if "`betark'" != "" {
+				quietly predict `prefix'_m_`dvar'_pred if e(sample), xb
+				quietly replace `prefix'_m_`dvar'_pred = invlogit(`prefix'_m_`dvar'_pred) if e(sample)
+			}
+			else {
+				quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample)
+			}
 			local itsavars `dvar' `rhs' `prefix'_m_`dvar'_pred
 			char def _dta[`prefix'_itsavars] "`itsavars'"
 		}
@@ -1274,6 +1403,12 @@ version 11.0
 			tempvar lcl ucl
 			if "`praisk'" != "" {
 				quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample), ci(`lcl' `ucl')  df(`e(df_r)') level(`clv')	
+			}
+			else if "`betark'" != "" {
+				quietly predictnl `prefix'_m_`dvar'_pred = predict(xb) if e(sample), ci(`lcl' `ucl') level(`clv')
+				quietly replace `prefix'_m_`dvar'_pred = invlogit(`prefix'_m_`dvar'_pred) if e(sample)
+				quietly replace `lcl' = invlogit(`lcl') if e(sample)
+				quietly replace `ucl' = invlogit(`ucl') if e(sample)
 			}
 			else {
 				quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample), ci(`lcl' `ucl') level(`clv') 
@@ -1388,6 +1523,9 @@ version 11.0
 
 			if "`praisk'" !="" {
 				local note "Prais-Winsten AR(`lag') regression"
+			}
+			else if "`betark'" != "" {
+				local note "Beta AR(`lag') regression, link(`e(linkt)')"
 			}
 			else {
 				local note "GLM model: family(`e(varfunct)'), link(`e(linkt)') with Newey-West standard errors - lag(`lag')"
@@ -1760,6 +1898,17 @@ version 11.0
 			local z_t t
 			local z_t_p P>|t|				
 		}
+		/* if betark is specified */
+		else if "`betark'" != "" {
+			betark `dvar' `rhs' `xvar' if `touse' `if2' , lag(`lag') `options'
+			capture matrix table = r(table)
+			if _rc {
+				quietly _coef_table
+				matrix table = r(table)
+			}
+			local z_t z
+			local z_t_p P>|z|
+		}
 		// glm model
 		else {
 			qui glm2 `dvar' `rhs' `xvar' if `touse' `if2' [`weight' `exp'], force nodisplay `options'
@@ -1774,7 +1923,13 @@ version 11.0
 		local cil `=length("`clv'")'
     
 		if "`ci'" == "" {
-			quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample)
+			if "`betark'" != "" {
+				quietly predict `prefix'_m_`dvar'_pred if e(sample), xb
+				quietly replace `prefix'_m_`dvar'_pred = invlogit(`prefix'_m_`dvar'_pred) if e(sample)
+			}
+			else {
+				quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample)
+			}
 			local itsavars `dvar' `rhs' `prefix'_m_`dvar'_pred
 			char def _dta[`prefix'_itsavars] "`itsavars'"
 		}
@@ -1782,6 +1937,12 @@ version 11.0
 			tempvar lcl ucl
 			if "`praisk'" != "" {
 				quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample), ci(`lcl' `ucl')  df(`e(df_r)') level(`clv')	
+			}
+			else if "`betark'" != "" {
+				quietly predictnl `prefix'_m_`dvar'_pred = predict(xb) if e(sample), ci(`lcl' `ucl') level(`clv')
+				quietly replace `prefix'_m_`dvar'_pred = invlogit(`prefix'_m_`dvar'_pred) if e(sample)
+				quietly replace `lcl' = invlogit(`lcl') if e(sample)
+				quietly replace `ucl' = invlogit(`ucl') if e(sample)
 			}
 			else {
 				quietly predictnl `prefix'_m_`dvar'_pred = predict() if e(sample), ci(`lcl' `ucl') level(`clv') 
@@ -1962,6 +2123,9 @@ version 11.0
 			if "`treatdesc'" == "" local treatdesc "Treated"
 			if "`praisk'" !="" {
 				local note "Prais-Winsten AR(`lag') regression"
+			}
+			else if "`betark'" != "" {
+				local note "Beta AR(`lag') regression, link(`e(linkt)')"
 			}
 			else {
 				local note "GLM model: family(`e(varfunct)'), link(`e(linkt)') with Newey-West standard errors - lag(`lag')"

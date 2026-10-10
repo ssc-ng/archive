@@ -1,0 +1,22 @@
+d 'THRESHKITDATA': module providing sample data files for threshkit
+d
+d  This routine provides data files for threshkit. 
+d
+d KW: threshold models
+d KW: smooth transitions
+d KW: asymmetric adjuistment
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261009
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f threshkitdata.ado
+f threshkitdata.sthlp
+f threshkit_dj.dta
+f threshkit_example.do
+f threshkit_kink.dta
+f threshkit_rates.dta
+f threshkit_ur.dta

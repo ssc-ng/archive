@@ -16,7 +16,7 @@ d KW: probit
 d
 d Requires: Stata version 15.1
 d
-d Distribution-Date: 20260925
+d Distribution-Date: 20261010
 d
 d Author: Jiang ZhenYuan ,  School of Economics, Northwest Normal University
 d Support: email kangjang504@@gmail.com
@@ -31,4 +31,4 @@ f cvcombo_specification_curve.png
 f cvcombo_specification_curve.svg
 f cvcombo_test_logit.dta
 f cvcombo_test_regress.dta
-f test_cvcombo.do
+f ../t/test_cvcombo.do

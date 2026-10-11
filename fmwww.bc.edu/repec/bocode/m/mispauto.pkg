@@ -1,0 +1,29 @@
+d 'MISPAUTO': module supporting discrimination between autocorrelation and misspecification
+d
+d  A significant Durbin-Watson statistic is consistent with at
+d least four different states of the world -- no problem, AR(1)
+d disturbances, non-AR(1) autocorrelation, or misspecification of
+d the regression function -- and the appropriate responses are
+d mutually incompatible. 
+d
+d KW: autocorrelation
+d KW: misspecification
+d KW: time series
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261010
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f mispauto.ado
+f mispauto.sthlp
+f mispauto_ghutton.sthlp
+f mispauto_godfrey.sthlp
+f mispauto_knottnerus.sthlp
+f mispauto_methods.sthlp
+f mispauto_postestimation.sthlp
+f mispauto_thursby.sthlp
+f mispauto_demo.do
+f mispauto_example.do

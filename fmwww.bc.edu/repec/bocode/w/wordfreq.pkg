@@ -1,0 +1,27 @@
+d 'WORDFREQ': module to provide Bilingual (Chinese/English) keyword-frequency statistics for PDF report corpora and for text already held in memory
+d
+d	 wordfreq counts how often each of a set of user-supplied
+d keywords occurs in a corpus of documents and returns one   
+d word-frequency variable per keyword, together with a
+d total-frequency variable.  Both Chinese and English are
+d supported. 
+d
+d KW: text processing
+d KW: frequencies
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261010
+d
+d Author: Wu LiangHai,  Anhui University of Technology
+d Support: email agd2010@@yeah.net
+d
+d Author:   Wu Hanyan, Nanjing University of Aeronautics and Astronautics
+d Support: email    2325476320@@qq.com
+d
+d Author:    Xu Huihui  ,  Anhui University of Technology
+d Support: email  2847844621@@qq.com         
+d
+f wordfreq.ado
+f wordfreq_pdf.py
+f wordfreq.sthlp

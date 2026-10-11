@@ -1,0 +1,36 @@
+d 'SURARDL': module to perform seemingly unrelated ARDL cointegration and bounds testing
+d
+d   surardl estimates the seemingly unrelated autoregressive
+d distributed lag (SUR-ARDL) model of Arif and Furuoka (2026),
+d which writes the Pesaran, Shin and Smith (2001) conditional
+d error-correction specification for each of N cross-sectional
+d units and estimates the N equations jointly as a Zellner (1962)
+d SUR system by feasible GLS. Because the ARDL lag structure
+d absorbs short-run dynamics and regressor endogeneity
+d parametrically, the estimator needs only the N x N
+d contemporaneous error covariance rather than the 2N x 2N long-run
+d covariance required by the fully modified SUR estimator of
+d Wagner, Grabarczyk and Hong (2020) or the banded inverse
+d autocovariance of Lin and Reuvers (2025). It is intended for
+d panels with small N and moderate to large T. 
+d
+d KW: ARDL
+d KW: cointegration
+d KW: bounds testing
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261010
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f surardl.ado
+f surardl.sthlp
+f surardl_methods.sthlp
+f surardl_p.ado
+f surardl_postestimation.sthlp
+f surardl_estat.ado
+f surardl_asean6.do
+f surardl_asean6.dta
+f surardl_example.do

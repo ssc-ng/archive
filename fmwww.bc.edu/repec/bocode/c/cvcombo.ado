@@ -1,31 +1,88 @@
-*! version 2.0.0 25sep2026
+*! version 2.1.3 08oct2026
 *! cvcombo: Control-variable all-combinations robustness test
-*! Author: Jiang ZhenYuan(蒋镇源) & Zhang Na(张娜)
+*! Author: Jiang ZhenYuan(蒋镇源), Zhang Na(张娜) & Meng Ruoqi(蒙若琪)
 *! Affiliation: School of Economics, Northwest Normal University
-*! E-mail: kangjang504@gmail.com; zhangna@nwnu.edu.cn
+*! E-mail: kangjang504@gmail.com; zhangna@nwnu.edu.cn; 202421080980@nwnu.edu.cn
 
 program define cvcombo, rclass
     version 15.1
 
+    * Keep the public parser deliberately conservative for Stata 15.1.
+    * In particular, controls() and samplevars() are plain varlists; the
+    * command itself does the additional validation/markout work below.
     syntax varlist(min=2 max=2 numeric) [if] [in], ///
         METHOD(string) ///
-        CONTROLS(varlist min=1 fv ts) ///
+        CONTROLS(varlist) ///
         [OPTIONS(string asis) ABSORB(string asis) CLUSTER(string asis) ///
-         SAMPLEVars(varlist) LEVEL(real 95) SAVing(string) REPLACE ///
+         QUANTile(string) SAMPLEVars(varlist) LEVEL(real 95) SAVing(string) REPLACE ///
          GRAPHPrefix(string) PAPER PAPERDir(string) DOCX(string) NOGRAPH]
 
     * ------------------------------------------------------------
     * User-supplied estimation method
     * ------------------------------------------------------------
     local method = strtrim("`method'")
+    local method_lc = lower("`method'")
     if `"`method'"' == "" {
         di as error "method() is required."
-        di as error "Examples: method(regress), method(xtreg), method(logit), method(probit), method(reghdfe)"
+        di as error "Examples: method(regress), method(xtreg), method(logit), method(probit), method(reghdfe), method(qreg)"
         exit 198
     }
 
     if (`level' <= 0 | `level' >= 100) {
         di as error "level() must be between 0 and 100."
+        exit 198
+    }
+
+    * Dedicated quantile() support for Stata's qreg/bsqreg.
+    * Stata interprets values in (0,1) as probabilities and values
+    * greater than 1 as percentages (e.g. quantile(.25) or quantile(25)).
+    local is_qreg = inlist("`method_lc'", "qreg", "bsqreg")
+    local quantile_value = .
+    local model_quantile ""
+    local qraw = strtrim(`"`quantile'"')
+    if `"`qraw'"' != "" {
+        local qnum = real("`qraw'")
+        if missing(`qnum') {
+            di as error "quantile() must contain a numeric value, e.g. .25, .5, 25, or 50."
+            exit 198
+        }
+        if (`qnum' <= 0 | `qnum' >= 100 | `qnum' == 1) {
+            di as error "quantile() must be in (0,1) or (1,100); e.g. .25, .5, 25, or 50."
+            exit 198
+        }
+        if !`is_qreg' {
+            di as error "quantile() is only supported with method(qreg) or method(bsqreg)."
+            exit 198
+        }
+        if strpos(lower(`"`options'"'), "quantile(") > 0 {
+            di as error "Specify the quantile either with quantile() or inside options(), not both."
+            exit 198
+        }
+        local quantile_value = `qnum'
+        if `qnum' > 1 local quantile_value = `qnum'/100
+        local model_quantile "quantile(`quantile_value')"
+    }
+
+    * qreg and bsqreg provide iid/robust VCEs only. Do not silently
+    * pretend that cluster() or absorb() are supported by these estimators.
+    if `is_qreg' & `"`absorb'"' != "" {
+        di as error "method(`method') does not support absorb()."
+        di as error "For fixed-effects quantile regression use a dedicated panel-quantile estimator."
+        exit 198
+    }
+    if `is_qreg' & `"`cluster'"' != "" {
+        di as error "method(`method') does not support cluster() directly."
+        di as error "Use method(qreg) with vce(robust), or a dedicated clustered-quantile estimator."
+        exit 198
+    }
+
+    * Prevent duplicate absorb()/VCE specifications.
+    if `"`absorb'"' != "" & strpos(lower(`"`options'"'), "absorb(") > 0 {
+        di as error "Specify absorb() either as a cvcombo option or inside options(), not both."
+        exit 198
+    }
+    if `"`cluster'"' != "" & strpos(lower(`"`options'"'), "vce(") > 0 {
+        di as error "Specify cluster() or a vce() option, not both."
         exit 198
     }
 
@@ -68,6 +125,10 @@ program define cvcombo, rclass
     * ------------------------------------------------------------
     local modelopts `"`options'"'
 
+    if `"`model_quantile'"' != "" {
+        local modelopts `"`modelopts' `model_quantile'"'
+    }
+
     if `"`absorb'"' != "" {
         local modelopts `"`modelopts' absorb(`absorb')"'
     }
@@ -77,6 +138,17 @@ program define cvcombo, rclass
     }
 
     local modelopts : list retokenize modelopts
+
+    local n_absorb : word count `absorb'
+    local n_cluster : word count `cluster'
+    local fe_label "none"
+    local cluster_label "none"
+    if `n_absorb' == 1 local fe_label "one-way"
+    if `n_absorb' == 2 local fe_label "two-way"
+    if `n_absorb' > 2 local fe_label "multi-way"
+    if `n_cluster' == 1 local cluster_label "one-way"
+    if `n_cluster' == 2 local cluster_label "two-way"
+    if `n_cluster' > 2 local cluster_label "multi-way"
 
     * ------------------------------------------------------------
     * Helper: construct the command from method() and model options.
@@ -88,7 +160,7 @@ program define cvcombo, rclass
         local basecmd `"`basecmd', `modelopts'"'
     }
 
-    di as text _newline "cvcombo v2.0 | method = " as result "`method'"
+    di as text _newline "cvcombo v2.1.3 | method = " as result "`method'"
     di as text "Constructed baseline command:"
     di as result `"`basecmd'"'
 
@@ -137,6 +209,16 @@ program define cvcombo, rclass
 
     di as text _newline "Baseline model stored as: CVCOMBO_BASELINE"
     di as text "Method: " as result "`method'"
+    if `is_qreg' {
+        if `"`quantile'"' == "" {
+            di as text "Quantile: " as result "0.50 (estimator default)"
+        }
+        else {
+            di as text "Quantile: " as result %6.3f `quantile_value'
+        }
+    }
+    di as text "Fixed effects: " as result "`fe_label'"
+    di as text "Clustering: " as result "`cluster_label'"
     di as text "Baseline command:"
     di as result `"`basecmdline'"'
     di as text "Baseline coefficient on `mainvar': " %10.6f `base_b' ///
@@ -165,11 +247,16 @@ program define cvcombo, rclass
         byte baseline ///
         long N ///
         double df_r ///
+        double quantile ///
         str2045 controls_str ///
         using "`results'", replace
 
     * ------------------------------------------------------------
     * Enumerate all nonempty subsets using a bit mask.
+    *
+    * Optimization: the all-controls model was already estimated as the
+    * baseline above, so the baseline specification is not re-estimated.
+    * This is especially useful for qreg/bsqreg and high-dimensional FE.
     * ------------------------------------------------------------
     forvalues mask = 1/`total' {
 
@@ -188,71 +275,101 @@ program define cvcombo, rclass
         local combo : list retokenize combo
         local isbase = (`mask' == `total')
 
-        local thiscmd `"`method' `depvar' `mainvar' `combo' if `touse'"'
-        if `"`modelopts'"' != "" {
-            local thiscmd `"`thiscmd', `modelopts'"'
+        if `isbase' {
+            * Reuse baseline estimates already calculated above.
+            local b_this   = `base_b'
+            local se_this  = `base_se'
+            local t_this   = `base_t'
+            local p_this   = `base_p'
+            local lo_this  = `base_lo'
+            local hi_this  = `base_hi'
+            local df_this  = `base_df'
+            local N_this   = `base_N'
+            local dir_this = cond(`b_this' > 0, 1, cond(`b_this' < 0, -1, 0))
+            local p01_this = (`p_this' < .01)
+            local p05_this = (`p_this' < .05)
+            local p10_this = (`p_this' < .10)
+            local p15_this = (`p_this' < .15)
+
+            post `posth' ///
+                (`mask') (`nctrl') (1) ///
+                (`b_this') (`se_this') (`t_this') (`p_this') ///
+                (`lo_this') (`hi_this') (`dir_this') ///
+                (`p01_this') (`p05_this') (`p10_this') (`p15_this') ///
+                (`isbase') (`N_this') (`df_this') (`quantile_value') ("`combo'")
         }
+        else {
+            local thiscmd `"`method' `depvar' `mainvar' `combo' if `touse'"'
+            if `"`modelopts'"' != "" {
+                local thiscmd `"`thiscmd', `modelopts'"'
+            }
 
-        capture quietly `thiscmd'
+            capture quietly `thiscmd'
+            local est_rc = _rc
 
-        if _rc == 0 {
-            capture scalar __cvcombo_b = _b[`mainvar']
-            capture scalar __cvcombo_se = _se[`mainvar']
+            if `est_rc' == 0 {
+                capture scalar __cvcombo_b = _b[`mainvar']
+                local getb_rc = _rc
+                capture scalar __cvcombo_se = _se[`mainvar']
+                local gets_rc = _rc
 
-            if _rc == 0 & !missing(__cvcombo_b) & !missing(__cvcombo_se) & __cvcombo_se > 0 {
+                if `getb_rc' == 0 & `gets_rc' == 0 ///
+                    & !missing(__cvcombo_b) & !missing(__cvcombo_se) ///
+                    & __cvcombo_se > 0 {
 
-                local b_this  = _b[`mainvar']
-                local se_this = _se[`mainvar']
-                local t_this  = `b_this'/`se_this'
+                    local b_this  = _b[`mainvar']
+                    local se_this = _se[`mainvar']
+                    local t_this  = `b_this'/`se_this'
 
-                capture confirm scalar e(df_r)
-                local use_t = 0
-                local df_this = .
-                if !_rc {
-                    local df_this = e(df_r)
-                    if !missing(`df_this') local use_t = 1
-                }
+                    capture confirm scalar e(df_r)
+                    local use_t = 0
+                    local df_this = .
+                    if !_rc {
+                        local df_this = e(df_r)
+                        if !missing(`df_this') local use_t = 1
+                    }
 
-                if `use_t' {
-                    local p_this = 2*ttail(`df_this', abs(`t_this'))
-                    local crit_this = invttail(`df_this', (100-`level')/200)
+                    if `use_t' {
+                        local p_this = 2*ttail(`df_this', abs(`t_this'))
+                        local crit_this = invttail(`df_this', (100-`level')/200)
+                    }
+                    else {
+                        local p_this = 2*(1-normal(abs(`t_this')))
+                        local crit_this = invnormal(1-(100-`level')/200)
+                    }
+
+                    local lo_this = `b_this' - `crit_this'*`se_this'
+                    local hi_this = `b_this' + `crit_this'*`se_this'
+
+                    local dir_this = cond(`b_this' > 0, 1, cond(`b_this' < 0, -1, 0))
+                    local p01_this = (`p_this' < .01)
+                    local p05_this = (`p_this' < .05)
+                    local p10_this = (`p_this' < .10)
+                    local p15_this = (`p_this' < .15)
+                    local N_this = e(N)
+
+                    post `posth' ///
+                        (`mask') (`nctrl') (1) ///
+                        (`b_this') (`se_this') (`t_this') (`p_this') ///
+                        (`lo_this') (`hi_this') (`dir_this') ///
+                        (`p01_this') (`p05_this') (`p10_this') (`p15_this') ///
+                        (`isbase') (`N_this') (`df_this') (`quantile_value') ("`combo'")
                 }
                 else {
-                    local p_this = 2*(1-normal(abs(`t_this')))
-                    local crit_this = invnormal(1-(100-`level')/200)
+                    post `posth' ///
+                        (`mask') (`nctrl') (0) ///
+                        (.) (.) (.) (.) (.) (.) (.) ///
+                        (.) (.) (.) (.) ///
+                        (`isbase') (.) (.) (`quantile_value') ("`combo'")
                 }
-
-                local lo_this = `b_this' - `crit_this'*`se_this'
-                local hi_this = `b_this' + `crit_this'*`se_this'
-
-                local dir_this = cond(`b_this' > 0, 1, cond(`b_this' < 0, -1, 0))
-                local p01_this = (`p_this' < .01)
-                local p05_this = (`p_this' < .05)
-                local p10_this = (`p_this' < .10)
-                local p15_this = (`p_this' < .15)
-                local N_this = e(N)
-
-                post `posth' ///
-                    (`mask') (`nctrl') (1) ///
-                    (`b_this') (`se_this') (`t_this') (`p_this') ///
-                    (`lo_this') (`hi_this') (`dir_this') ///
-                    (`p01_this') (`p05_this') (`p10_this') (`p15_this') ///
-                    (`isbase') (`N_this') (`df_this') ("`combo'")
             }
             else {
                 post `posth' ///
                     (`mask') (`nctrl') (0) ///
                     (.) (.) (.) (.) (.) (.) (.) ///
                     (.) (.) (.) (.) ///
-                    (`isbase') (.) (.) ("`combo'")
+                    (`isbase') (.) (.) (`quantile_value') ("`combo'")
             }
-        }
-        else {
-            post `posth' ///
-                (`mask') (`nctrl') (0) ///
-                (.) (.) (.) (.) (.) (.) (.) ///
-                (.) (.) (.) (.) ///
-                (`isbase') (.) (.) ("`combo'")
         }
     }
 
@@ -262,11 +379,11 @@ program define cvcombo, rclass
     * Summary statistics / graphs
     * ------------------------------------------------------------
     preserve
-        use "`results'", clear
+        quietly use "`results'", clear
 
-        count if ok == 1
+        quietly count if ok == 1
         local nsuccess = r(N)
-        count if ok == 0
+        quietly count if ok == 0
         local nfail = r(N)
 
         if `nsuccess' == 0 {
@@ -276,32 +393,32 @@ program define cvcombo, rclass
         }
 
         * Significance
-        count if ok == 1 & p < .01
+        quietly count if ok == 1 & p < .01
         local n01 = r(N)
         local pct01 = 100*`n01'/`nsuccess'
 
-        count if ok == 1 & p < .05
+        quietly count if ok == 1 & p < .05
         local n05 = r(N)
         local pct05 = 100*`n05'/`nsuccess'
 
-        count if ok == 1 & p < .10
+        quietly count if ok == 1 & p < .10
         local n10 = r(N)
         local pct10 = 100*`n10'/`nsuccess'
 
-        count if ok == 1 & p < .15
+        quietly count if ok == 1 & p < .15
         local n15 = r(N)
         local pct15 = 100*`n15'/`nsuccess'
 
         * Direction
-        count if ok == 1 & direction > 0
+        quietly count if ok == 1 & direction > 0
         local npos = r(N)
         local pctpos = 100*`npos'/`nsuccess'
 
-        count if ok == 1 & direction < 0
+        quietly count if ok == 1 & direction < 0
         local nneg = r(N)
         local pctneg = 100*`nneg'/`nsuccess'
 
-        count if ok == 1 & direction == 0
+        quietly count if ok == 1 & direction == 0
         local nzero = r(N)
         local pctzero = 100*`nzero'/`nsuccess'
 
@@ -321,17 +438,25 @@ program define cvcombo, rclass
         local ci_median_width = r(p50)
 
         * CI excludes zero
-        count if ok == 1 & (lo > 0 | hi < 0)
+        quietly count if ok == 1 & (lo > 0 | hi < 0)
         local nci = r(N)
         local pctci = 100*`nci'/`nsuccess'
 
         * Summary
         di as text _newline "=============================================================="
-        di as text " cvcombo v2.0 summary"
+        di as text " cvcombo v2.1.3 summary"
         di as text "=============================================================="
-        di as text "Author: Jiang ZhenYuan(蒋镇源) & Zhang Na(张娜)"
-        di as text "Affiliation: School of Economics, Northwest Normal University"
         di as text "Method: " as result "`method'"
+        if `is_qreg' {
+            if `"`quantile'"' == "" {
+                di as text "Quantile: " as result "0.50 (estimator default)"
+            }
+            else {
+                di as text "Quantile: " as result %6.3f `quantile_value'
+            }
+        }
+        di as text "Fixed effects: " as result "`fe_label'"
+        di as text "Clustering: " as result "`cluster_label'"
         di as text "Baseline model:"
         di as result `"`basecmdline'"'
         di as text "Baseline coefficient = " %10.6f `base_b' ///
@@ -381,13 +506,13 @@ program define cvcombo, rclass
         sort model
         format b se t p lo hi %12.6f
 
-        local result_path `"`saving'"'
+        local result_path = strtrim(`"`saving'"')
         if `"`result_path'"' != "" {
             if `"`replace'"' != "" {
-                save `"`result_path'"', replace
+                quietly save `"`result_path'"', replace
             }
             else {
-                save `"`result_path'"'
+                quietly save `"`result_path'"'
             }
             local saved_results `"`result_path'"'
         }
@@ -482,14 +607,14 @@ program define cvcombo, rclass
 
             if `"`paper'"' != "" {
                 * ====================================================
-                * 2. Demand coefficient distribution
+                * 2. Coefficient distribution
                 * ====================================================
                 histogram b if ok == 1, fraction ///
                     xline(0, lpattern(dash) lcolor(gs8)) ///
                     xline(`base_b', lpattern(shortdash) lcolor(black)) ///
-                    xtitle("Demand coefficient") ///
+                    xtitle("`mainvar' coefficient") ///
                     ytitle("Fraction") ///
-                    title("Distribution of Demand Coefficients") ///
+                    title("Distribution of `mainvar' Coefficients") ///
                     note("Dashed line: zero; solid line: baseline coefficient") ///
                     legend(off) ///
                     graphregion(color(white)) ///
@@ -508,8 +633,8 @@ program define cvcombo, rclass
                 * over() categories already identify the number of controls.
                 graph box b if ok == 1, over(nctrl, label(labsize(small))) ///
                     yline(0, lpattern(dash) lcolor(gs8)) ///
-                    ytitle("Demand coefficient") ///
-                    title("Demand Coefficients by Number of Controls") ///
+                    ytitle("Coefficient on `mainvar'") ///
+                    title("`mainvar' Coefficients by Number of Controls") ///
                     graphregion(color(white)) ///
                     plotregion(color(white)) ///
                     name(cvcombo_coef_box, replace)
@@ -572,8 +697,8 @@ program define cvcombo, rclass
                     , ///
                     yline(0, lpattern(dash) lcolor(gs8)) ///
                     xtitle("Specification rank") ///
-                    ytitle("Demand coefficient with 95% CI") ///
-                    title("Robustness of Demand Coefficient") ///
+                    ytitle("`mainvar' coefficient with `level'% CI") ///
+                    title("Robustness of `mainvar' Coefficient") ///
                     legend(off) ///
                     graphregion(color(white)) ///
                     plotregion(color(white)) ///
@@ -695,7 +820,7 @@ program define cvcombo, rclass
         }
 
         sort model
-        save "`saved_results'", replace
+        quietly save "`saved_results'", replace
     restore
 
     * Return results and restore baseline estimates for convenient use.
@@ -736,6 +861,11 @@ program define cvcombo, rclass
     return scalar baseline_N = `base_N'
     return scalar baseline_df_r = `base_df'
     return scalar has_df_r = `has_df_r'
+    return scalar quantile = `quantile_value'
+    return scalar n_absorb = `n_absorb'
+    return scalar n_cluster = `n_cluster'
+    return local fe_type "`fe_label'"
+    return local cluster_type "`cluster_label'"
     return local method "`method'"
     return local baseline_cmd `"`base_cmdline'"'
     return local model_options `"`modelopts'"'

@@ -1,0 +1,22 @@
+d 'MODELAUDIT': module to provide diagnostics for comparing two or more stored estimation results
+d
+d  modelaudit is a diagnostic command for comparing two or more
+d stored estimation results. It is designed to make model-to-model
+d changes transparent by reporting estimation-sample
+d characteristics, focal-estimate movement, model complexity,
+d information criteria, and exact estimation-sample comparability. 
+d
+d KW: model comparison
+d KW: estimation results
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20261010
+d
+d Author:  Christina Laternser ,  Ann & Robert H. Lurie Children’s Hospital of Chicago
+d Support: email christina.laternser.research@@gmail.com
+d
+f modelaudit.ado
+f modelaudit.sthlp
+f modelaudit_examples.do
+f modelaudit_public_validation.do

@@ -1,0 +1,37 @@
+d 'AGES': module to estimate the effects of the age structure
+d
+d  AGES estimates the relationship between different population
+d cohorts shares and a dependent variable of choice, based on the
+d polynomial transformation suggested by Fair and Dominguez (1991)
+d and and applied later by Higgins (1998), Arnott and Chaves (2012)
+d and Juselius and Takas (2021).  Estimating the effect of changes
+d in the population's age structure in a regression faces different
+d methodological issues, such as weak precision if the number of
+d population cohorts is large compared with the number of time
+d periods, high correlation between consecutive cohorts’ shares
+d and perfect collinearity with respect to the constant. The
+d solution consists of restricting the age groups coefficients to
+d lie on a Pth degree polynomial and restricting its sum to be
+d equal to zero to remove the perfect multicolinearity. The command
+d AGES performs all the necessary transformations and mathematical
+d calculations to estimate and report the final effect by
+d age-cohort, together with its standard error and confidence
+d interval, as an output matrix and through an automated graph that
+d displays the effect of all the age-cohorts on the dependent
+d variable. It allows testing for different age structure effects
+d based on different groups captured by an interaction with a dummy
+d variable. 
+d
+d KW: age structure
+d KW: data management
+d
+d Requires: Stata version 13
+d
+d Distribution-Date: 20261010
+d
+d Author: Alfonso Ugarte Ruiz , BBVA Research 
+d Support: email alfonso.ugarte@@bbva.com
+d
+f ages.ado
+f ages.sthlp
+f ../i/inflation_example_advanced.dta

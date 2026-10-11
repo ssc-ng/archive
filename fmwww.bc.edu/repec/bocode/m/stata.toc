@@ -180,6 +180,7 @@ p minvar module to conduct longitudinal measurement invariance tests
 p miparallel module to perform parallel estimation for multiple imputed datasets
 p mipolate module to interpolate values 
 p mira module to compute Rubin's measure for multiple imputation regression analysis
+p mispauto module supporting discrimination between autocorrelation and misspecification
 p missing module to replace missing values
 p missingplot module to draw plot showing patterns of missing values in a dataset
 p missings module to manage missing values 
@@ -231,6 +232,7 @@ p mmwsl module for implementing longitudinal marginal mean weighting through str
 p mnthplot module for scatter plot for monthly data with repetition of data
 p mod11 module to generate Chile's National Identification Number (RUT) check digit (DV) (modulo 11)
 p mode module to display and store the mode of a variable
+p modelaudit module to provide diagnostics for comparing two or more stored estimation results
 p modeldiag module to generate graphics after regression
 p modlpr module to estimate long memory in a timeseries
 p modplot module for plotting graphs of moderating effects

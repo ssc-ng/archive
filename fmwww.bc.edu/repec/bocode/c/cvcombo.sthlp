@@ -1,35 +1,36 @@
 {smcl}
-{* *! version 2.0.0 25sep2026}
-{title:cvcombo v2.0}
+{* *! version 2.1.3 08oct2026}
+{title:cvcombo v2.1.3}
 
 {pstd}
 {bf:Control-variable all-combinations robustness test}
 
-{p 4 8}{bf:Authors:} Jiang ZhenYuan (蒋镇源) and Zhang Na (张娜){p_end}
+{p 4 8}{bf:Authors:} Jiang ZhenYuan (蒋镇源), Zhang Na (张娜), and Meng Ruoqi (蒙若琪){p_end}
 {p 4 8}{bf:Affiliation:} School of Economics, Northwest Normal University{p_end}
-{p 4 8}{bf:Support:} kangjang504@gmail.com; zhangna@nwnu.edu.cn{p_end}
-{p 4 8}{bf:Version:} 2.0.0{p_end}
-{p 4 8}{bf:Date:} 26 September 2026{p_end}
+{p 4 8}{bf:Support:} kangjang504@gmail.com; zhangna@nwnu.edu.cn; 202421080980@nwnu.edu.cn{p_end}
+{p 4 8}{bf:Version:} 2.1.3{p_end}
+{p 4 8}{bf:Date:} 8 October 2026{p_end}
 {p 4 8}{bf:Requires:} Stata 15.1 or later{p_end}
 
 {title:Syntax}
 {p 8 12}{cmd:cvcombo} {it:depvar mainvar}, {cmd:method(}{it:command}{cmd:)} {cmd:controls(}{it:control_list}{cmd:)}{p_end}
-{p 8 12}{cmd:}[{cmd:options(}{it:method_options}{cmd:)} {cmd:absorb(}{it:fe_vars}{cmd:)} {cmd:cluster(}{it:cluster_var}{cmd:)} {cmd:samplevars(}{it:varlist}{cmd:)} {cmd:level(}{it:#}{cmd:)} {cmd:saving(}{it:filename}{cmd:)} {cmd:replace} {cmd:graphprefix(}{it:prefix}{cmd:)} {cmd:paper} {cmd:paperdir(}{it:folder}{cmd:)} {cmd:docx(}{it:filename}{cmd:)} {cmd:nograph}]
+{p 8 12}{cmd:}[{cmd:options(}{it:method_options}{cmd:)} {cmd:absorb(}{it:fe_vars}{cmd:)} {cmd:cluster(}{it:cluster_vars}{cmd:)} {cmd:quantile(}{it:#}{cmd:)} {cmd:samplevars(}{it:varlist}{cmd:)} {cmd:level(}{it:#}{cmd:)} {cmd:saving(}{it:filename}{cmd:)} {cmd:replace} {cmd:graphprefix(}{it:prefix}{cmd:)} {cmd:paper} {cmd:paperdir(}{it:folder}{cmd:)} {cmd:docx(}{it:filename}{cmd:)} {cmd:nograph}]
 
 {title:Description}
 {pstd}
 {cmd:cvcombo} estimates every nonempty subset of the candidate control variables. With {it:k} candidate controls, the command estimates {cmd:2^k - 1} specifications. The coefficient on the main explanatory variable is recorded for every successful specification, together with its standard error, test statistic, p-value, confidence interval, coefficient direction, number of controls, and estimation sample size.{p_end}
 
 {pstd}
-The estimation command is supplied by the user through {cmd:method()}. This makes {cmd:cvcombo} generic rather than hard-coded to a particular estimator. The estimator should accept an {cmd:if} qualifier and return {cmd:_b[mainvar]} and {cmd:_se[mainvar]}. Examples include {cmd:regress}, {cmd:xtreg}, {cmd:logit}, {cmd:probit}, and {cmd:reghdfe}.{p_end}
+The estimation command is supplied by the user through {cmd:method()}. The estimator should accept an {cmd:if} qualifier and return {cmd:_b[mainvar]} and {cmd:_se[mainvar]}. Examples include {cmd:regress}, {cmd:xtreg}, {cmd:logit}, {cmd:probit}, {cmd:reghdfe}, {cmd:qreg}, and {cmd:bsqreg}.{p_end}
 
 {title:Options}
-{phang}{cmd:method(}{it:command}{cmd:)} specifies the estimator that will be executed for every control-variable combination. {p_end}
+{phang}{cmd:method(}{it:command}{cmd:)} specifies the estimator executed for every control-variable combination.{p_end}
 {phang}{cmd:controls(}{it:control_list}{cmd:)} specifies the candidate controls. All nonempty combinations are estimated.{p_end}
 {phang}{cmd:options(}{it:method_options}{cmd:)} passes method-specific options through to the estimator.{p_end}
-{phang}{cmd:absorb(}{it:fe_vars}{cmd:)} is a convenience option for estimators such as {cmd:reghdfe}; it appends {cmd:absorb()} to the estimator call.{p_end}
-{phang}{cmd:cluster(}{it:cluster_var}{cmd:)} is a convenience option for clustered inference; it appends {cmd:vce(cluster ...)} to the estimator call.{p_end}
-{phang}{cmd:samplevars(}{it:varlist}{cmd:)} adds variables used only in estimator options to the common estimation sample.{p_end}
+{phang}{cmd:quantile(}{it:#}{cmd:)} specifies the quantile for {cmd:method(qreg)} or {cmd:method(bsqreg)}. Values between 0 and 1 are interpreted as probabilities; values above 1 and below 100 are interpreted as percentages. For example, {cmd:quantile(.25)} and {cmd:quantile(25)} both estimate the 25th percentile. The default is the estimator's own default, 0.5 for {cmd:qreg}.{p_end}
+{phang}{cmd:absorb(}{it:fe_vars}{cmd:)} appends {cmd:absorb(fe_vars)} to the estimation command. Multiple fixed-effect dimensions are allowed when supported by the estimator; for example, {cmd:absorb(firm year)} implements two-way fixed effects in {cmd:reghdfe}.{p_end}
+{phang}{cmd:cluster(}{it:cluster_vars}{cmd:)} appends {cmd:vce(cluster cluster_vars)} to the estimation command. Multiple cluster dimensions are allowed when supported by the estimator; for example, {cmd:cluster(firm year)} implements two-way clustered standard errors in {cmd:reghdfe}. {p_end}
+{phang}{cmd:samplevars(}{it:varlist}{cmd:)} adds variables used only in estimator options to the common estimation sample. Simple variables named in {cmd:absorb()} or {cmd:cluster()} are added automatically; use {cmd:samplevars()} for factor/interacted expressions or other variables not directly recognized as variable names.{p_end}
 {phang}{cmd:level(}{it:#}{cmd:)} specifies the confidence level; default is 95.{p_end}
 {phang}{cmd:saving(}{it:filename}{cmd:)} saves the machine-readable specification results in a Stata dataset.{p_end}
 {phang}{cmd:replace} permits replacement of an existing results file.{p_end}
@@ -39,13 +40,24 @@ The estimation command is supplied by the user through {cmd:method()}. This make
 {phang}{cmd:docx(}{it:filename}{cmd:)} specifies the Word filename generated by the {cmd:paper} option.{p_end}
 {phang}{cmd:nograph} suppresses graph output when the {cmd:paper} option is not requested.{p_end}
 
+{title:Quantile regression}
+{pstd}
+Use {cmd:method(qreg)} for standard quantile regression. A robust variance estimator can be requested through {cmd:options(vce(robust))}. {cmd:bsqreg} can be used when bootstrap standard errors are desired. The built-in {cmd:qreg} and {cmd:bsqreg} commands do not provide the {cmd:absorb()} or {cmd:cluster()} interfaces used by this command; cvcombo therefore rejects those combinations rather than silently producing a different model. For quantile regression with high-dimensional fixed effects or clustered inference, use an estimator specifically designed for that purpose and pass it through {cmd:method()} if it returns {cmd:_b[mainvar]} and {cmd:_se[mainvar]}.{p_end}
+
+{title:Two-way fixed effects and two-way clustering}
+{pstd}
+{cmd:absorb()} and {cmd:cluster()} accept multiple variables. A typical two-way panel specification is:{p_end}
+{phang2}{cmd:. cvcombo y x, method(reghdfe) controls(c1 c2 c3) absorb(firm year) cluster(firm year)}{p_end}
+{pstd}
+This constructs an estimator call equivalent in structure to {cmd:reghdfe y x c1 c2 c3, absorb(firm year) vce(cluster firm year)}. {cmd:reghdfe} supports multiple absorbed fixed-effect dimensions and multi-way clustering. The number and meaning of absorbed effects and clusters are recorded in the returned results.{p_end}
+
 {title:Inference}
 {pstd}
-When the estimator returns {cmd:e(df_r)}, {cmd:cvcombo} uses a t distribution for two-sided inference and confidence intervals. When {cmd:e(df_r)} is unavailable, standard-normal inference is used.{p_end}
+When the estimator returns {cmd:e(df_r)}, {cmd:cvcombo} uses a t distribution for two-sided inference and confidence intervals. When {cmd:e(df_r)} is unavailable, standard-normal inference is used. This allows the command to follow the estimator's posted degrees of freedom, including cluster-robust estimators that post adjusted residual degrees of freedom.{p_end}
 
 {title:Results}
 {pstd}
-The all-controls baseline model is stored as {cmd:CVCOMBO_BASELINE}.{p_end}
+The all-controls baseline model is stored as {cmd:CVCOMBO_BASELINE}. The baseline model is estimated only once and then reused as the all-controls specification in the combination results.{p_end}
 
 {pstd}
 The specification results dataset contains the following key variables:{p_end}
@@ -58,25 +70,35 @@ The specification results dataset contains the following key variables:{p_end}
 {phang}{cmd:p} two-sided p-value{p_end}
 {phang}{cmd:lo hi} confidence-interval endpoints{p_end}
 {phang}{cmd:direction} coefficient direction: -1, 0, 1{p_end}
+{phang}{cmd:quantile} normalized quantile for qreg/bsqreg; missing otherwise{p_end}
 {phang}{cmd:controls_str} included control variables{p_end}
+
+{title:Returned scalars/macros}
+{phang}{cmd:r(quantile)} normalized quantile; missing for non-quantile estimators{p_end}
+{phang}{cmd:r(n_absorb)} number of absorb dimensions supplied{p_end}
+{phang}{cmd:r(n_cluster)} number of cluster dimensions supplied{p_end}
+{phang}{cmd:r(fe_type)} one-way, two-way, multi-way, or none{p_end}
+{phang}{cmd:r(cluster_type)} one-way, two-way, multi-way, or none{p_end}
 
 {title:Examples}
 {phang2}{cmd:. sysuse auto, clear}{p_end}
 {phang2}{cmd:. cvcombo mpg weight, method(regress) controls(length headroom trunk) saving(cvcombo_auto.dta) replace}{p_end}
 
-{phang2}{cmd:. cvcombo foreign weight, method(logit) controls(mpg length headroom trunk) saving(cvcombo_logit.dta) replace}{p_end}
+{phang2}{cmd:. cvcombo mpg weight, method(qreg) quantile(.25) options(vce(robust)) controls(length headroom trunk) saving(cvcombo_q25.dta) replace}{p_end}
 
-{phang2}{cmd:. cvcombo LS Demand, method(reghdfe) controls(Size Lev Employee Growth Age CAP WW HHI) absorb(id year) cluster(id) samplevars(id year) saving(cvcombo_results.dta) replace}{p_end}
+{phang2}{cmd:. cvcombo mpg weight, method(qreg) quantile(75) options(vce(robust)) controls(length headroom trunk) saving(cvcombo_q75.dta) replace}{p_end}
 
-{phang2}{cmd:. cvcombo LS Demand, method(reghdfe) controls(Size Lev Employee Growth Age CAP WW HHI) absorb(id year) cluster(id) samplevars(id year) saving(cvcombo_results.dta) replace paper paperdir(cvcombo_paper_output)}{p_end}
+{phang2}{cmd:. cvcombo LS Demand, method(reghdfe) controls(Size Lev Employee Growth Age CAP WW HHI) absorb(id year) cluster(id year) saving(cvcombo_results.dta) replace}{p_end}
+
+{phang2}{cmd:. cvcombo LS Demand, method(reghdfe) controls(Size Lev Employee Growth Age CAP WW HHI) absorb(id year) cluster(id year) saving(cvcombo_results.dta) replace paper paperdir(cvcombo_paper_output)}{p_end}
 
 {title:Paper output}
 {pstd}
-With {cmd:paper}, graphs are exported in SVG, PNG, and GPH formats. SVG export uses an explicit Arial font, and figure labels are intentionally written in English/ASCII so that the files do not depend on local Chinese-font rendering. The Word table uses Unicode Chinese text and Microsoft YaHei where available.{p_end}
+With {cmd:paper}, graphs are exported in SVG, PNG, and GPH formats. SVG export uses an explicit Arial font, and figure labels use the current {cmd:mainvar} rather than a hard-coded variable name. The Word table uses Unicode Chinese text and Microsoft YaHei where available.{p_end}
 
 {title:Dependencies}
 {pstd}
-{cmd:cvcombo} does not require {cmd:reghdfe} unless {cmd:method(reghdfe)} is used. Users choosing {cmd:method(reghdfe)} should install {cmd:reghdfe} separately from SSC.{p_end}
+{cmd:cvcombo} does not require external packages for {cmd:regress}, {cmd:xtreg}, {cmd:logit}, {cmd:probit}, {cmd:qreg}, or {cmd:bsqreg}. Users choosing {cmd:method(reghdfe)} should install {cmd:reghdfe} separately from SSC.{p_end}
 
 {title:License}
 {pstd}Released under the MIT License.{p_end}

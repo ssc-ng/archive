@@ -1,0 +1,32 @@
+d 'ESGDICT': module to provide machine-learning generation of the built-in ESG dictionary that qta requires
+d
+d	  esgdict learns the built-in dictionary that qta uses for
+d its keyword-frequency, cosine-similarity and Jaccard methods,   
+d instead of requiring the researcher to hard-code the keywords. 
+d It reads a corpus of environmental, social and governance   
+d (ESG) reports, screens the documents, tokenises the text, and
+d returns a dictionary file organised into the four dimensions	 
+d Environmental, Social, Governance and General_ESG.  The resulting
+d file is passed directly to qta through its esgdictionary()   
+d option. 
+d
+d KW: text processing
+d KW: dictionary
+d KW: ESG
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261010
+d
+d Author: Wu LiangHai,  Anhui University of Technology
+d Support: email agd2010@@yeah.net
+d
+d Author:   Wu Hanyan, Nanjing University of Aeronautics and Astronautics
+d Support: email    2325476320@@qq.com
+d
+d Author:    Xu Huihui  ,  Anhui University of Technology
+d Support: email  2847844621@@qq.com         
+d
+f esgdict.ado
+f esgdict_ml.py
+f esgdict.sthlp

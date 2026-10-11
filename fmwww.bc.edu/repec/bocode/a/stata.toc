@@ -43,6 +43,7 @@ p aevolcano module to produce volcano plot for adverse event data
 p aextlogit module to compute average elasticities for fixed effects logit
 p affiliationexposure module to compute an affiliation exposure model using two-mode actor(row)-by-event(column) network data
 p aformat module to condense the display format of a variable
+p ages module to estimate the effects of the age structure
 p aggind module to aggregate indicators among units within a specified radius
 p agrm module to calculate van der Eijk's measure of agreement "A"
 p aic_model_selection module to perform Forward Model Selection using AIC or BIC

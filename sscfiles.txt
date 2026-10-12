@@ -4787,6 +4787,7 @@ fmwww.bc.edu/repec/bocode/s/spellmerge.hlp
 fmwww.bc.edu/repec/bocode/s/survtime.html
 fmwww.bc.edu/repec/bocode/s/smgfit.pkg
 fmwww.bc.edu/repec/bocode/s/sqpercentageplot.sthlp
+fmwww.bc.edu/repec/bocode/s/suradf.pkg
 fmwww.bc.edu/repec/bocode/s/slpower3.dta
 fmwww.bc.edu/repec/bocode/s/surveye_2_2_0.jar
 fmwww.bc.edu/repec/bocode/s/strbee.sthlp
@@ -5775,6 +5776,7 @@ fmwww.bc.edu/repec/bocode/s/synlight.pkg
 fmwww.bc.edu/repec/bocode/s/stickyprices.dta
 fmwww.bc.edu/repec/bocode/s/sparkline.sthlp
 fmwww.bc.edu/repec/bocode/s/spregsacxt3.ado
+fmwww.bc.edu/repec/bocode/s/suradf_methods.sthlp
 fmwww.bc.edu/repec/bocode/s/smrgivconditions.ado
 fmwww.bc.edu/repec/bocode/s/sadi.sthlp
 fmwww.bc.edu/repec/bocode/s/sptobitmstar.dlg
@@ -6929,6 +6931,7 @@ fmwww.bc.edu/repec/bocode/s/sjive.ado
 fmwww.bc.edu/repec/bocode/s/sptobitmstarhxt1.ado
 fmwww.bc.edu/repec/bocode/s/sptobitsem.do
 fmwww.bc.edu/repec/bocode/s/svylet.pkg
+fmwww.bc.edu/repec/bocode/s/suradf_asean6.do
 fmwww.bc.edu/repec/bocode/s/sampsi_gehan.pkg
 fmwww.bc.edu/repec/bocode/s/seast.hlp
 fmwww.bc.edu/repec/bocode/s/stpm3km.ado
@@ -7066,6 +7069,7 @@ fmwww.bc.edu/repec/bocode/s/sq.sthlp
 fmwww.bc.edu/repec/bocode/s/stexpect.pkg
 fmwww.bc.edu/repec/bocode/s/spmstardh.pkg
 fmwww.bc.edu/repec/bocode/s/strmst2_example.do
+fmwww.bc.edu/repec/bocode/s/suradf_example.do
 fmwww.bc.edu/repec/bocode/s/spregcs2.dta
 fmwww.bc.edu/repec/bocode/s/scheme-neon.scheme
 fmwww.bc.edu/repec/bocode/s/splitvallabels.hlp
@@ -7253,6 +7257,7 @@ fmwww.bc.edu/repec/bocode/s/stbrier.ado
 fmwww.bc.edu/repec/bocode/s/sunny_tab2excel.do
 fmwww.bc.edu/repec/bocode/s/stddiff.pkg
 fmwww.bc.edu/repec/bocode/s/spmstar4.ado
+fmwww.bc.edu/repec/bocode/s/suradf.ado
 fmwww.bc.edu/repec/bocode/s/sj1.pkg
 fmwww.bc.edu/repec/bocode/s/stute_test.pkg
 fmwww.bc.edu/repec/bocode/s/saveascii.ado
@@ -7459,6 +7464,7 @@ fmwww.bc.edu/repec/bocode/s/scheme-burd5.scheme
 fmwww.bc.edu/repec/bocode/s/spmat_save.sthlp
 fmwww.bc.edu/repec/bocode/s/segdata.dta
 fmwww.bc.edu/repec/bocode/s/stylerules.pkg
+fmwww.bc.edu/repec/bocode/s/suradf_asean6.dta
 fmwww.bc.edu/repec/bocode/s/svysampsi.ado
 fmwww.bc.edu/repec/bocode/s/stlda.ado
 fmwww.bc.edu/repec/bocode/s/sctomedia.sthlp
@@ -7660,6 +7666,7 @@ fmwww.bc.edu/repec/bocode/s/syn.ado
 fmwww.bc.edu/repec/bocode/s/sellist.ado
 fmwww.bc.edu/repec/bocode/s/stns_list.sthlp
 fmwww.bc.edu/repec/bocode/s/stjm_prothro.dta
+fmwww.bc.edu/repec/bocode/s/suradf.sthlp
 fmwww.bc.edu/repec/bocode/s/sqstatlist.ado
 fmwww.bc.edu/repec/bocode/s/saveresults.pkg
 fmwww.bc.edu/repec/bocode/s/socstrat.pkg

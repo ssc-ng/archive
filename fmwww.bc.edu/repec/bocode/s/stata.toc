@@ -433,6 +433,7 @@ p sunflower module to generate density distribution sunflower plots
 p supclust module to build superordinate categories
 p supercompress module to run compress on all datasets in a folder and its subfolders
 p supsmooth module to perform Friedman's super smoother
+p suradf module to conduct series-specific SUR-ADF panel unit root test
 p surardl module to perform seemingly unrelated ARDL cointegration and bounds testing
 p suregr module to calculate robust, or cluster-robust variance after sureg
 p surface module to draw a 3D wireform surface plot

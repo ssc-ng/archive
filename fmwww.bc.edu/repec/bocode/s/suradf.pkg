@@ -1,0 +1,39 @@
+d 'SURADF': module to conduct series-specific SUR-ADF panel unit root test
+d
+d  suradf implements the series-specific panel unit root test of
+d Breuer, McNown and Wallace (2002, Oxford Bulletin of Economics
+d and Statistics 64(5), 527-546, doi:10.1111/1468-0084.00276).
+d Conventional panel unit root tests - Levin-Lin, Im-Pesaran-Shin,
+d Maddala-Wu, and the multivariate ADF of Sarno and Taylor
+d implemented in your madfuller - test a joint hypothesis. When
+d they reject, the user learns only that at least one series in the
+d panel is stationary, with no indication of how many or which.
+d suradf instead estimates the N augmented Dickey-Fuller equations
+d as a system of seemingly unrelated regressions, with lag orders
+d free to differ across members and errors contemporaneously
+d correlated across them, and tests the unit root null separately
+d for each member. The output names which series are I(0) and which
+d are I(1). Because the null distribution depends on the estimated
+d covariance matrix of the system, no tabulated critical values
+d apply; the paper is explicit that its own values "cannot be
+d applied directly to other data sets". suradf therefore simulates
+d series-specific critical values for the panel at hand, following
+d the procedure in Section V of the paper. 
+d
+d KW: panel data
+d KW: unit root
+d KW: SUF-ADF
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261011
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f suradf.ado
+f suradf.sthlp
+f suradf_asean6.do
+f suradf_asean6.dta
+f suradf_example.do
+f suradf_methods.sthlp

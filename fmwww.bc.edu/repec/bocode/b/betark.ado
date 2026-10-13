@@ -1,3 +1,4 @@
+*! 2.0.0	Ariel Linden 10Oct2026	// fixed exact conditional ML
 *! 1.3.1	Ariel Linden 05Oct2026	// fixed moptimize error when if/in excludes observations
 *! 1.2.0	Ariel Linden 01Oct2026  // fixed from()
 *! 1.1.0	Ariel Linden 29Sep2026	// changed version to 11.0; fixed sort ordering
@@ -185,31 +186,36 @@ program define Estimate, eclass
 	local k2_est : word count `scale_est'
 	local k2_est = `k2_est' + 1		// scale always has _cons
 
-	// starting values: static betareg fit (rho = 0), on the reduced sample. 
+	// starting values
 	sort `panvar' `timevar'
 	tempname b_init
+	local fast_start = 0
 	if `"`from'"' != "" {
 		matrix `b_init' = `from'
 	}
 	else {
-		tempname b0
-		if "`scale_est'" != "" local scaleopt "scale(`scale_est')"
-		else                   local scaleopt ""
-		capture quietly betareg `depvar' `indepvars_est' if `touse', `constant' `scaleopt'
-		if _rc {
-			di as err "could not obtain starting values from a static betareg fit; try from()"
-			exit 430
-		}
-		tempname bmean bscale
-		matrix `bmean'  = e(b)[1, 1..`k1_est']
-		matrix `bscale' = e(b)[1, `k1_est'+1..`k1_est'+`k2_est']
-
-		matrix `b_init' = `bmean', `bscale', J(1, `k3', 0.1/`lag')
+		_betark_start `depvar' if `touse', bname(`b_init') lag(`lag') ///
+			xvars(`indepvars_est') zvars(`scale_est') `constant'
+		local fast_start = 1
 	}
 
 	di ""
 	quietly count if !`touse'
 	local nexcl_rows = r(N)
+	forvalues attempt = 1/2 {
+	if `attempt' == 2 {
+		// fallback if the fit from the fast starting values did not converge
+		if !(`conv_post' == 0 & `fast_start') continue, break
+		if "`scale_est'" != "" local scaleopt "scale(`scale_est')"
+		else                   local scaleopt ""
+		capture quietly betareg `depvar' `indepvars_est' if `touse', `constant' `scaleopt'
+		if _rc continue, break
+		tempname bmean bscale
+		matrix `bmean'  = e(b)[1, 1..`k1_est']
+		matrix `bscale' = e(b)[1, `k1_est'+1..`k1_est'+`k2_est']
+		matrix `b_init' = `bmean', `bscale', J(1, `k3', 0.1/`lag')
+		di as txt "note: refitting from static beta-regression starting values"
+	}
 	if `nexcl_rows' > 0 {
 		preserve
 		quietly keep if `touse'
@@ -230,6 +236,7 @@ program define Estimate, eclass
 	if `nexcl_rows' > 0 {
 		restore
 	}
+	}	// attempt
 
 	if `conv_post' == 0 {
 		di as txt "{p}Warning: optimizer did not report convergence within iterate(`iterate'). " ///
@@ -387,7 +394,42 @@ program define ParseSlink, sclass
 end
 
 
-// build time/panel segments (gaps restart the AR recursion)
+// starting values
+program define _betark_start
+	syntax varname [if], BNAME(name) LAG(integer) [XVARS(string) ZVARS(string) noCONstant]
+	marksample touse
+	tempvar ly xb u mu a sq
+	tempname bm bs br
+	quietly gen double `ly' = logit(`varlist') if `touse'
+	quietly regress `ly' `xvars' if `touse', `constant'
+	matrix `bm' = e(b)
+	quietly predict double `xb' if `touse', xb
+	quietly gen double `u'  = `ly' - `xb' if `touse'
+	quietly gen double `mu' = invlogit(`xb') if `touse'
+	quietly gen double `a'  = `mu'*(1 - `mu') if `touse'
+	quietly gen double `sq' = (`varlist' - `mu')^2 if `touse'
+	quietly summarize `a', meanonly
+	local ma = r(mean)
+	quietly summarize `sq', meanonly
+	local mb = r(mean)
+	local phi = `ma'/`mb' - 1
+	if missing(`phi') | `phi' < 1 local phi = 10
+	local nz : word count `zvars'
+	if `nz' > 0 matrix `bs' = J(1, `nz', 0), ln(`phi')
+	else        matrix `bs' = (ln(`phi'))
+	local rho_ok = 0
+	capture quietly regress `u' L(1/`lag').`u' if `touse', noconstant
+	if _rc == 0 {
+		matrix `br' = e(b)
+		local rho_ok = 1
+		forvalues j = 1/`lag' {
+			if missing(`br'[1, `j']) local rho_ok = 0
+		}
+	}
+	if !`rho_ok' matrix `br' = J(1, `lag', 0.1/`lag')
+	matrix `bname' = `bm', `bs', `br'
+end
+
 mata:
 
 real matrix function betark_getsegs(real colvector panid, real colvector tvec)
@@ -408,58 +450,110 @@ real matrix function betark_getsegs(real colvector panid, real colvector tvec)
 }
 
 
-// joint conditional log-likelihood for the beta-AR(k) model
-void function betark_lf(transmorphic M, real rowvector b, real colvector lnf)
+// exact conditional log likelihood and coefficient-level gradient
+void function betark_llg(real rowvector b, real colvector y,
+                           real matrix Xm, real matrix Xs,
+                           real colvector seg_start, real colvector seg_end,
+                           real scalar p, real scalar wantg,
+                           real colvector lnf, real matrix G, real matrix Seq,
+                           real matrix Xtil, real colvector contrib)
 {
-	real colvector y, eta, lnphi, seg_start, seg_end, perm
-	real colvector eta_seg, y_seg, lnphi_seg
-	real rowvector rho
-	real scalar    p, nsegs, gg, r1, r2, ns, t_loc, kk
-	real scalar    eta_t, xi_t, mu_t, phi_t
+	real scalar    n, k1, k2, q, gg, j
+	real rowvector bm, bs, rho
+	real colvector eta, lnphi, ly, d, C, xi, mu, phi, okm, okp, yc, mphi, qphi, ms, sstar, sphi, dj
+	real matrix    Xt
+
+	n  = rows(y)
+	k1 = cols(Xm)
+	k2 = cols(Xs)
+	q  = k1 + k2 + p
+	bm  = b[1..k1]
+	bs  = b[(k1+1)..(k1+k2)]
+	rho = b[(k1+k2+1)..q]
+
+	// contributing observations: positions p+1, ..., end of each segment
+	C = J(0, 1, .)
+	for (gg=1; gg<=rows(seg_start); gg++) {
+		if (seg_end[gg] - seg_start[gg] + 1 > p) C = (C \ ((seg_start[gg]+p)::seg_end[gg]))
+	}
+
+	lnf     = J(n, 1, 0)
+	contrib = J(n, 1, 0)
+	if (wantg) {
+		G    = J(n, q, 0)
+		Seq  = J(n, 2+p, 0)
+		Xtil = J(n, k1, 0)
+	}
+	if (rows(C) == 0) return
+
+	eta   = Xm*bm'
+	lnphi = Xs*bs'
+	ly    = logit(y)
+	d     = ly - eta                       // logit-scale deviations
+
+	xi = J(rows(C), 1, 0)
+	for (j=1; j<=p; j++) xi = xi + rho[j]*d[C :- j]
+
+	mu  = invlogit(eta[C] + xi)
+	okm = (mu :>= 1e-10) :& (mu :<= 1 - 1e-10)
+	mu  = rowmin((rowmax((mu, J(rows(C), 1, 1e-10))), J(rows(C), 1, 1 - 1e-10)))
+	phi = exp(lnphi[C])
+	okp = (phi :>= 1e-6)
+	phi = rowmax((phi, J(rows(C), 1, 1e-6)))
+	yc   = y[C]
+	mphi = mu :* phi
+	qphi = (1 :- mu) :* phi
+
+	lnf[C] = lngamma(phi) - lngamma(mphi) - lngamma(qphi) +
+	         (mphi :- 1) :* ln(yc) + (qphi :- 1) :* ln(1 :- yc)
+	contrib[C] = J(rows(C), 1, 1)
+
+	if (wantg) {
+		ms    = digamma(mphi) - digamma(qphi)
+		sstar = okm :* phi :* mu :* (1 :- mu) :* (ly[C] - ms)
+		sphi  = okp :* phi :* (digamma(phi) - mu :* digamma(mphi) - (1 :- mu) :* digamma(qphi) +
+		                       mu :* ln(yc) + (1 :- mu) :* ln(1 :- yc))
+		Xt = Xm[C, .]
+		for (j=1; j<=p; j++) Xt = Xt - rho[j]*Xm[C :- j, .]
+		Xtil[C, .] = Xt
+		Seq[C, 1]  = sstar
+		Seq[C, 2]  = sphi
+		G[C, 1..k1]           = sstar :* Xt
+		G[C, (k1+1)..(k1+k2)] = sphi :* Xs[C, .]
+		for (j=1; j<=p; j++) {
+			dj = sstar :* d[C :- j]
+			Seq[C, 2+j]    = dj
+			G[C, k1+k2+j]  = dj
+		}
+	}
+}
+
+
+// general-form (gf1) evaluator
+void function betark_gf(transmorphic M, real scalar todo, real rowvector b,
+                          real colvector fv, real matrix S, real matrix H)
+{
+	real colvector y, seg_start, seg_end, perm, lnf, contrib
+	real matrix    Xm, Xs, G, Seq, Xtil
+	real scalar    p
 
 	y         = moptimize_util_userinfo(M, 1)
 	seg_start = moptimize_util_userinfo(M, 2)
 	seg_end   = moptimize_util_userinfo(M, 3)
 	p         = moptimize_util_userinfo(M, 4)
 	perm      = moptimize_util_userinfo(M, 5)
+	Xm        = moptimize_util_userinfo(M, 6)
+	Xs        = moptimize_util_userinfo(M, 7)
 
-	eta   = moptimize_util_xb(M, b, 1)[perm]
-	lnphi = moptimize_util_xb(M, b, 2)[perm]
+	lnf = contrib = J(0, 1, .)
+	G = Seq = Xtil = J(0, 0, .)
+	betark_llg(b, y, Xm, Xs, seg_start, seg_end, p, (todo >= 1), lnf, G, Seq, Xtil, contrib)
 
-	rho = J(1, p, .)
-	for (kk=1; kk<=p; kk++) {
-		rho[kk] = moptimize_util_xb(M, b, 2+kk)[1]
-	}
-
-	lnf   = J(rows(eta), 1, 0)
-	nsegs = rows(seg_start)
-
-	for (gg=1; gg<=nsegs; gg++) {
-		r1 = seg_start[gg]
-		r2 = seg_end[gg]
-		ns = r2 - r1 + 1
-		if (ns <= p) continue
-
-		y_seg     = y[|r1 \ r2|]
-		eta_seg   = eta[|r1 \ r2|]
-		lnphi_seg = lnphi[|r1 \ r2|]
-
-		for (t_loc=p+1; t_loc<=ns; t_loc++) {
-
-			eta_t = eta_seg[t_loc]
-			xi_t  = 0
-			for (kk=1; kk<=p; kk++) {
-				xi_t = xi_t + rho[kk] * (logit(y_seg[t_loc-kk]) - eta_seg[t_loc-kk])
-			}
-
-			mu_t  = invlogit(eta_t + xi_t)
-			mu_t  = min((max((mu_t, 1e-10)), 1-1e-10))
-			phi_t = exp(lnphi_seg[t_loc])
-			phi_t = max((phi_t, 1e-6))
-
-			lnf[r1+t_loc-1] = lngamma(phi_t) - lngamma(mu_t*phi_t) - lngamma((1-mu_t)*phi_t) +
-			                  (mu_t*phi_t - 1)*ln(y_seg[t_loc]) + ((1-mu_t)*phi_t - 1)*ln(1-y_seg[t_loc])
-		}
+	fv = J(rows(y), 1, .)
+	fv[perm] = lnf
+	if (todo >= 1) {
+		S = J(rows(G), cols(G), .)
+		S[perm, .] = G
 	}
 }
 
@@ -481,16 +575,23 @@ void function betark_main(string scalar yvar,
                            real   scalar ngaps_in,
                            real   scalar showlog)
 {
-	real matrix      data, allsegs
+	real matrix      data, allsegs, X_mean, X_scale
 	real colvector   y, panid, tvec, seg_start, seg_end, p_order
 	real rowvector   b0
-	real scalar      nobs, converged, ll, nexcl, jj
+	real scalar      nobs, converged, ll, nexcl, jj, has_x, has_z, nx, nz, col
 	string matrix    allvars
 	transmorphic     M
 
-	// load just enough to build segments and panel/time ordering
+	has_x = (xvars != "")
+	has_z = (zvars != "")
+	nx    = has_x ? cols(tokens(xvars)) : 0
+	nz    = has_z ? cols(tokens(zvars)) : 0
+
+	// load segments/ordering variables plus the mean and scale designs
 	if (panelvar != "") allvars = (tousename, panelvar, timevar, yvar)
 	else                allvars = (tousename, timevar, yvar)
+	if (has_x) allvars = (allvars, tokens(xvars))
+	if (has_z) allvars = (allvars, tokens(zvars))
 
 	data = st_data(., allvars)
 	data = select(data, data[.,1] :== 1)
@@ -501,6 +602,7 @@ void function betark_main(string scalar yvar,
 		panid   = data[., 2]
 		tvec    = data[., 3]
 		y       = data[., 4]
+		col     = 4
 	}
 	else {
 		p_order = order(data[.,2], 1)
@@ -508,7 +610,22 @@ void function betark_main(string scalar yvar,
 		panid   = J(rows(data), 1, 1)
 		tvec    = data[., 2]
 		y       = data[., 3]
+		col     = 3
 	}
+
+	if (has_x) {
+		X_mean = data[|1,col+1 \ rows(data), col+nx|]
+		col = col + nx
+	}
+	else X_mean = J(rows(data), 0, .)
+	if (has_z) {
+		X_scale = data[|1,col+1 \ rows(data), col+nz|]
+		col = col + nz
+	}
+	else X_scale = J(rows(data), 0, .)
+	// column order matches the coefficient vector (constant last)
+	if (!nocons_mean) X_mean = (X_mean, J(rows(data), 1, 1))
+	X_scale = (X_scale, J(rows(data), 1, 1))
 
 	nobs    = rows(y)
 	allsegs = betark_getsegs(panid, tvec)
@@ -518,8 +635,8 @@ void function betark_main(string scalar yvar,
 	b0 = st_matrix(b_init_name)
 
 	M = moptimize_init()
-	moptimize_init_evaluator(M, &betark_lf())
-	moptimize_init_evaluatortype(M, "lf")
+	moptimize_init_evaluator(M, &betark_gf())
+	moptimize_init_evaluatortype(M, "gf1")
 	moptimize_init_depvar(M, 1, yvar)
 	moptimize_init_touse(M, tousename)
 
@@ -542,6 +659,8 @@ void function betark_main(string scalar yvar,
 	moptimize_init_userinfo(M, 3, seg_end)
 	moptimize_init_userinfo(M, 4, p)
 	moptimize_init_userinfo(M, 5, p_order)
+	moptimize_init_userinfo(M, 6, X_mean)
+	moptimize_init_userinfo(M, 7, X_scale)
 
 	moptimize_init_conv_maxiter(M, maxiter)
 	moptimize_init_conv_ptol(M, tol)

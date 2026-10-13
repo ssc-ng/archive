@@ -1,4 +1,5 @@
 {smcl}
+{* *! version 2.1.0 11Oct2026}{...}
 {* *! version 2.0.0 30Sep2026}{...}
 {* *! version 1.0.0 27Jun2026}{...}
 {title:Title}
@@ -34,7 +35,7 @@
 {syntab:Convergence}
 {synopt:{opt tol:erance(#)}}convergence criterion; default is {cmd:tolerance(1e-6)}{p_end}
 {synopt:{opt iter:ate(#)}}maximum iterations; default is {cmd:iterate(1500)}{p_end}
-{synopt:{opt from(matrix)}}user-supplied starting values, in place of the default static {helpb betareg} fit{p_end}
+{synopt:{opt from(matrix)}}user-supplied starting values{p_end}
 {synoptline}
 {p2colreset}{...}
 {p 4 6 2}* {opt lag(#)} is required.{p_end}
@@ -68,16 +69,30 @@ The following {helpb predict} options are available after {cmd:betark}:
 {synopt:{opt cmean}}conditional (AR-adjusted, one-step-ahead) mean of {it:depvar}; the default{p_end}
 {synopt:{opt clinear}}conditional (AR-adjusted) linear predictor (logit scale) of {it:depvar}, before the inverse-link transform{p_end}
 {synopt:{opt cvar:iance}}conditional (AR-adjusted) variance of {it:depvar}{p_end}
+{synopt:{opt rsta:ndard}}standardized one-step-ahead conditional residual, ({it:depvar} - {opt cmean})/sqrt({opt cvariance}){p_end}
+{synopt:{opt me:an}}marginal mean of {it:depvar}, invlogit({opt xb}), {bf:without} the AR adjustment{p_end}
 {synopt:{opt xb}}linear prediction in the mean equation, {bf:without} the AR adjustment{p_end}
 {synopt:{opt xbsc:ale}}linear prediction in the scale equation{p_end}
 {synoptline}
 {p2colreset}{...}
 
 {pstd}
-{opt xb} and {opt xbscale} are available both in and out of sample. {opt cmean},
-{opt clinear}, and {opt cvariance} require lagged values of {it:depvar} and are
-therefore computed only where the full AR({it:k}) history is available within a
-contiguous time segment.
+{opt xb}, {opt xbscale}, and {opt mean} are available both in and out of sample.
+{opt cmean}, {opt clinear}, {opt cvariance}, and {opt rstandard} require lagged
+values of {it:depvar} and are therefore computed only where the full AR({it:k})
+history is available within a contiguous time segment.
+
+{pstd}
+{opt mean} is the appropriate statistic for plotting the fitted (counterfactual
+or segmented) trend; it should not be combined with {opt cvariance} to form
+residuals, because {opt cvariance} is the {it:conditional} variance.
+
+{pstd}
+If the model was fit on a subset of the data (using {cmd:if} or {cmd:in}) and
+earlier observations are present, {cmd:predict} uses those observations as lags,
+so observations that were conditioning observations at estimation may receive
+predictions. This is appropriate for forecasting; for residual diagnostics,
+add {cmd:if e(sample)}.
 
 {synoptset 20 tabbed}{...}
 {synopthdr:options}
@@ -94,8 +109,9 @@ is {cmd:reps(100)}{p_end}
 
 {pstd}
 {opt ci()} is available only with {opt cmean}, {opt clinear}, or {opt cvariance}. It
-is not available with {opt xb} or {opt xbscale}, as {helpb predictnl} already 
-provides a delta-method confidence interval for those.
+is not available with {opt xb}, {opt xbscale}, or {opt mean}, as {helpb predictnl} already 
+provides a delta-method confidence interval for those, and it is not available with
+{opt rstandard}. Confidence limits are missing for conditioning observations.
 
 {pstd}
 {opt ci()} computes a simulation-based (Krinsky-Robb) confidence interval
@@ -119,7 +135,7 @@ useful for a quick, approximate check before committing to a full run.
 strictly bounded on (0,1), with autoregressive errors of order {it:k} in the mean
 equation's linear predictor. {cmd:betark} estimates the mean equation coefficients, the
 precision (scale) equation coefficients, and the AR coefficients rho_1,...,rho_k
-{it:jointly} in a single conditional likelihood. This is possible because the
+{it:jointly} in a single exact conditional maximum likelihood. This is possible because the
 recursive substitution of {help betark##references:Rocha and Cribari-Neto (2009)}
 and {help betark##references:Ferreira, Figueroa-Zuniga, and de Castro (2015)} yields a
 closed-form conditional beta density at each time period, given the AR(k) history.
@@ -167,8 +183,14 @@ Default is {cmd:tolerance(1e-6)}.
 {cmd:iterate(1500)}, matching {helpb betareg}'s default.
 
 {phang}
-{opt from(matrix)} supplies user starting values in place of the default, which is
-a static {cmd:betareg} fit (rho = 0) on the same mean and scale specification.
+{opt from(matrix)} supplies user starting values. By default, {cmd:betark} computes
+fast starting values: the mean-equation coefficients from an OLS regression of
+logit({it:depvar}) on the mean-equation covariates, the precision parameter phi by
+the method of moments (with the coefficients on any {opt scale()} covariates set
+to 0), and rho_1,...,rho_k from an OLS AR(k) regression of the resulting
+logit-scale residuals. If the fit from these starting values does not converge,
+{cmd:betark} refits once from a static {helpb betareg} fit (rho = 0) on the same mean
+and scale specification. Both steps are skipped when {opt from()} is specified.
 
 
 
@@ -183,21 +205,17 @@ a static {cmd:betareg} fit (rho = 0) on the same mean and scale specification.
 {phang2}{cmd:. betark outcome _t _x2003m7 _x_t2003m7 , lag(1)}{p_end}
 
 {pstd}Assess fit after AR(1) adjustment {p_end}
-{phang2}{cmd:. predict mu1, cmean}{p_end}
-{phang2}{cmd:. predict v1, cvariance}{p_end}
-{phang2}{cmd:. gen rstd1 = (outcome-mu1)/sqrt(v1)}{p_end}
-{phang2}{cmd:. ac rstd1, lags(12)}{p_end}
-{phang2}{cmd:. wntestq rstd1, lags(12)}{p_end}
+{phang2}{cmd:. predict rstd1, rstandard}{p_end}
+{phang2}{cmd:. ac rstd1 if e(sample), lags(12)}{p_end}
+{phang2}{cmd:. wntestq rstd1 if e(sample), lags(12)}{p_end}
 
 {pstd}Fit an AR(2) model{p_end}
 {phang2}{cmd:. betark outcome _t _x2003m7 _x_t2003m7 , lag(2)}{p_end}
 
 {pstd}Assess fit after AR(2) adjustment {p_end}
-{phang2}{cmd:. predict mu2, cmean}{p_end}
-{phang2}{cmd:. predict v2, cvariance}{p_end}
-{phang2}{cmd:. gen rstd2 = (outcome-mu2)/sqrt(v2)}{p_end}
-{phang2}{cmd:. ac rstd2, lags(12)}{p_end}
-{phang2}{cmd:. wntestq rstd2, lags(12)}{p_end}
+{phang2}{cmd:. predict rstd2, rstandard}{p_end}
+{phang2}{cmd:. ac rstd2 if e(sample), lags(12)}{p_end}
+{phang2}{cmd:. wntestq rstd2 if e(sample), lags(12)}{p_end}
 
 {pstd}Use predict to generate mean estimates and confidence limits{p_end}
 {phang2}{cmd:. betark outcome _t _x2003m7 _x_t2003m7 , lag(1)}{p_end}

@@ -1,3 +1,4 @@
+*! 2.1.0	Ariel Linden 11Oct2026  // added rstandard and mean statistics
 *! 2.0.0 	Ariel Linden 30Sep2026  // added clinear and CI options to mimic predictnl
 *! 1.1.0 	Ariel Linden 29Sep2026  // changed version to 11.0; fixed sort ordering
 *! 1.0.0	Ariel Linden 27Jun2026
@@ -11,6 +12,8 @@ program define betark_p
 		[, CMean					///
 		   CVARiance				///
 		   CLinear					///
+		   RSTAndard				///
+		   MEan						///
 		   xb						///
 		   XBSCAle					///
 		   CI(namelist min=2 max=2) ///
@@ -21,7 +24,7 @@ program define betark_p
 
 	marksample touse, novarlist
 
-	local case : word count `cmean' `cvariance' `clinear' `xb' `xbscale'
+	local case : word count `cmean' `cvariance' `clinear' `rstandard' `mean' `xb' `xbscale'
 	if `case' > 1 {
 		di as err "only one {it:statistic} may be specified"
 		exit 498
@@ -31,8 +34,12 @@ program define betark_p
 		di as txt "(option {bf:cmean} assumed)"
 	}
 
-	if `"`ci'"' != "" & (`"`xb'"' != "" | `"`xbscale'"' != "") {
-		di as err "{bf:ci()} is not needed for {bf:xb}/{bf:xbscale}: these"
+	if `"`ci'"' != "" & `"`rstandard'"' != "" {
+		di as err "{bf:ci()} is not available with {bf:rstandard}"
+		exit 498
+	}
+	if `"`ci'"' != "" & (`"`xb'"' != "" | `"`xbscale'"' != "" | `"`mean'"' != "") {
+		di as err "{bf:ci()} is not needed for {bf:xb}/{bf:xbscale}/{bf:mean}: these"
 		di as err "do not depend on lagged outcomes, so {bf:predictnl}'s"
 		di as err "delta-method {bf:ci()} option already works for them."
 		exit 498
@@ -45,6 +52,19 @@ program define betark_p
 	else if `"`xbscale'"' != "" {
 		_predict `typlist' `varlist' if `touse', xb equation(scale)
 		label var `varlist' "Linear prediction in scale equation"
+	}
+	else if `"`mean'"' != "" {
+		tempvar xbm
+		quietly _predict double `xbm' if `touse', xb equation(`e(depvar)')
+		quietly gen `typlist' `varlist' = invlogit(`xbm') if `touse'
+		label var `varlist' "Marginal mean of `e(depvar)' (no AR adjustment)"
+	}
+	else if `"`rstandard'"' != "" {
+		tempvar mu_r v_r
+		PredictCmean double `mu_r', touse(`touse')
+		PredictCvar double `v_r', touse(`touse')
+		quietly gen `typlist' `varlist' = (`e(depvar)' - `mu_r')/sqrt(`v_r') if `touse'
+		label var `varlist' "Standardized one-step-ahead conditional residual"
 	}
 	else if `"`cmean'"' != "" {
 		PredictCmean `typlist' `varlist', touse(`touse')
@@ -74,18 +94,7 @@ program define PredictCmean
 	local vtyp : copy local typlist
 	local varn : copy local varlist
 	local dv `"`e(depvar)'"'
-
-	local p = 0
-	capture local rtest1 = _b[ar:rho1]
-	if _rc == 0 {
-		local p = 1
-		capture local rtest2 = _b[ar:rho2]
-		if _rc == 0 {
-			local p = 2
-			capture local rtest3 = _b[ar:rho3]
-			if _rc == 0 local p = 3
-		}
-	}
+	local p = e(p_lag)
 
 	tempvar xb eta xi xicomplete
 	quietly _predict double `xb' if `touse', xb equation(`dv')
@@ -103,7 +112,6 @@ program define PredictCmean
 	}
 
 	quietly gen double `eta' = `xb' + `xi' if `touse' & `xicomplete'
-	quietly replace `eta' = `xb' if `touse' & !`xicomplete'
 
 	if "`linear'" != "" {
 		quietly gen `vtyp' `varn' = `eta' if `touse'
@@ -117,7 +125,7 @@ end
 program define PredictCvar
 	syntax newvarname [, touse(string)]
 	tempvar mu_p phi_p
-	PredictCmean `typlist' `mu_p', touse(`touse')
+	PredictCmean double `mu_p', touse(`touse')
 
 	tempvar zb
 	quietly _predict double `zb' if `touse', xb equation(scale)

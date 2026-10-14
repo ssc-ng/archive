@@ -1,10 +1,10 @@
 {smcl}
-{* *! version 3.1 21AUGUST2026 Soo Jeong Lee and Jeffrey M. Wooldridge *}
+{* *! version 3.4 12 OCTOBER 2026 Soo Jeong Lee and Jeffrey M. Wooldridge *}
 {viewerjumpto "Syntax" "lwdid##syntax"}{...}
-{viewerjumpto "Description" "lwdid##description"}{...}
 {viewerjumpto "Options" "lwdid##options"}{...}
-{viewerjumpto "Examples" "lwdid##examples"}{...}
 {viewerjumpto "Saved results" "lwdid##results"}{...}
+{viewerjumpto "Description" "lwdid##description"}{...}
+{viewerjumpto "Examples" "lwdid##examples"}{...}
 {viewerjumpto "Citation" "lwdid##citation"}{...}
 {viewerjumpto "Authors" "lwdid##author"}{...}
 
@@ -35,12 +35,12 @@
 {synoptline}
 
 {syntab:Main variables}
-{synopt:{it:varlist}}Outcome variable followed by optional covariates (x-variables). {p_end}
+{synopt:{it:varlist}}Outcome variable followed by optional covariates (x-variables).{p_end}
 
 {syntab:Required options}
 {synopt:{opt ivar(varname)}}Panel identifier (numeric or string).{p_end}
 
-{synopt:{opt tvar(varname)}}Time variable, supplied as a single numeric time index. For seasonal adjustment, see {cmd:rolling()}.{p_end}
+{synopt:{opt tvar(varname)}}Time variable, supplied as a single numeric time index. {p_end}
 
 {synopt:{opt gvar(varname)}}Treatment cohort variable indicating the first-treated period for each unit. {cmd:gvar()} should be constant across all observations within each treated unit. Never-treated units should be coded as 0 or missing. {cmd:gvar()} must be measured on the same scale as {cmd:tvar()}.{p_end}
 
@@ -57,9 +57,9 @@
 {cmd:ra} for regression adjustment {break}
 {cmd:ipw} for inverse probability weighting {break}
 {cmd:ipwra} for doubly robust IPW-RA. {break}
-Required unless {cmd:small} is specified.{p_end}
+Required unless {cmd:small} is specified; {cmd:ipw} and {cmd:ipwra} require covariates.{p_end}
 
-{synopt:{opt small}}{it:Small-N only.} Specifies the small-sample implementation for settings with few treated units, few control units, or both.{p_end}
+{synopt:{opt small}}{it:Small-N only.} Specifies the small-sample implementation for settings with few treated units, few control units, or both. Covariates are allowed only with a single treated cohort and require N_treated > K+1 and N_control > K+1 (K = number of covariates).{p_end}
 
 {syntab:Optional options}
 
@@ -70,7 +70,7 @@ For example, {cmd:pre(1)} uses only the last pre-treatment period, while
 
 {synopt:{opt never}}{it:Large-N only.} Uses only never-treated units as controls; by default, {cmd:lwdid} uses both never-treated and not-yet-treated units.{p_end}
 
-{synopt:{opt attgt}}{it:Large-N only.}  Reports cohort-by-year  ATT(g,t)  estimates with robust standard errors and confidence intervals.{p_end}
+{synopt:{opt attgt}}{it:Large-N only.} Reports post-treatment ATT(g,t) estimates by cohort and calendar time, with standard errors and confidence intervals. For {cmd:ipw} and {cmd:ipwra}, standard errors are influence-function based and account for estimation of the propensity score; for {cmd:ra}, they are regression based (robust or clustered).{p_end}
 
 {synopt:{opt cluster(varname)}}{it:Large-N only.} Specifies the clustering level for ATT(g,t) standard errors and multiplier-bootstrap inference. By default, clustering is at the unit level.{p_end}
 
@@ -88,9 +88,13 @@ Small-N: plots treated and control means of residualized outcomes over time.{p_e
 
 {synopt:{opt gid(id)}}Select treated unit to plot (default: treated-group average).{p_end}
 
-{synopt:{opt vce(vartype)}}Variance estimator for regression (e.g., {bf:robust}, {bf:cluster id}, {bf:hc3}).{p_end}
+{synopt:{opt vce(vartype)}}{it:Small-N only.} Variance estimator for regression (e.g., {bf:robust}, {bf:hc3}).{p_end}
 
 {synopt:{opt reps(#)}}{it:Large-N only.} Number of bootstrap replications for large-N inference (default = 999).{p_end}
+
+{synopt:{opt seed(#)}}{it:Large-N only.} Random-number seed for the bootstrap, for reproducible standard errors and confidence bands.{p_end}
+
+{synopt:{opt level(#)}}Confidence level, in percent (default = 95).{p_end}
 
 {synopt:{opt ri}}{it:Small-N only.} Perform randomization inference (RI).{p_end}
 
@@ -99,6 +103,58 @@ Small-N: plots treated and control means of residualized outcomes over time.{p_e
 {synopt:{opt riseed(#)}}{it:Small-N only.} Seed for RI reproducibility (default: randomly drawn).{p_end}
 
 {synoptline}
+
+{marker results}{...}
+{title:Saved results}
+
+{pstd}
+Large-N mode saves the following in {cmd:e()}; type {cmd: ereturn list} to display them:
+
+{synoptset 24 tabbed}{...}
+{p2col 5 24 28 2: Scalars}{p_end}
+{synopt:{cmd:e(att)}}post-treatment average ATT ({cmd:Post_avg}){p_end}
+{synopt:{cmd:e(se_att)}}standard error of {cmd:e(att)}{p_end}
+{synopt:{cmd:e(N_attgt)}}number of estimated ATT(g,t) cells{p_end}
+{synopt:{cmd:e(N_dropped)}}number of excluded ATT(g,t) cells{p_end}
+{synopt:{cmd:e(reps)}}number of bootstrap replications{p_end}
+{synopt:{cmd:e(cb_crit)}}critical value for simultaneous confidence bands{p_end}
+
+{p2col 5 24 28 2: Macros}{p_end}
+{synopt:{cmd:e(cmd)}}{cmd:lwdid}{p_end}
+{synopt:{cmd:e(depvar)}}outcome variable{p_end}
+{synopt:{cmd:e(controls)}}covariates, as specified{p_end}
+{synopt:{cmd:e(method)}}{cmd:ra}, {cmd:ipw}, or {cmd:ipwra}{p_end}
+{synopt:{cmd:e(rolling)}}transformation type{p_end}
+{synopt:{cmd:e(ci_display)}}{cmd:pointwise} or {cmd:simultaneous}{p_end}
+
+{p2col 5 24 28 2: Matrices}{p_end}
+{synopt:{cmd:e(b)}}{cmd:Pre_avg}, {cmd:Post_avg}, and event-study WATT(r), named {cmd:Rm}{it:#} (r < 0) and {cmd:Rp}{it:#} (r >= 0){p_end}
+{synopt:{cmd:e(V)}}bootstrap variance-covariance matrix of {cmd:e(b)}{p_end}
+{synopt:{cmd:e(WATT)}}event-study results: {cmd:ryear watt se}{p_end}
+{synopt:{cmd:e(ATTgt)}}cell-level results, including pre-treatment cells: {cmd:cohort time ryear att se Ngt}{p_end}
+{synopt:{cmd:e(ATTgt_dropped)}}excluded cells, if any: {cmd:cohort time ryear reason}{p_end}
+{synopt:{cmd:e(N_cohorts_used)}}number of cohorts contributing to each WATT(r){p_end}
+
+{pstd}
+Reason codes in {cmd:e(ATTgt_dropped)}: 1 = insufficient treated or control
+observations; 2 = propensity model failed or did not converge; 3 = outcome
+regression failed; 4 = treatment not identified; 5 = outcome influence
+function singular; 6 = propensity influence function singular.
+
+{pstd}
+Cell-level ATT(g,t) estimates are not in {cmd:e(b)}; use {cmd:e(ATTgt)}.
+Coefficient names can be listed with {cmd:ereturn display, coeflegend}, e.g.:
+
+{space 4}{cmd:. scalar avg_att = _b[Post_avg]}
+{space 4}{cmd:. scalar avg_se  = _se[Post_avg]}
+{space 4}{cmd:. scalar att_m2  = _b[Rm2]}
+{space 4}{cmd:. scalar att1    = _b[Rp1]}
+
+{pstd}
+Small-N mode saves {cmd:e(att)}, {cmd:e(se_att)}, {cmd:e(b)}, and {cmd:e(V)}.
+With common timing, it also saves period-specific estimates in {cmd:e(ATTt)}
+and {cmd:e(SEt)}, and the RI p-value in {cmd:e(p_ri)} when {cmd:ri} is specified.
+
 
 {marker description}{...}
 {title:Description}
@@ -129,6 +185,16 @@ the {cmd:small} option invokes the exact small-sample inference procedures
 developed in Lee and Wooldridge (2026b). 
 
 {pstd}
+In the large-N procedure, ATT(g,t) is estimated separately for each cohort and
+calendar time and then aggregated, with cohort-size weights, into event-study
+effects WATT(r) and pre- and post-treatment averages. Inference uses a
+multiplier (wild) bootstrap of the influence functions, clustered at the unit
+level by default. If some ATT(g,t) cannot be estimated (for example, because of
+too few treated or control units or a failed propensity-score model), those
+cells are excluded from the aggregation and a warning lists up to five of them;
+the complete list is stored in {cmd:e(ATTgt_dropped)}.
+
+{pstd}
 Based on the treatment cohort variable specified in {cmd:gvar()}, {cmd:lwdid}
 automatically detects whether the design involves a single treatment cohort
 (common timing) or multiple cohorts (staggered adoption) and applies the
@@ -138,6 +204,7 @@ appropriate estimation procedure.
 Details of the implementation are given in Hur, Lee and Wooldridge (2026c); 
 see also the {browse "https://github.com/Soo-econ/lwdid":lwdid GitHub repository}
 for additional examples and documentation.
+
 
 {marker examples}{...}
 {title:Examples}
@@ -217,12 +284,6 @@ Working Paper, Available at {browse "https://dx.doi.org/10.2139/ssrn.6502558":SS
     Jeffrey M. Wooldridge
     Michigan State University
     {browse "mailto:wooldri1@msu.edu":wooldri1@msu.edu}
-
-
-
-
-
-
 
 
 

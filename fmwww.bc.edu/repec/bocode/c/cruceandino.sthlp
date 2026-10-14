@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 0.9.1  2026  Juan Marcelo Gutierrez Miranda | TodoEconometria}{...}
+{* *! version 0.9.2  2026  Juan Marcelo Gutierrez Miranda | TodoEconometria}{...}
 {vieweralsosee "table" "help table"}{...}
 {vieweralsosee "collect" "help collect"}{...}
 {vieweralsosee "graph bar" "help graph bar"}{...}
@@ -8,6 +8,7 @@
 {viewerjumpto "Options" "cruceandino##options"}{...}
 {viewerjumpto "Examples" "cruceandino##examples"}{...}
 {viewerjumpto "Stored results" "cruceandino##results"}{...}
+{viewerjumpto "Working with R" "cruceandino##r"}{...}
 {viewerjumpto "Author" "cruceandino##author"}{...}
 {title:Title}
 
@@ -31,24 +32,26 @@ a coherent table ({helpb collect}) and figure from a single command.
 {synopthdr}
 {synoptline}
 {syntab:Main}
-{synopt:{opt by(varname)}}variable that splits the table columns and the figure panels{p_end}
+{synopt:{opt by(varname)}}outer grouping: the leftmost block of the table and the figure panels{p_end}
 {synopt:{opt stat:istic(name)}}statistic to tabulate/plot (default {cmd:mean}){p_end}
 {synopt:{opt pct}}scale the outcome to percent (prevalence for a 0/1 variable){p_end}
-{synopt:{opt fr:eq}}add the frequency (N) to the table{p_end}
+{synopt:{opt fr:eq}}add the frequency to the {helpb collect} table left in memory{p_end}
 {synopt:{opt li:ne}}line (series) plot instead of bars; x = {it:factor1}{p_end}
 {synopt:{opt heat:map}}heatmap of the outcome over {it:factor1} (x) by {it:factor2} (y); class-binned colour, scales to hundreds of cells{p_end}
 {synopt:{opt comp:osition}}% of the (sub)sample per cell (as {cmd:catplot, percent}); no outcome{p_end}
 {synopt:{opt pan:el}}small multiples: one mini-panel per category; x = {it:factor1}{p_end}
 {synopt:{opt dual}}two margins of an ordinal outcome (0=none): % consuming (bars) + frequency among consumers (line, second axis){p_end}
-{synopt:{opt sort}}order the bars by value (descending){p_end}
-{synopt:{opt hbar}}horizontal bars (automatic if the axis factor has >12 categories){p_end}
+{synopt:{opt sort}}order the bars, and the table, by value (descending){p_end}
+{synopt:{opt nby}}in the table, report the N split by the {opt by()} group (one N row per group) instead of a single pooled total{p_end}
+{synopt:{opt hbar}}horizontal bars (automatic with >12 categories or long labels){p_end}
 
 {syntab:Output}
-{synopt:{opt ti:tle(string)}}axis/figure title{p_end}
-{synopt:{opt note(string)}}figure footnote (e.g. the source); none by default{p_end}
-{synopt:{opt sav:ing(file)}}export the table ({cmd:.md}, {cmd:.docx}, {cmd:.html}, {cmd:.tex}){p_end}
+{synopt:{opt ti:tle(string)}}title of the figure and of the table; built from the measure if omitted{p_end}
+{synopt:{opt note(string)}}footnote of the figure and of the table (e.g. the source){p_end}
+{synopt:{opt sav:ing(file)}}export the table ({cmd:.md}, {cmd:.docx}, {cmd:.html}, {cmd:.tex}, {cmd:.xlsx}){p_end}
 {synopt:{opt gra:ph(file.png)}}save the figure (PNG, 2200 px wide){p_end}
-{synopt:{opt for:mat(%fmt)}}numeric format (default {cmd:%5.1f}){p_end}
+{synopt:{opt for:mat(%fmt)}}numeric format (default {cmd:%6.2f}; sums and counts {cmd:%12.0fc}){p_end}
+{synopt:{opt lang(en|es)}}language of the texts the command writes (axis and legend titles); default {cmd:en}{p_end}
 {synopt:{opt sch:eme(name)}}graph scheme (default: the user's; {cmd:s1color} is clean){p_end}
 {synopt:{opt col:or(colorstyle)}}bar/line colour (default a legible green){p_end}
 {synopt:{opt gr:opts(options)}}pass options through to the inner {helpb twoway}/{helpb graph bar} (escape hatch){p_end}
@@ -64,9 +67,12 @@ a coherent table ({helpb collect}) and figure from a single command.
 {pstd}
 {cmd:cruceandino} summarizes an {it:outcome} variable (binary or continuous) cross-classified
 by 1 to 3 {it:categorical} variables and, optionally, a {opt by()} variable. In one step it
-produces (i) a {bf:table} on the Stata 17 {helpb table}/{helpb collect} framework, exportable
-to Markdown, Word, HTML or LaTeX, and (ii) a coherent {bf:figure} (bars by default, or lines
-with {opt line}), with labels and percentages consistent across the table and the graph.
+produces (i) a {bf:table} that reads as a tree (groups merged on the left, the categories of
+{it:factor1} in columns, one N row at the bottom), exported to Markdown, HTML, LaTeX, Excel or
+Word, (ii) a coherent {bf:figure} in one of seven modes (grouped bars, horizontal bars, lines,
+heatmap, composition, small multiples, dual margins), and (iii) the figures of the table as a
+matrix, {cmd:r(table)}. Sample, weights, labels and percentages are the same in all three.
+The {helpb table}/{helpb collect} table is also left in memory.
 
 {pstd}
 It is aimed at household-survey consumption studies (e.g. coca, alcohol, tobacco), where one
@@ -78,17 +84,20 @@ later}.
 {title:Options}
 
 {phang}
-{opt by(varname)} numeric variable defining the table columns and the figure panels.
+{opt by(varname)} numeric variable for an outer grouping: the leftmost block of the exported
+table and the panels of the figure. It may not also be one of the factors.
 
 {phang}
-{opt statistic(name)} {helpb table} statistic: {cmd:mean} (default), {cmd:sum}, {cmd:median},
-etc.
+{opt statistic(name)} statistic to compute: {cmd:mean} (default), {cmd:median}, {cmd:sum},
+{cmd:count}, {cmd:sd}, {cmd:p90}, or any other statistic of {helpb collapse}.
 
 {phang}
-{opt pct} multiplies the outcome by 100; with a 0/1 variable this gives the {bf:prevalence (%)}.
+{opt pct} multiplies the outcome by 100; with a 0/1 variable this gives the {bf:percentage} with the
+outcome, and the axis is titled {it:% <variable label>} (for example {it:% Union worker}).
 
 {phang}
-{opt freq} adds a frequency (N) row/column to the table.
+{opt freq} adds the frequency to the {helpb collect} table left in memory. The exported table
+always carries the N of each column in its last row.
 
 {phang}
 {opt line} draws a {bf:line} plot ({helpb twoway} connected) instead of bars. The X axis is
@@ -119,33 +128,61 @@ It is the counterpart of R's {cmd:facet_wrap}; ideal for the evolution of X acro
 = {bf:% consuming} ({cmd:100*mean(outcome>0)}, bars, left axis) and the {bf:intensive} margin =
 {bf:frequency among consumers} ({cmd:mean(outcome | outcome>0)}, line, right axis). {it:factor1} is
 the X axis; {it:factor2}/{it:factor3}/{opt by()} generate panels. The intensive axis is fixed to
-{cmd:[1, max]} (common across panels) so the reading is honest. The table carries extensive +
-intensive + N per cell. Useful to see the {bf:dissociation of margins}: what raises participation
-need not raise frequency.
+{cmd:[1, max]} (common across panels) so the reading is honest. The table carries the % consuming
+and, among consumers, the % in each category of the outcome (they add up to 100), with the
+category value labels as headers. Useful to see the {bf:dissociation of margins}: what raises
+participation need not raise frequency.
 
 {phang}
-{opt sort} orders the bars by value (descending), for ranking-style reading.
+{opt sort} orders the bars by value (descending), for ranking-style reading. In the table it orders
+the rows (one value column) or the columns (from the highest overall value to the lowest).
+
+{phang}
+{opt nby} splits the table's {bf:N row by the} {opt by()} {bf:group}: with {cmd:by(country)} it prints
+one N row per country (e.g. "N (observations) {c 183} Bolivia", "{c 183} Peru") instead of a single
+pooled column total. It only affects the table (every export format and the Results window); it needs
+{opt by()} and is ignored without it. The default (a single total N row) is unchanged.
 
 {phang}
 {opt hbar} draws {bf:horizontal bars}. It is {bf:automatic} when the axis factor has more than 12
-categories (so horizontal labels do not collide); {opt hbar} forces it even with few.
+categories or long labels (so horizontal labels do not collide); {opt hbar} forces it even
+with few. Category labels longer than 30 characters are wrapped on several lines.
 
 {phang}
-{opt title(string)} Y-axis / figure title.
+{opt title(string)} title of the figure and of the table; it should say what the figures are
+(e.g. {it:% of union members by race}). If omitted, the table gets one built from the measure
+and the variable labels, and the subsample of an {cmd:if} is printed under it.
 
 {phang}
-{opt note(string)} figure footnote (for example, the data source or a signature). By default the
-figure carries no note.
+{opt note(string)} footnote of the figure and, in small type, of the table (for example, the data
+source). None by default.
 
 {phang}
 {opt saving(file)} exports the table; the type is inferred from the extension ({cmd:.md},
-{cmd:.docx}, {cmd:.html}, {cmd:.tex}).
+{cmd:.docx}, {cmd:.html}, {cmd:.tex}, {cmd:.xlsx}). The table reads as a tree, left to right: the
+groups on the left from the widest to the narrowest ({opt by()}, {it:factor3}, {it:factor2}; the
+reverse of the figure), the categories of {it:factor1} as columns, and one row at the bottom with
+the N behind each column. Outer groups are merged cells with vertical text in {cmd:.html},
+{cmd:.tex} (needs {cmd:booktabs}, {cmd:multirow}, {cmd:graphicx}) and {cmd:.xlsx}; merged with
+horizontal text in {cmd:.docx}; flat in {cmd:.md}. Only the outer group is written vertically, and in
+{cmd:.tex} only when each of its blocks spans 4 rows or more. Other extensions stop with an
+error. A plain two-way cross (one group, no {opt by()} nor {it:factor3}) with more than 12
+columns, and more columns than rows, is turned to portrait: the long factor goes down. With
+nested groups the tree is never turned. A factor holding years is shown as the plain number. The
+{helpb collect} table is always left in memory, so {cmd:putdocx collect} and {cmd:putpdf collect} keep
+working.
 
 {phang}
 {opt graph(file.png)} exports the figure as PNG (2200 px wide).
 
 {phang}
-{opt format(%fmt)} numeric format of the table/labels (default {cmd:%5.1f}).
+{opt format(%fmt)} numeric format of the table/labels (default {cmd:%6.2f}; {cmd:%12.0fc} for
+{cmd:sum} and {cmd:count}).
+
+{phang}
+{opt lang(en|es)} language of the texts {cmd:cruceandino} writes itself: axis titles
+({it:Percent (%)} / {it:Porcentaje (%)} when the outcome has no short label), the {opt dual} legend and subtitle, and the statistic
+names in the table. Variable and value labels are always the user's. Default {cmd:en}.
 
 {phang}
 {opt scheme(name)} Stata graph scheme. None is imposed by default (the user's is respected). For a
@@ -213,6 +250,46 @@ defaults do not anticipate (e.g. {cmd:gropts(ylabel(0(10)70) ysize(8))}).
 {synopt:{cmd:r(statistic)}}statistic computed{p_end}
 {synopt:{cmd:r(pct)}}1 if scaled to percent, 0 otherwise{p_end}
 {synopt:{cmd:r(mode)}}figure type: {cmd:bars}, {cmd:line}, {cmd:heatmap}, {cmd:composition}, {cmd:panel} or {cmd:dual}{p_end}
+{p2col 5 18 22 2: Matrices}{p_end}
+{synopt:{cmd:r(table)}}the figures of the table at full precision, one row per row of the table and
+one column per column; nested rows are named {it:outer group}:{it:level}{p_end}
+{synopt:{cmd:r(Ncol)}}observations behind each column (the N row of the table){p_end}
+
+{pstd}
+For example, the gap between two groups, or the table into Excel:{p_end}
+{phang2}{cmd:. cruceandino union race married, pct nograph}{p_end}
+{phang2}{cmd:. matrix list r(table), format(%9.2f)}{p_end}
+{phang2}{cmd:. matrix T = r(table)}{p_end}
+{phang2}{cmd:. display T[2,2] - T[1,2]}{p_end}
+{phang2}{cmd:. putexcel set cross.xlsx, replace}{p_end}
+{phang2}{cmd:. putexcel A1 = matrix(T), names}{p_end}
+
+
+{marker r}{...}
+{title:Working with R}
+
+{pstd}
+{cmd:cruceandino} does not need R, but data and results move between the two with standard
+packages: R writes a labelled {cmd:.dta} with {cmd:haven}, Stata crosses it, and the table saved with
+{cmd:saving(.xlsx)} goes back to R with {cmd:readxl}, at full precision. Value and variable labels
+travel with the data. In R, add a wage quartile to {cmd:nlsw88}:{p_end}
+{phang2}{cmd:url <- "https://www.stata-press.com/data/r17/nlsw88.dta"}{p_end}
+{phang2}{cmd:d <- haven::read_dta(url)}{p_end}
+{phang2}{cmd:q <- c("Q1 (lowest)" = 1, Q2 = 2, Q3 = 3, "Q4 (highest)" = 4)}{p_end}
+{phang2}{cmd:d$wageq <- haven::labelled(dplyr::ntile(d$wage, 4), q)}{p_end}
+{phang2}{cmd:attr(d$wageq, "label") <- "Wage quartile"}{p_end}
+{phang2}{cmd:haven::write_dta(d, "nlsw88_r.dta")}{p_end}
+
+{pstd}In Stata:{p_end}
+{phang2}{cmd:. use nlsw88_r, clear}{p_end}
+{phang2}{cmd:. cruceandino union wageq, by(race) pct saving("cross.xlsx")}{p_end}
+
+{pstd}Back in R, the table as a data frame: row groups in the first column, one column per
+category of the first factor, then the N row (and the note, if any):{p_end}
+{phang2}{cmd:x <- readxl::read_excel("cross.xlsx", skip = 1)}{p_end}
+
+{pstd}Recomputing the same percentages in R ({cmd:dplyr}: {cmd:group_by(race, wageq)},
+{cmd:mean(union)}) gives the same figures, which is a quick check that nothing was lost on the way.{p_end}
 
 
 {marker author}{...}
@@ -221,6 +298,6 @@ defaults do not anticipate (e.g. {cmd:gropts(ylabel(0(10)70) ysize(8))}).
 {pstd}
 Juan Marcelo Gutierrez Miranda {hline 1} TodoEconometria, Madrid, Spain.{break}
 The command was developed for a comparative study of coca-leaf consumption in the Andes
-(Bolivia and Peru). Available from the SSC archive: type {stata ssc install cruceandino}.
+(Encuesta de Hogares of Bolivia, 2005-2025, and ENAHO of Peru, 2012-2025). Available from the SSC archive: type {stata ssc install cruceandino}.
 Cite as: Gutierrez Miranda, J. M. (2026). {it:cruceandino: one-step multiway crosstabulation with a coherent table and figure}.
 Statistical Software Components, Boston College Department of Economics.

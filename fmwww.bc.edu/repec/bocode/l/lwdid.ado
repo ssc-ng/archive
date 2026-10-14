@@ -1,4 +1,5 @@
-*! version 3.3 : 27 September 2026
+*
+*! version 3.4: 12 October 2026
 *! lwdid - Lee & Wooldridge rolling DID estimator (unified: small-N + large-N)
 *! authors: Soo Jeong Lee, Jeffrey M. Wooldridge
 *! contact: soojeong.lee@siu.edu, wooldri1@msu.edu
@@ -18,7 +19,7 @@ capture program drop lwdid_large
 program define lwdid, eclass sortpreserve
 		version 16.0
 
-		syntax varlist(min=1 numeric) [if] [in], ///
+		syntax varlist(min=1 numeric fv) [if] [in], ///
 			IVAR(name) TVAR(name) GVAR(name)     ///
 			ROLLING(name)                        ///
 			[METHOD(name)                        ///   
@@ -58,6 +59,19 @@ program define lwdid, eclass sortpreserve
 		*-- parse varlist
 		local y    : word 1 of `varlist'
 		local xlist: list varlist - y       
+		* Expand factor-variable controls once, before dispatch. Materialized
+		* columns also feed the Mata influence functions (which need real vars).
+		* fvrevar respects i., c., # and ## and removes base categories.
+		if "`xlist'" != "" {
+			quietly fvrevar `xlist' if `touse'
+			local __expanded_x `r(varlist)'
+			* fvrevar returns physical variables usable by Stata and Mata.
+		}
+		local __dispatch_varlist `y' `__expanded_x'
+		* Forward validated original options and the expanded numeric controls.
+		local __options_pos = strpos(`"`0'"', ",")
+		local __original_opts = substr(`"`0'"', `__options_pos', .)
+		local __dispatch_call `"`__dispatch_varlist' `if' `in' `__original_opts'"'
 
 			
 		*-- rolling() check
@@ -112,18 +126,22 @@ program define lwdid, eclass sortpreserve
 				}
 				* with single treatment
 				else if `n_cohort' == 1 {
-					lwdid_small_single `0'            
+					lwdid_small_single `__dispatch_call'
+					* Store the control list as typed by the user (e.g. i.region c.x1#c.x2).
+					ereturn local controls "`xlist'"
 					exit
 				}
 				*with staggered adoption
 				else {
-					lwdid_small_staggered `0'
+					lwdid_small_staggered `__dispatch_call'
 					exit
 				}
 			}
 				*with Large-N
 		else {
-				lwdid_large `0'
+				lwdid_large `__dispatch_call'
+				* Store the control list as typed by the user (e.g. i.region c.x1#c.x2).
+				ereturn local controls "`xlist'"
 			}
 			
 			
@@ -135,7 +153,7 @@ end
 program define lwdid_small_single, eclass
 		version 16.0
 
-		syntax varlist(min=1 numeric) [if] [in], ///
+		syntax varlist(min=1 numeric fv) [if] [in], ///
 			IVAR(name) TVAR(name)  GVAR(name)     ///
 			ROLLING(name)                        ///
 			[METHOD(name)                        ///   
@@ -417,11 +435,9 @@ program define lwdid_small_single, eclass
 			}
 
 			else {
-				local RHS ""
-
-				di as txt "------------------------------------------------------------"
-				di as txt "Controls not applied: sample does not satisfy N_1 > K+1 and N_0 > K+1"
-				di as txt "------------------------------------------------------------"
+				di as err "Too many controls for small-N estimation: K=`K1', treated N=`nt', controls N=`nc'."
+				di as err "Need N_treated > K+1 and N_control > K+1. Reduce covariates."
+				exit 2001
 			}
 
 		}
@@ -674,6 +690,11 @@ program define lwdid_small_single, eclass
 			}
 		}
 
+			* e(ATTt)/e(SEt) store post-treatment period-specific
+			* regression estimates only; overall ATT stays in e(att)/e(se_att).
+			* Preserve the "average" row in the printed/exported table.
+			preserve
+			quietly keep if period != "average"
 			quietly count
 			local __Nrow = r(N)
 			tempname __ATTt __SEt
@@ -681,6 +702,7 @@ program define lwdid_small_single, eclass
 				capture noisily mkmat beta, matrix(`__ATTt')
 				capture noisily mkmat se,   matrix(`__SEt')
 			}
+			restore
 
 			frame change default
 			capture confirm matrix `__ATTt'
@@ -951,7 +973,7 @@ end
 program define lwdid_small_staggered, eclass
     version 16.0
 
-    syntax varlist(min=1 numeric) [if] [in], ///
+    syntax varlist(min=1 numeric fv) [if] [in], ///
         IVAR(name) TVAR(name) GVAR(name)     ///
         ROLLING(name)                        ///
         [METHOD(name)                        ///
@@ -1240,22 +1262,22 @@ program define lwdid_small_staggered, eclass
 		ereturn local depvar  "`y'"
 		ereturn local rolling "`rolling'"
 
-    di as res "*--- lwdid (rolling: `rolling') ATT = " %9.3f e(att) ///
-              "   SE = " %9.3f e(se_att)
+		di as res "*--- lwdid (rolling: `rolling') ATT = " %9.3f e(att) ///
+				  "   SE = " %9.3f e(se_att)
 
-    *------------------------------------------------------------
-    * Exposure-time graph: cohort-size-weighted residualized paths
-    * Runs after the original equation (7.18) regression table.
-    * No confidence intervals or pre-trends test are reported.
-    *------------------------------------------------------------
-    if "`graph'" != "" {
-        use "`__graph_cells'", clear
-        quietly count
-        if r(N) == 0 {
-            di as err "No valid cohort-by-exposure-time cells are available for the graph."
-            restore
-            exit 2000
-        }
+		*------------------------------------------------------------
+		* Exposure-time graph: cohort-size-weighted residualized paths
+		* Runs after the original equation (7.18) regression table.
+		* No confidence intervals or pre-trends test are reported.
+		*------------------------------------------------------------
+		if "`graph'" != "" {
+			use "`__graph_cells'", clear
+			quietly count
+			if r(N) == 0 {
+				di as err "No valid cohort-by-exposure-time cells are available for the graph."
+				restore
+				exit 2000
+			}
 
         gen double __tr_num = Ng * tr_mean
         gen double __co_num = Ng * co_mean
@@ -1327,7 +1349,7 @@ end
 program define lwdid_large, eclass
     version 16.0
 
-    syntax varlist(min=1 numeric) [if] [in], ///
+    syntax varlist(min=1 numeric fv) [if] [in], ///
         IVAR(name) TVAR(name)  GVAR(name)     ///
         ROLLING(name)                        ///
         [METHOD(name)                        ///   
@@ -1464,6 +1486,11 @@ program define lwdid_large, eclass
 				local cluster_var `__cluster'
 			}
 			
+			* Compact numeric cluster identifier (1..G), built once and used for
+			* the cell-level IF cluster sums and the cluster wild bootstrap.
+			tempvar __if_cluster_id
+			quietly egen long `__if_cluster_id' = group(`cluster_var') if `touse'
+
 			* --- Save user's current xtset settings
 			local __lwdid_had_xtset 0
 			local __lwdid_old_panel ""
@@ -1736,14 +1763,61 @@ program define lwdid_large, eclass
 					restore
 				}
 
-				qui tempfile ATTfile
-				qui tempname pf
+				qui tempfile ATTfile DROPfile
+				qui tempname pf __drop_pf
 				qui postfile `pf' int cohort int time int ryear double att double se double tstat double pval double lower_ci double upper_ci long Ngt using "`ATTfile'", replace
+				* reason: 1 insufficient treated/control; 2 propensity failure;
+				* 3 outcome regression failure; 4 treatment unidentified;
+				* 5 outcome IF rank failure; 6 propensity IF rank failure.
+				qui postfile `__drop_pf' int cohort int time int ryear byte reason using "`DROPfile'", replace
+				local __n_dropped 0
 
 				quietly tempvar cont
 				qui gen byte `cont' = 0
 
-				mata: IF_mat = J(`Nobs', 0, .)
+				* ------------------------------------------------------------
+				* Work variables shared by all (g,t) cells: estimation sample,
+				* propensity sample, and ATT weights. Each cell refreshes them
+				* within its own -in- range.
+				* ------------------------------------------------------------
+				tempvar __es __ps __w
+				qui gen byte   `__es' = 0
+				qui gen byte   `__ps' = 0
+				qui gen double `__w'  = .
+
+				* ------------------------------------------------------------
+				* Sort by (tvar, id) so that each calendar period t is a contiguous
+				* block of rows (in id order). Commands in cell (g,t) use
+				* -in lo/hi- for that block only. __lo_k/__hi_k store the first
+				* and last row of period k = t - tmin + 1.
+				* ------------------------------------------------------------
+				sort `tvar' `id'
+				mata: __lw_tv = st_data(., "`tvar'")
+				forval t = `tmin'/`tmax' {
+					local __ti = `t' - `tmin' + 1
+					mata: __lw_s = selectindex(__lw_tv :== `t')
+					mata: st_local("__lw_nrow", strofreal(rows(__lw_s)))
+					local __lo_`__ti' ""
+					local __hi_`__ti' ""
+					if `__lw_nrow' > 0 {
+						mata: st_local("__lo_`__ti'", strofreal(__lw_s[1], "%20.0f"))
+						mata: st_local("__hi_`__ti'", strofreal(__lw_s[rows(__lw_s)], "%20.0f"))
+					}
+				}
+				capture mata: mata drop __lw_tv
+				capture mata: mata drop __lw_s
+
+				* ------------------------------------------------------------
+				* Cell IFs are stored as cluster sums:
+				*   __lw_C[c, k] = sum of the cell-k IF over observations in cluster c.
+				* The cell SE and the cluster wild bootstrap depend on the IF
+				* only through these sums. Preallocated for all possible cells.
+				* ------------------------------------------------------------
+				qui su `__if_cluster_id' if `touse', meanonly
+				local __n_cl = r(max)
+				local __n_coh : word count `cohorts'
+				local __max_cells = `__n_coh' * (`tmax' - `tmin' + 1)
+				mata: __lw_C = J(`__n_cl', `__max_cells', 0)
 				mata: cell_g = J(1, 0, .)
 				mata: cell_t = J(1, 0, .)
 				local cell_count = 0
@@ -1760,17 +1834,20 @@ program define lwdid_large, eclass
 			forval t = `tmin'/`tmax' {
 				local r = `t' - `g'
 
-				quietly replace `cont' = 0 if `touse'
+				* Rows for calendar time t; skip the cell if period t has no rows.
+				local __ti = `t' - `tmin' + 1
+				if "`__lo_`__ti''" == "" continue
+				local __in "in `__lo_`__ti''/`__hi_`__ti''"
 
 				if `t' < `g' {
 					* pre-period:
 					* never: never-treated + cohort g only
 					* default: never-treated + cohort g + cohorts treated after g
 					if "`never'" != "" {
-						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g') if `touse'
+						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g') if `touse' `__in'
 					}
 					else {
-						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g' | `gvar' > `g') if `touse'
+						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g' | `gvar' > `g') if `touse' `__in'
 					}
 				}
 				else {
@@ -1778,92 +1855,135 @@ program define lwdid_large, eclass
 					* never: never-treated + cohort g only
 					* default: never-treated + cohort g + cohorts treated after g (and still untreated at t)
 					if "`never'" != "" {
-						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g') if `touse'
+						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g') if `touse' `__in'
 					}
 					else {
-						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g' | (`gvar' > `g' & `gvar' > `t')) if `touse'
+						quietly replace `cont' = (`gvar' == 0 | `gvar' == `g' | (`gvar' > `g' & `gvar' > `t')) if `touse' `__in'
 					}
 				}
 
-				quietly count if `touse' & `fvar_`t'' & `cont'
-				if r(N) == 0 continue
+				quietly count if `touse' & `fvar_`t'' & `cont' & `dvar_g' == 1 `__in'
+				local __nt = r(N)
+				quietly count if `touse' & `fvar_`t'' & `cont' & `dvar_g' == 0 `__in'
+				local __nc = r(N)
+				if (`__nt' == 0 & `__nc' == 0) continue
+				if (`__nt' == 0 | `__nc' == 0) {
+					post `__drop_pf' (`g') (`t') (`r') (1)
+					local ++__n_dropped
+					continue
+				}
 
-				tempvar esamp_gt psamp_gt
-				qui gen byte `esamp_gt' = 0 if `touse'
-				qui gen byte `psamp_gt' = 0 if `touse'
+				* Variables created inside a cell; both are dropped at the end of
+				* the cell (capture drop also handles ones that were not created).
+				tempvar p_hat_gt uhat
 
 				* ------------------------------------------------------------
 				* Propensity score estimation and ATT weights
 				* ------------------------------------------------------------
 				if inlist("`method'", "ipw", "ipwra") {
-					tempvar p_hat_gt ipw_gt
 
-					sort `id' `tvar'
-					cap qui logit `dvar_g' `xlist' if `touse' & `fvar_`t'' & `cont', nolog
-					if _rc != 0 continue
+					cap qui logit `dvar_g' `xlist' if `touse' & `fvar_`t'' & `cont' `__in', nolog
+					if _rc != 0 {
+						post `__drop_pf' (`g') (`t') (`r') (2)
+						local ++__n_dropped
+						continue
+					}
 
-					qui replace `psamp_gt' = e(sample)
+					* Record exactly which logit coefficients Stata omitted.
+					* The IF score/Hessian must use that same effective design.
+					tempname __ps_omit
+					_ms_omit_info e(b)
+					matrix `__ps_omit' = r(omit)
+					if e(converged) != 1 {
+						post `__drop_pf' (`g') (`t') (`r') (2)
+						local ++__n_dropped
+						continue
+					}
+					qui replace `__ps' = e(sample) `__in'
 
-					qui predict double `p_hat_gt' if `psamp_gt', pr
-					qui gen double `ipw_gt' = cond(`dvar_g' == 1, 1, `p_hat_gt' / (1 - `p_hat_gt')) ///
-						if `psamp_gt'
+					qui predict double `p_hat_gt' if `__ps' `__in', pr
+					* ATT weights: 1 for treated, p/(1-p) for controls; missing outside psamp.
+					qui replace `__w' = cond(`__ps', cond(`dvar_g' == 1, 1, `p_hat_gt' / (1 - `p_hat_gt')), .) `__in'
 				}
 
-				
-				* VCE for cohort-time ATT(g,t)
+
+				* VCE for cohort-time ATT(g,t) (RA only; see note below)
 				* Default: heteroskedasticity-robust
 				* cluster(): cluster-robust at user-specified level
-				local __vce_att "vce(robust)"
-					if "`cluster'" != "" {
-						local __vce_att "vce(cluster `cluster_var')"
-					}
-				
+				local __vce_opt ", vce(robust)"
+				if "`cluster'" != "" {
+					local __vce_opt ", vce(cluster `cluster_var')"
+				}
+				* IPW/IPWRA: the cell SE is the IF-based cluster sandwich SE computed
+				* below, so no regression VCE is needed (point estimate and e(sample)
+				* do not depend on vce()).
+				if inlist("`method'", "ipw", "ipwra") local __vce_opt ""
+
 				* ------------------------------------------------------------
 				* Point estimation: ATT(g,t)
 				* ------------------------------------------------------------
+                local __reg_rc 0
 				if "`method'" == "ra" {
 					if "`xlist'" == "" {
-						qui regress `yvar' `dvar_g' if `touse' & `fvar_`t'' & `cont', `__vce_att'
+						capture quietly regress `yvar' `dvar_g' if `touse' & `fvar_`t'' & `cont' `__in' `__vce_opt'
+                        local __reg_rc = _rc
 					}
 					else {
 						local __lwdid_int_list ""
 						foreach __cx of local current_x_list {
 							local __lwdid_int_list `__lwdid_int_list' c.`dvar_g'#c.`__cx'
 						}
-						qui reg `yvar' `dvar_g' `current_x_list' `__lwdid_int_list' ///
-							if `touse' & `fvar_`t'' & `cont', `__vce_att'
+						capture quietly reg `yvar' `dvar_g' `current_x_list' `__lwdid_int_list' ///
+							if `touse' & `fvar_`t'' & `cont' `__in' `__vce_opt'
+                        local __reg_rc = _rc
 					}
 				}
 				else if "`method'" == "ipw" {
-					qui reg `yvar' `dvar_g' [aw=`ipw_gt'] if `psamp_gt', `__vce_att'
+					capture quietly reg `yvar' `dvar_g' [aw=`__w'] if `__ps' `__in' `__vce_opt'
+                        local __reg_rc = _rc
 				}
 				else if "`method'" == "ipwra" {
 					if "`xlist'" == "" {
-						qui reg `yvar' `dvar_g' [aw=`ipw_gt'] if `psamp_gt', `__vce_att'
+						capture quietly reg `yvar' `dvar_g' [aw=`__w'] if `__ps' `__in' `__vce_opt'
+                        local __reg_rc = _rc
 					}
 					else {
 						local __lwdid_int_list ""
 						foreach __cx of local current_x_list {
 							local __lwdid_int_list `__lwdid_int_list' c.`dvar_g'#c.`__cx'
 						}
-						qui reg `yvar' `dvar_g' `current_x_list' `__lwdid_int_list' ///
-							[aw=`ipw_gt'] if `psamp_gt', `__vce_att'
+						capture quietly reg `yvar' `dvar_g' `current_x_list' `__lwdid_int_list' ///
+							[aw=`__w'] if `__ps' `__in' `__vce_opt'
+                        local __reg_rc = _rc
 					}
 				}
 				else if "`method'" == "psmatch" {
-					teffects psmatch (`yvar') (`dvar_g' `xlist') ///
-						if `touse' & `fvar_`t'' & `cont', atet
+					capture quietly teffects psmatch (`yvar') (`dvar_g' `xlist') ///
+						if `touse' & `fvar_`t'' & `cont' `__in', atet
+                    local __reg_rc = _rc
 				}
 
-				if _rc != 0 {
-					if inlist("`method'", "ipw", "ipwra") {
-						cap drop `p_hat_gt' `ipw_gt'
-					}
-					drop `esamp_gt' `psamp_gt'
+				if `__reg_rc' != 0 {
+					post `__drop_pf' (`g') (`t') (`r') (3)
+					local ++__n_dropped
+					capture drop `p_hat_gt'
 					continue
 				}
 
-				qui replace `esamp_gt' = e(sample)
+				* Align outcome IF with Stata's actual estimated design, including
+				* automatically omitted collinear covariates/interactions.
+				tempname __or_omit
+				if inlist("`method'", "ra", "ipwra") {
+					_ms_omit_info e(b)
+					matrix `__or_omit' = r(omit)
+					if `__or_omit'[1,1] != 0 {
+						post `__drop_pf' (`g') (`t') (`r') (4)
+						local ++__n_dropped
+						capture drop `p_hat_gt'
+						continue
+					}
+				}
+				qui replace `__es' = e(sample) `__in'
 
 				* ------------------------------------------------------------
 				* Store point estimate and cell-specific treated size
@@ -1878,7 +1998,238 @@ program define lwdid_large, eclass
 					scalar `se_att' = _se[ATET:r1vs0.`dvar_g']
 				}
 
-				local __df_att = e(df_r)
+				* CI calculations are deferred until the cell IF has been computed.
+
+				qui count if `__es' & `dvar_g' == 1 `__in'
+				local Ngt = r(N)
+				* Post only after the IF for this cell has passed all diagnostics.
+
+				* ------------------------------------------------------------
+				* Influence function, computed in Mata on the estimation-sample
+				* rows of this cell (idx = row numbers within the time-t block).
+				* ------------------------------------------------------------
+				if inlist("`method'", "ra", "ipw", "ipwra") {
+
+					mata: __lw_rng = (`__lo_`__ti''::`__hi_`__ti'')
+					mata: idx = __lw_rng[selectindex(st_data(__lw_rng, "`__es'") :== 1)]
+
+					if "`method'" == "ra" {
+
+					qui predict double `uhat' if `__es' `__in', resid
+
+					* Z = (1, D, Xc, D*Xc), built in Mata
+					mata: D = st_data(idx, "`dvar_g'")
+					if "`xlist'" != "" {
+						mata: Xc = st_data(idx, tokens("`current_x_list'"))
+						mata: Z  = J(rows(D),1,1), D, Xc, D :* Xc
+					}
+					else {
+						mata: Z  = J(rows(D),1,1), D
+					}
+					mata: u   = st_data(idx, "`uhat'")
+					* e(b) order: treatment, X, D#X, constant; Z order: constant, treatment, X, D#X
+					mata: om = st_matrix("`__or_omit'")
+					mata: keep = selectindex((om[1,cols(om)], om[|1,1 \ 1,cols(om)-1|]) :== 0)
+					* Treatment is original Z column 2; omission may change its position.
+					mata: att_pos = selectindex(keep :== 2)
+					mata: Z = Z[,keep]
+					mata: st_local("__lwdid_if_rank_ok", strofreal(length(att_pos)==1 & rank(Z)==cols(Z)))
+					if !`__lwdid_if_rank_ok' {
+						post `__drop_pf' (`g') (`t') (`r') (5)
+						local ++__n_dropped
+						capture drop `p_hat_gt'
+						capture drop `uhat'
+						continue
+					}
+					mata: ZZinv = invsym(quadcross(Z,Z))
+					* treatment column of (Z*ZZinv):*u
+					mata: __lw_ifs = (Z * ZZinv[., att_pos]) :* u
+
+					* Sampling variation of the treated covariate mean.
+					*   The coefficient on D evaluates mu1(x)-mu0(x) at the treated
+					*   mean of X; the ATT averages over the treated sample (as in
+					*   teffects ra/ipwra, atet), so the IF includes
+					*   D_i * (Xc_i - xbar1)' * delta / n1,
+					*   delta = coefficients on D#Xc (0 if omitted).
+					*   e(b) order: D, Xc (K), D#Xc (K), _cons.
+					if "`xlist'" != "" {
+						mata: __lw_b  = st_matrix("e(b)")
+						mata: __lw_K  = cols(Xc)
+						mata: __lw_dl = __lw_b[|1, __lw_K+2 \ 1, 2*__lw_K+1|]
+						mata: __lw_dl = __lw_dl'
+						mata: __lw_n1 = quadsum(D)
+						mata: __lw_xm = quadcross(D, Xc) / __lw_n1
+						mata: __lw_ifs = __lw_ifs :+ D :* ((Xc :- __lw_xm) * __lw_dl) / __lw_n1
+					}
+				}
+				else if "`method'" == "ipw" {
+
+					* Influence contribution for the EXACT normalized IPW point estimator:
+					* ATT = sum(D*Y)/sum(D) - sum(q*Y)/sum(q),
+					* q = (1-D)*p/(1-p).
+					* Includes the normalization of both sample means and the
+					* first-stage logit score correction. Contributions include
+					* their sample-size scaling: do NOT divide again by N.
+					mata: y = st_data(idx, "`yvar'")
+					mata: d = st_data(idx, "`dvar_g'")
+					mata: p = st_data(idx, "`p_hat_gt'")
+					if "`xlist'" != "" {
+						mata: X = st_data(idx, tokens("`xlist'"))
+					}
+					else {
+						mata: X = J(rows(y),0,.)
+					}
+					mata: X = J(rows(y),1,1), X
+					mata: omps = st_matrix("`__ps_omit'")
+					if "`xlist'" == "" {
+						mata: keep_ps = 1
+					}
+					else {
+						mata: keep_ps = selectindex((omps[1,cols(omps)], omps[|1,1 \ 1,cols(omps)-1|]) :== 0)
+					}
+					mata: X = X[,keep_ps]
+					mata: st_local("__lwdid_ps_rank_ok", strofreal(rank(X)==cols(X)))
+					if !`__lwdid_ps_rank_ok' {
+						post `__drop_pf' (`g') (`t') (`r') (6)
+						local ++__n_dropped
+						capture drop `p_hat_gt'
+						continue
+					}
+					mata: q = (1 :- d) :* p :/ (1 :- p)
+					mata: nd = sum(d)
+					mata: nq = sum(q)
+					mata: st_local("__lwdid_ipw_denom_ok", strofreal(nd>0 & nq>0 & nd<. & nq<.))
+					if !`__lwdid_ipw_denom_ok' {
+						post `__drop_pf' (`g') (`t') (`r') (2)
+						local ++__n_dropped
+						capture drop `p_hat_gt'
+						continue
+					}
+					mata: mu1 = sum(d :* y)/nd
+					mata: mu0 = sum(q :* y)/nq
+					* Derivative d(mu0)/d(gamma) = sum(q*(Y-mu0)*X)/sum(q).
+					mata: G = quadcross(X, q :* (y :- mu0))' / nq
+					* Logit MLE IF contribution: score_i * [sum p(1-p)XX']^-1.
+					mata: A = quadcross(X, X :* (p :* (1 :- p)))
+					mata: Ainv = invsym(A)
+					mata: IFg = (X :* (d :- p)) * Ainv
+					mata: plug = d :* (y :- mu1) / nd :- q :* (y :- mu0) / nq
+					mata: __lw_ifs = plug :- IFg * G'
+				}
+				else if "`method'" == "ipwra" {
+
+					qui predict double `uhat' if `__es' `__in', resid
+
+					if "`xlist'" == "" {
+
+						mata: Z    = st_data(idx, "`dvar_g'")
+						mata: Z    = J(rows(Z),1,1), Z
+						* Align with outcome e(b), including an omitted intercept if any.
+						mata: om0 = st_matrix("`__or_omit'")
+						mata: keep0 = selectindex((om0[1,cols(om0)], om0[|1,1 \ 1,cols(om0)-1|]) :== 0)
+						mata: att_pos = selectindex(keep0 :== 2)
+						mata: Z = Z[,keep0]
+						mata: u    = st_data(idx, "`uhat'")
+						mata: w    = st_data(idx, "`__w'")
+						mata: Qw   = quadcross(Z, Z :* w)
+						mata: st_local("__lwdid_or_rank_ok", strofreal(length(att_pos)==1 & rank(Z)==cols(Z)))
+						if !`__lwdid_or_rank_ok' {
+							post `__drop_pf' (`g') (`t') (`r') (5)
+							local ++__n_dropped
+							capture drop `p_hat_gt'
+							capture drop `uhat'
+							continue
+						}
+						mata: Qwinv = invsym(Qw)
+						mata: M    = Z :* (w :* u)
+						* treatment column of M*Qwinv
+						mata: __lw_ifs = M * Qwinv[., att_pos]
+					}
+					else {
+
+						* Z = (1, D, X, D*X) built in Mata (no per-cell interaction variables)
+						mata: D     = st_data(idx, "`dvar_g'")
+						mata: Xc    = st_data(idx, tokens("`current_x_list'"))
+						mata: Z     = J(rows(D),1,1), D, Xc, D :* Xc
+						mata: X     = st_data(idx, tokens("`xlist'"))
+						mata: X     = J(rows(X),1,1), X
+						mata: omor = st_matrix("`__or_omit'")
+						mata: keep_or = selectindex((omor[1,cols(omor)], omor[|1,1 \ 1,cols(omor)-1|]) :== 0)
+						* Track treatment location after omitting collinear outcome columns.
+						mata: att_pos = selectindex(keep_or :== 2)
+						mata: Z = Z[,keep_or]
+						mata: omps = st_matrix("`__ps_omit'")
+						mata: keep_ps = selectindex((omps[1,cols(omps)], omps[|1,1 \ 1,cols(omps)-1|]) :== 0)
+						mata: X = X[,keep_ps]
+						mata: u     = st_data(idx, "`uhat'")
+						mata: w     = st_data(idx, "`__w'")
+						mata: p     = st_data(idx, "`p_hat_gt'")
+						mata: d     = D
+						mata: Qw    = quadcross(Z, Z :* w)
+						mata: st_local("__lwdid_or_rank_ok", strofreal(length(att_pos)==1 & rank(Z)==cols(Z)))
+						if !`__lwdid_or_rank_ok' {
+							post `__drop_pf' (`g') (`t') (`r') (5)
+							local ++__n_dropped
+							capture drop `p_hat_gt'
+							capture drop `uhat'
+							continue
+						}
+						mata: st_local("__lwdid_ps_rank_ok", strofreal(rank(X)==cols(X)))
+						if !`__lwdid_ps_rank_ok' {
+							post `__drop_pf' (`g') (`t') (`r') (6)
+							local ++__n_dropped
+							capture drop `p_hat_gt'
+							capture drop `uhat'
+							continue
+						}
+						mata: Qwinv = invsym(Qw)
+						mata: M     = Z :* (w :* u)
+						mata: A     = quadcross(X, X :* (p :* (1 :- p)))
+						mata: Ainv  = invsym(A)
+						mata: S     = X :* (d :- p)
+						mata: IFg   = S * Ainv
+						mata: H     = quadcross(Z :* ((1 :- d) :* w :* u), X)
+						* treatment column of (M + IFg*H')*Qwinv
+						mata: __lw_ifs = (M + IFg * H') * Qwinv[., att_pos]
+
+						* Sampling variation of the treated covariate mean
+						*   (same term as in RA; treated weights are 1 in IPWRA-ATT).
+						*   e(b) order: D, Xc (K), D#Xc (K), _cons.
+						mata: __lw_b  = st_matrix("e(b)")
+						mata: __lw_K  = cols(Xc)
+						mata: __lw_dl = __lw_b[|1, __lw_K+2 \ 1, 2*__lw_K+1|]
+						mata: __lw_dl = __lw_dl'
+						mata: __lw_n1 = quadsum(D)
+						mata: __lw_xm = quadcross(D, Xc) / __lw_n1
+						mata: __lw_ifs = __lw_ifs :+ D :* ((Xc :- __lw_xm) * __lw_dl) / __lw_n1
+					}
+				}
+
+				* ------------------------------------------------------------
+				* Cell IF -> cluster sums. The same sums give (i) the IPW/IPWRA
+				* cell SE and (ii) this cell's column of __lw_C for the WATT wild
+				* bootstrap. Missing IF values are set to 0.
+				* ------------------------------------------------------------
+				mata: __lw_ifs  = editmissing(__lw_ifs, 0)
+				mata: __lw_cl   = st_data(idx, "`__if_cluster_id'")
+				mata: __lw_o    = order(__lw_cl, 1)
+				mata: __lw_cls  = __lw_cl[__lw_o]
+				mata: __lw_info = panelsetup(__lw_cls, 1)
+				mata: __lw_S    = panelsum(__lw_ifs[__lw_o], __lw_info)
+				mata: __lw_G    = rows(__lw_S)
+
+				* IPW/IPWRA: report cell-specific IF-based sandwich SE, using
+				* the same estimated-propensity-score-adjusted cell IF as WATT.
+				* Cluster sums of finite-sample IF contributions give the
+				* IF-based cluster sandwich variance, without further division by N.
+				if inlist("`method'", "ipw", "ipwra") {
+					mata: st_numscalar("`se_att'", (__lw_G>1 ? sqrt(quadcross(__lw_S,__lw_S)) : .))
+					mata: st_local("__df_att", strofreal(__lw_G - 1))
+				}
+				else {
+					local __df_att = e(df_r)
+				}
+
 				scalar `tstat_att' = cond(`se_att' > 0 & `se_att' < ., `b_att' / `se_att', .)
 				if (`tstat_att' < .) {
 					if (`__df_att' < . & `__df_att' > 0) scalar `pval_att' = 2*ttail(`__df_att', abs(`tstat_att'))
@@ -1892,190 +2243,24 @@ program define lwdid_large, eclass
 				scalar `lo_att' = cond(`se_att' < ., `b_att' - `crit_att' * `se_att', .)
 				scalar `hi_att' = cond(`se_att' < ., `b_att' + `crit_att' * `se_att', .)
 
-				qui count if `esamp_gt' & `dvar_g' == 1
-				local Ngt = r(N)
-				post `pf' (`g') (`t') (`r') (`b_att') (`se_att') (`tstat_att') (`pval_att') (`lo_att') (`hi_att') (`Ngt')
-
-				* ------------------------------------------------------------
-				* Influence function
-				* ------------------------------------------------------------
-				if inlist("`method'", "ra", "ipw", "ipwra") {
-
-					tempvar IF_gt
-					qui gen double `IF_gt' = 0 if `touse'
-
-					qui su `dvar_g' if `esamp_gt', meanonly
-					local mean_D = r(mean)
-
-					if "`method'" == "ra" {
-
-					tempvar uhat
-					qui predict double `uhat' if `esamp_gt', resid
-
-					local zvars `dvar_g' `xlist'
-					local intvars
-					if "`xlist'" != "" {
-						foreach v in `current_x_list' {
-							tempvar intv
-							qui gen double `intv' = `dvar_g' * `v' if `esamp_gt'
-							local intvars `intvars' `intv'
-						}
-						local zvars `zvars' `intvars'
-					}
-
-					local IFname `IF_gt'
-					local ESname `esamp_gt'
-					local Uname  `uhat'
-
-					mata: es  = st_data(., "`ESname'")
-					mata: idx = selectindex(es :== 1)
-					mata: Z   = st_data(idx, tokens("`zvars'"))
-					mata: Z   = J(rows(Z),1,1), Z
-					mata: u   = st_data(idx, "`Uname'")
-					mata: ZZinv = invsym(quadcross(Z,Z))
-					mata: IFb   = (Z * ZZinv) :* u
-					mata: ifvec = J(rows(es),1,0)
-					mata: ifvec[idx] = IFb[,2]
-					mata: st_store(., "`IFname'", ifvec)
-
-					qui replace `IF_gt' = 0 if missing(`IF_gt')
-				}
-				else if "`method'" == "ipw" {
-
-					qui count if `esamp_gt'
-					local n_eff_gt = r(N)
-
-					tempvar __plug
-					qui gen double `__plug' = ///
-						((`dvar_g' / `mean_D') * (`yvar' - `b_att') ///
-						- ((1 - `dvar_g') * `p_hat_gt' / ((1 - `p_hat_gt') * `mean_D')) * (`yvar')) ///
-						if `esamp_gt'
-
-					local IFname `IF_gt'
-					local ESname `esamp_gt'
-					local Yname  `yvar'
-					local Dname  `dvar_g'
-					local Pname  `p_hat_gt'
-					local PLname `__plug'
-
-					mata: es   = st_data(., "`ESname'")
-					mata: idx  = selectindex(es :== 1)
-					mata: y    = st_data(idx, "`Yname'")
-					mata: d    = st_data(idx, "`Dname'")
-					mata: p    = st_data(idx, "`Pname'")
-					mata: plug = st_data(idx, "`PLname'")
-					mata: X    = st_data(idx, tokens("`xlist'"))
-					mata: X    = J(rows(X),1,1), X
-					mata: W    = p :* (1 :- p)
-					mata: A    = quadcross(X, X :* W)
-					mata: Ainv = invsym(A)
-					mata: s    = X :* (d :- p)
-					mata: IFg  = s * Ainv
-					mata: gvec = ((1 :- d) :* y :* p :/ (1 :- p))
-					mata: Gamma = mean(X :* gvec)'
-					mata: corr = IFg * Gamma
-					mata: ifvec = J(rows(es),1,0)
-					mata: ifvec[idx] = (plug :- corr) :/ `n_eff_gt'
-					mata: st_store(., "`IFname'", ifvec)
-
-					drop `__plug'
-				}
-				else if "`method'" == "ipwra" {
-
-					tempvar uhat
-					qui predict double `uhat' if `esamp_gt', resid
-
-					if "`xlist'" == "" {
-
-						local IFname `IF_gt'
-						local ESname `esamp_gt'
-						local Uname  `uhat'
-						local Wname  `ipw_gt'
-
-						mata: es   = st_data(., "`ESname'")
-						mata: idx  = selectindex(es :== 1)
-						mata: Z    = st_data(idx, tokens("`dvar_g'"))
-						mata: Z    = J(rows(Z),1,1), Z
-						mata: u    = st_data(idx, "`Uname'")
-						mata: w    = st_data(idx, "`Wname'")
-						mata: Qw   = quadcross(Z, Z :* w)
-						mata: Qwinv = invsym(Qw)
-						mata: M    = Z :* (w :* u)
-						mata: IFb  = M * Qwinv
-						mata: ifvec = J(rows(es),1,0)
-						mata: ifvec[idx] = IFb[,2]
-						mata: st_store(., "`IFname'", ifvec)
-					}
-					else {
-
-						local zvars `dvar_g' `current_x_list'
-						local intvars
-						foreach v in `current_x_list' {
-							tempvar intv
-							qui gen double `intv' = `dvar_g' * `v' if `esamp_gt'
-							local intvars `intvars' `intv'
-						}
-						local zvars `zvars' `intvars'
-
-						local IFname `IF_gt'
-						local ESname `esamp_gt'
-						local Uname  `uhat'
-						local Wname  `ipw_gt'
-						local Pname  `p_hat_gt'
-						local Dname  `dvar_g'
-						local Zname  `zvars'
-						local Xps    `xlist'
-
-						mata: es    = st_data(., "`ESname'")
-						mata: idx   = selectindex(es :== 1)
-						mata: Z     = st_data(idx, tokens("`Zname'"))
-						mata: Z     = J(rows(Z),1,1), Z
-						mata: X     = st_data(idx, tokens("`Xps'"))
-						mata: X     = J(rows(X),1,1), X
-						mata: u     = st_data(idx, "`Uname'")
-						mata: w     = st_data(idx, "`Wname'")
-						mata: p     = st_data(idx, "`Pname'")
-						mata: d     = st_data(idx, "`Dname'")
-						mata: Qw    = quadcross(Z, Z :* w)
-						mata: Qwinv = invsym(Qw)
-						mata: M     = Z :* (w :* u)
-						mata: A     = quadcross(X, X :* (p :* (1 :- p)))
-						mata: Ainv  = invsym(A)
-						mata: S     = X :* (d :- p)
-						mata: IFg   = S * Ainv
-						mata: H     = quadcross(Z :* ((1 :- d) :* w :* u), X)
-						mata: IFb   = (M + IFg * H') * Qwinv
-						mata: ifvec = J(rows(es),1,0)
-						mata: ifvec[idx] = IFb[,2]
-						mata: st_store(., "`IFname'", ifvec)
-					}
-
-					qui replace `IF_gt' = 0 if missing(`IF_gt')
-				}
-
-				qui replace `IF_gt' = 0 if missing(`IF_gt')
-
-				tempvar if_full
-				qui gen double `if_full' = 0 if `touse'
-				qui replace `if_full' = `IF_gt' if `esamp_gt' == 1 & `touse'
-
-				mata: IF_col = st_data(., "`if_full'", "`touse'")
-				mata: IF_mat = IF_mat, IF_col
+				* Store this cell's cluster sums
+				local cell_count = `cell_count' + 1
+				mata: __lw_C[__lw_cls[__lw_info[., 1]], `cell_count'] = __lw_S
 				mata: cell_g = cell_g, `g'
 				mata: cell_t = cell_t, `t'
-				local cell_count = `cell_count' + 1
 
-						drop `if_full' `IF_gt'
-						if inlist("`method'", "ipw", "ipwra") cap drop `p_hat_gt' `ipw_gt'
+						capture drop `p_hat_gt'
+						capture drop `uhat'
 					}
 					else {
-						if inlist("`method'", "ipw", "ipwra") cap drop `p_hat_gt' `ipw_gt'
+						capture drop `p_hat_gt'
 					}
 
-					drop `esamp_gt' `psamp_gt'
+					post `pf' (`g') (`t') (`r') (`b_att') (`se_att') (`tstat_att') (`pval_att') (`lo_att') (`hi_att') (`Ngt')
 				}
 						}
 							postclose `pf'
+							postclose `__drop_pf'
 
 						* --- Tempvars are cleaned automatically; avoid wildcard drops that may touch user variables.
 
@@ -2126,6 +2311,11 @@ program define lwdid_large, eclass
 				}
 
 			
+            if `cell_count' == 0 & inlist("`method'", "ra", "ipw", "ipwra") {
+                di as err "lwdid: no estimable ATT(g,t) cells remain."
+                exit 459
+            }
+
 	* --- Stage 2b: WATT(r) aggregation
 			quietly {
 			tempfile WATT_point WATT_weights AVG_point AVG_weights
@@ -2232,27 +2422,25 @@ program define lwdid_large, eclass
                 restore
                 mata: Wavgmat = st_matrix("Wavgmat")
 
-                tempvar cl_num unit_num
-                qui egen long `cl_num'   = group(`cluster_var') if `touse'
-                qui egen long `unit_num' = group(`id')          if `touse'
-
-                mata: cl_vec   = st_data(., "`cl_num'",   "`touse'")
-                mata: unit_vec = st_data(., "`unit_num'", "`touse'")
-
-                qui su `cl_num' if `touse', meanonly
-                local n_clusters = r(max)
-                qui su `unit_num' if `touse', meanonly
-                local n_units = r(max)
+                * Number of estimation-sample observations per cluster
+                * (used to center the IF at the observation level).
+                mata: __lw_clv = sort(st_data(., "`__if_cluster_id'", "`touse'"), 1)
+                mata: __lw_nc  = panelsetup(__lw_clv, 1)
+                mata: __lw_nc  = __lw_nc[., 2] :- __lw_nc[., 1] :+ 1
+                local n_clusters = `__n_cl'
             }
 
             mata {
                 n_vr      = rows(WATT_pmat)
-                Nobs_m    = rows(IF_mat)
-                n_cells_m = cols(IF_mat)
+                Nobs_m    = `Nobs'
+                n_cells_m = cols(cell_g)
 
-             * --- Build aggregated IF for each event time r
-                IF_r = J(Nobs_m, n_vr, 0)
+                // cluster-level cell IFs (n_clusters x n_cells)
+                IFc    = __lw_C[|1,1 \ rows(__lw_C), n_cells_m|]
+                __lw_C = J(0, 0, .)
 
+                // --- cell -> event-time weights; aggregated IF = IFc * Wr
+                Wr = J(n_cells_m, n_vr, 0)
                 for (rv=1; rv<=n_vr; rv++) {
                     r_val = WATT_pmat[rv, 1]
 
@@ -2270,13 +2458,14 @@ program define lwdid_large, eclass
                             }
                         }
 
-                        IF_r[., rv] = IF_r[., rv] :+ w_k * IF_mat[., k]
+                        Wr[k, rv] = w_k
                     }
                 }
+                IF_r = IFc * Wr
 
-             * --- Build aggregated IF for Pre_avg and Post_avg
+                // --- Pre_avg and Post_avg weights
                 n_avg = rows(AVG_pmat)
-                IF_avg = J(Nobs_m, n_avg, 0)
+                Wa = J(n_cells_m, n_avg, 0)
 
                 for (av=1; av<=n_avg; av++) {
                     avg_val = AVG_pmat[av, 1]
@@ -2293,30 +2482,34 @@ program define lwdid_large, eclass
                             }
                         }
 
-                        IF_avg[., av] = IF_avg[., av] :+ w_k * IF_mat[., k]
+                        Wa[k, av] = w_k
                     }
                 }
+                IF_avg = IFc * Wa
 
-             * --- Center the aggregated IF column by column
-                IF_r = IF_r :- J(rows(IF_r), 1, 1) * (colsum(IF_r) / rows(IF_r))
+                // --- Centering: identical to centering the obs-level IF over the
+                //     Nobs estimation-sample rows. Cluster sum of (IF_i - mean) =
+                //     (cluster sum of IF_i) - n_c * mean, with mean = colsum / Nobs.
+                IF_r = IF_r :- __lw_nc * (colsum(IF_r) / Nobs_m)
                 if (n_avg > 0) {
-                    IF_avg = IF_avg :- J(rows(IF_avg), 1, 1) * (colsum(IF_avg) / rows(IF_avg))
+                    IF_avg = IF_avg :- __lw_nc * (colsum(IF_avg) / Nobs_m)
                 }
 
                 reps_m = `reps'
                 n_cl   = `n_clusters'
 
-             * --- Star bootstrap draws: only the fluctuation part
+                // --- Star bootstrap draws: only the fluctuation part.
+                //     One Rademacher draw per cluster; the bootstrap sum over
+                //     observations equals xi_cl' * (cluster sums of the IF).
                 BS_star = J(reps_m, n_vr, .)
                 BS_avg  = J(reps_m, n_avg, .)
 
                 for (rep=1; rep<=reps_m; rep++) {
                     xi_cl = ((runiform(n_cl,1):>0.5) :- 0.5) * 2
-                    xi_i  = xi_cl[cl_vec]
 
-                    BS_star[rep,.] = colsum(IF_r :* xi_i)
+                    BS_star[rep,.] = xi_cl' * IF_r
                     if (n_avg > 0) {
-                        BS_avg[rep,.] = colsum(IF_avg :* xi_i)
+                        BS_avg[rep,.] = xi_cl' * IF_avg
                     }
                 }
 
@@ -2407,6 +2600,21 @@ program define lwdid_large, eclass
                     local avg_lo_`col' = `avg_theta_`col'' - `z_point' * `avg_se_`col''
                     local avg_hi_`col' = `avg_theta_`col'' + `z_point' * `avg_se_`col''
                 }
+            }
+
+            * Cache first five excluded cells before the outer preserve.
+            if `__n_dropped' > 0 {
+                preserve
+                quietly use "`DROPfile'", clear
+                quietly sort cohort time
+                local __drop_show = min(_N, 5)
+                forvalues __k = 1/`__drop_show' {
+                    local __drop_cohort_`__k' = cohort[`__k']
+                    local __drop_time_`__k'   = time[`__k']
+                    local __drop_ryear_`__k'  = ryear[`__k']
+                    local __drop_reason_`__k' = reason[`__k']
+                }
+                restore
             }
 
                    preserve
@@ -2645,6 +2853,28 @@ program define lwdid_large, eclass
 		else {
 			di as txt "Current run: {bf:pointwise `level'% confidence intervals}."
 		}
+		* --- Concise exclusion warning AFTER the WATT and average ATT tables.
+		if `__n_dropped' > 0 {
+			di as err _n "Warning: Some ATT(g,t) estimates were excluded."
+			di as txt _n "  Cohort     Time     Relative time    Reason code"
+			di as txt "  {hline 74}"
+            forvalues __k = 1/`__drop_show' {
+                di as txt "  " %6.0f `__drop_cohort_`__k'' _col(14) %6.0f `__drop_time_`__k'' ///
+                    _col(29) %6.0f `__drop_ryear_`__k'' _col(42) %2.0f `__drop_reason_`__k''
+            }
+			di as txt "  {hline 74}"
+			di as err "  Total excluded ATT(g,t): `__n_dropped'"
+			di as txt "  See e(ATTgt_dropped) for the complete list."
+			di as txt _n "  Reason codes in e(ATTgt_dropped):"
+			di as txt "    1 = Insufficient treated/control observations"
+			di as txt "    2 = Propensity model failed/nonconverged"
+			di as txt "    3 = Outcome regression failed"
+			di as txt "    4 = Treatment not identified"
+			di as txt "    5 = Outcome IF singular"
+			di as txt "    6 = Propensity IF singular"
+			di as txt _n "  Note: WATT(r) and average ATT estimates are reweighted"
+			di as txt "        over successfully estimated ATT(g,t) cells."
+		}
 		* --- Graph
         if "`graph'" != "" {
                 if "`title'" == "" local title "lwdid: `method' (`rolling')"
@@ -2826,6 +3056,91 @@ program define lwdid_large, eclass
 				}
 			}
 
+			* --- Matrix of cell-level results: e(ATTgt)
+			* One row per successfully estimated ATT(g,t) cell, including
+			* pre-treatment cells (t < g). Excluded cells are in e(ATTgt_dropped).
+			* Columns: cohort time ryear att se Ngt
+			* Cell ATT(g,t) estimates are NOT in e(b); e(b) holds only Pre_avg,
+			* Post_avg and the event-study WATT(r) (Rm#, Rp#). Use e(ATTgt) to
+			* retrieve individual cell estimates.
+			tempname __lwdid_gt __lwdid_watt __lwdid_wattvar
+			quietly {
+				preserve
+				use "`ATTfile'", clear
+				keep if !missing(att)
+				sort cohort time
+				count
+				local __lwdid_ngt = r(N)
+				if `__lwdid_ngt' > 0 {
+					mkmat cohort time ryear att se Ngt, matrix(`__lwdid_gt')
+					matrix colnames `__lwdid_gt' = cohort time ryear att se Ngt
+				}
+				restore
+			}
+            tempname __lwdid_dropped __lwdid_used
+            if `__n_dropped' > 0 {
+                quietly {
+                    preserve
+                    use "`DROPfile'", clear
+                    sort cohort time
+                    mkmat cohort time ryear reason, matrix(`__lwdid_dropped')
+                    matrix colnames `__lwdid_dropped' = cohort time ryear reason
+                    restore
+                }
+            }
+            quietly {
+                preserve
+                use "`WATT_point'", clear
+                sort ryear
+                mkmat ryear N_cohort, matrix(`__lwdid_used')
+                matrix colnames `__lwdid_used' = ryear N_cohorts_used
+                restore
+            }
+			* WATT(r): relative time, plotted/normalized WATT, bootstrap SE.
+			* This matches the event-study coefficients in e(b).
+			mata: st_matrix("`__lwdid_wattvar'", sqrt(diagonal(variance(BS_plot))))
+			mata: st_matrix("`__lwdid_watt'", (WATT_pmat[,1], WATT_pmat[,3], st_matrix("`__lwdid_wattvar'")))
+			matrix colnames `__lwdid_watt' = ryear watt se
+
+			* --- Standard e-class coefficients: average ATT and event-study WATT.
+			* Wild-bootstrap covariance includes cross-covariances, not only SEs.
+			* Zero-normalized event times have zero variance (as in plotted output).
+			tempname __lwdid_b __lwdid_V
+			mata: st_matrix("`__lwdid_b'", (AVG_pmat[,2] \ WATT_pmat[,3])')
+			mata: st_matrix("`__lwdid_V'", variance((BS_avg, BS_plot)))
+			local __lwdid_names
+			forvalues __j = 1/`n_avg' {
+				local __lwdid_names `__lwdid_names' `avg_label_`__j''
+			}
+			forvalues __j = 1/`n_vr' {
+				local __r = `rv_`__j''
+				if `__r' < 0 local __nm Rm`=abs(`__r')'
+				else local __nm Rp`__r'
+				local __lwdid_names `__lwdid_names' `__nm'
+			}
+			matrix colnames `__lwdid_b' = `__lwdid_names'
+			matrix colnames `__lwdid_V' = `__lwdid_names'
+			matrix rownames `__lwdid_V' = `__lwdid_names'
+			ereturn post `__lwdid_b' `__lwdid_V', depname(`y')
+			if `__lwdid_ngt' > 0 ereturn matrix ATTgt = `__lwdid_gt'
+            if `__n_dropped' > 0 ereturn matrix ATTgt_dropped = `__lwdid_dropped'
+            ereturn scalar N_dropped = `__n_dropped'
+            ereturn matrix N_cohorts_used = `__lwdid_used'
+			ereturn matrix WATT = `__lwdid_watt'
+			ereturn scalar N_attgt = `__lwdid_ngt'
+			ereturn local cmd "lwdid"
+			ereturn local depvar "`y'"
+			ereturn local rolling "`rolling'"
+			ereturn local method "`method'"
+			ereturn local controls "`xlist'"
+			ereturn scalar reps = `reps'
+			forvalues __j = 1/`n_avg' {
+				if "`avg_label_`__j''" == "Post_avg" {
+					ereturn scalar att = `avg_theta_`__j''
+					ereturn scalar se_att = `avg_se_`__j''
+				}
+			}
+
 			* --- Store inference metadata
 			ereturn scalar cb_crit = `c_sup'
 			ereturn local ci_default "pointwise"
@@ -2853,41 +3168,48 @@ program define lwdid_large, eclass
 			}
 						
 			quietly {
-				mata: mata drop IF_mat IF_r IF_avg IF_col cell_g cell_t cl_vec unit_vec Wmat Wavgmat WATT_pmat AVG_pmat BS_star BS_avg BS_plot BS_all WATT_plot
-				mata: mata drop n_vr n_vr_sc n_avg n_avg_sc Nobs_m n_cells_m
-				capture mata: mata drop T_star T_sort se_vec
+				* Free Mata objects created during estimation
+				foreach __m in IF_r IF_avg IFc Wr Wa __lw_C __lw_clv __lw_nc ///
+					cell_g cell_t Wmat Wavgmat WATT_pmat AVG_pmat ///
+					BS_star BS_avg BS_plot BS_all WATT_plot ///
+					n_vr n_vr_sc n_avg n_avg_sc Nobs_m n_cells_m ///
+					T_star T_sort se_vec ///
+					__lw_rng __lw_ifs __lw_cl __lw_o __lw_cls __lw_info __lw_S __lw_G ///
+					__lw_b __lw_K __lw_dl __lw_n1 __lw_xm {
+					capture mata: mata drop `__m'
+				}
 			}
 		}
 	end
 
 
 * --- Mata helper: simultaneous critical value over all event-time columns
-capture mata: mata drop lwdid_csup_all()
-mata:
-real scalar lwdid_csup_all(real matrix BS, real scalar alpha)
-{
-    real colvector se, T, Ts
-    real rowvector z
-    real scalar b, j, B, K, q
+		capture mata: mata drop lwdid_csup_all()
+		mata:
+		real scalar lwdid_csup_all(real matrix BS, real scalar alpha)
+		{
+			real colvector se, T, Ts
+			real rowvector z
+			real scalar b, j, B, K, q
 
-    B  = rows(BS)
-    K  = cols(BS)
-    se = sqrt(diagonal(variance(BS)))
-    T  = J(B, 1, .)
+			B  = rows(BS)
+			K  = cols(BS)
+			se = sqrt(diagonal(variance(BS)))
+			T  = J(B, 1, .)
 
-    for (b=1; b<=B; b++) {
-        z = J(1, K, 0)
-        for (j=1; j<=K; j++) {
-            if (se[j] > 0 & se[j] < .) z[j] = abs(BS[b,j] / se[j])
-        }
-        T[b] = max(z)
-    }
+			for (b=1; b<=B; b++) {
+				z = J(1, K, 0)
+				for (j=1; j<=K; j++) {
+					if (se[j] > 0 & se[j] < .) z[j] = abs(BS[b,j] / se[j])
+				}
+				T[b] = max(z)
+			}
 
-    Ts = sort(T, 1)
-    q  = min((B, max((1, ceil((1-alpha)*B)))))
-    return(Ts[q])
-}
-end
+			Ts = sort(T, 1)
+			q  = min((B, max((1, ceil((1-alpha)*B)))))
+			return(Ts[q])
+		}
+		end
 
 
 **# RI

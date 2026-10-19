@@ -1,0 +1,24 @@
+d 'LASSOUR': module to perform adaptive Lasso activation knot unit root tests with sieve wild bootstrap
+d
+d  lassour tests the unit root null against stationarity using the
+d adaptive Lasso activation knot statistics tau and tauIE of Arnold
+d and Reinschluessel (2024, arXiv:2404.06205) and their sieve wild
+d bootstrap analogues of Arnold and Reinschluessel (2026,
+d arXiv:2409.07859). 
+d
+d KW: unit root
+d KW: adaptive lasso
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261018
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f lassour.ado
+f lassour.sthlp
+f lassour_example.do
+f lassour_mata.do
+f lassour_methods.sthlp
+f llassour.mlib

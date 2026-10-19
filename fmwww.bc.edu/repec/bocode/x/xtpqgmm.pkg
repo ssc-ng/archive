@@ -1,0 +1,32 @@
+d 'XTPQGMM': module to estimate GMM panel data quantile model
+d
+d  xtpqgmm fits the smoothed profiled GMM estimator for panel data
+d quantile regression with individual fixed effects and endogenous
+d regressors proposed by Galvao, Hounyo and Lin (2026), "GMM for
+d panel data quantile regression", arXiv:2610.12824. The fixed
+d effects are profiled out rather than estimated jointly, the
+d indicator function is smoothed with a fourth-order kernel, and
+d the standard errors are HAC (Bartlett) within unit. The exactly
+d identified method-of-moments variant and the one-step estimator
+d are also available. 
+d
+d KW: panel data
+d KW: quantile regression
+d KW: GMM
+d
+d Requires: Stata version 17
+d
+d Distribution-Date: 20261018
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f xtpqgmm.ado
+f xtpqgmm.sthlp
+f ../l/lxtpqgmm.mlib
+f xtpqgmm_estat.ado
+f xtpqgmm_methods.sthlp
+f xtpqgmm_p.ado
+f xtpqgmm_postestimation.sthlp
+f xtpqgmmplot.ado
+f xtpqgmmplot.sthlp

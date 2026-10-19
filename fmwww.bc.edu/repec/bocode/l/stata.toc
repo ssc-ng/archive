@@ -29,6 +29,7 @@ p laplacereg module to perform Laplace regression for censored data
 p lars module to perform least angle regression
 p lasagna module to produce lasagna plots
 p lassopack module for lasso, square-root lasso, elastic net, ridge, adaptive lasso estimation and cross-validation
+p lassour module to perform adaptive Lasso activation knot unit root tests with sieve wild bootstrap
 p lastupto module to collapse a dataset to have 1 observation for each of a list of X-values
 p latab module to generate LaTeX output from tabulate
 p latexlog module to build LaTeX log files from within Stata

@@ -1,0 +1,88 @@
+v 3
+d FEVC: module for leave-out bias-corrected variance decompositions
+d
+d fevc implements the Kline-Saggio-Solvsten leave-out bias correction
+d for worker-firm fixed-effects models. It supports controls, weights,
+d match or observation deletion, exact and randomized computation,
+d numerical Monte Carlo standard errors, and supported projection
+d and experimental component inference. Source-only Mata and an
+d optional parallel Rust backend share one Stata interface.
+d
+d Version: 0.5.0
+d Requires: Stata version 18
+d SSC dependencies: none
+d Distribution-Date: 20261015
+d License: GPL-3.0-only
+d Author: Johannes F. Schmieder, Boston University
+d Support: email johannes@@bu.edu
+d KW: variance components
+d KW: fixed effects
+d KW: leave-out estimation
+d KW: limited mobility bias
+d
+f fevc.ado
+f fevc.mata
+f fevc.sthlp
+f fevc__centering.ado
+f fevc__component_model_route.ado
+f fevc__control_failure_post.ado
+f fevc__display.ado
+f fevc__exact_inference_model_post.ado
+f fevc__failure_guidance.ado
+f fevc__hybrid_sample.ado
+f fevc__lifecycle.ado
+f fevc__memory_options.ado
+f fevc__native_threads.ado
+f fevc__numerical.ado
+f fevc__observation_population.ado
+f fevc__progress.ado
+f fevc__rust_capture_stayers.ado
+f fevc__rust_cmg_model.ado
+f fevc__rust_comp_batch_receipt.ado
+f fevc__rust_component_attach.ado
+f fevc__rust_component_fetch.ado
+f fevc__rust_component_post.ado
+f fevc__rust_core_ready.ado
+f fevc__rust_linux.ado
+f fevc__rust_macos.ado
+f fevc__rust_numerical.ado
+f fevc__rust_plan_receipt.ado
+f fevc__rust_plugin_call.ado
+f fevc__rust_post_comp_v7.ado
+f fevc__rust_post_exact_v7.ado
+f fevc__rust_post_stayer_hybrid.ado
+f fevc__rust_public_call.ado
+f fevc__rust_reconcile_comp_v7.ado
+f fevc__rust_reconcile_exact_v7.ado
+f fevc__rust_solve_v4.ado
+f fevc__rust_solve_v5.ado
+f fevc__rust_windows.ado
+f fevc__simulate_data.ado
+f fevc__stayer_population_post.ado
+f fevc__timer.ado
+f fevc_cmg.mata
+f fevc_estat.ado
+f fevc_graph.mata
+f fevc_inference.mata
+f fevc_numerical.mata
+f fevc_resource.mata
+f fevc_rng.mata
+f fevc_run.ado
+f fevc_rust.ado
+f fevc_scale.mata
+f fevc_scale_engine.mata
+f fevc_scale_runtime.mata
+f fevc_solver.mata
+f fevc_timer.mata
+F fevc_licenses.zip
+* Keep the released architecture-specific plugin filenames.
+g MACARM64 fevc_rust_macos_arm64.plugin
+g OSX.ARM64 fevc_rust_macos_arm64.plugin
+g MACINTEL64 fevc_rust_macos_x86_64.plugin
+g OSX.X8664 fevc_rust_macos_x86_64.plugin
+g LINUX64 fevc_rust_linux_x64.plugin
+g LINUX64P fevc_rust_linux_x64.plugin
+g WIN64 fevc_rust_windows_x64.plugin
+* No h plugin requirement: the source-only Mata backend remains usable.
+f fevc-corresponding-source-002205f2.tar.gz
+f fevc_ssc_readme.txt

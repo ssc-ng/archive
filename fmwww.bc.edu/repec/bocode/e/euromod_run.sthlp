@@ -1,12 +1,12 @@
 {smcl}
-{* *! version 1.1.2  1 December, 2025 @ 12:00:00}{...}
+{* *! version 2.0.0  2 October, 2026 @ 12:00:00}{...}
 {viewerjumpto "Syntax" "euromod run####syntax"} 
 {viewerjumpto "Description" "euromod run####description"} 
 {viewerjumpto "Options" "euromod run####options"} 
 {viewerjumpto "Examples" "euromod run####examples"} 
 {viewerjumpto "Requirements" "euromod run####requirements"}
 {viewerjumpto "Authors" "euromod run####authors"}
-{cmd:help euromod run} {it:(EUROMOD Connector v1.1.2)}
+{cmd:help euromod run} {it:(EUROMOD Connector v2.0.0)}
 
 {hline}
 
@@ -26,13 +26,14 @@
 [{opt addons(addon name)}
 {opt extensions(extension condition)}
 {opt constants (constant condition)}
+{opt settings (engine settings)}
 {opt replace}
 {opt euro}
 {opt prefix (prefix)}
-{opt useLogger}
+{opt uselogger}
 {opt publiccomponentsonly}
 {opt repository}
-{opt sequentialoutput}
+{opt sequentialrun}
 {opt outputdataset (output name)}
 {opt outputpath}
 {opt il_output (income lists)}
@@ -55,7 +56,9 @@ When the run is successful, the EUROMOD output data will be loaded into the Stat
 
 {pstd}The syntax of the command is as follows: euromod run {help if}, options [extra options]. The use of “if” allows the user to pass a subset of the full DataFrame to EUROMOD, but only a specific subset. Note that one should be careful not to split households accidentally by using the if clause. {p_end}
 
-{p 4 4 2}{opt model(string)} This parameter is the root folder of the EUROMOD project, where the model is stored.{p_end}
+{pstd}A run prepares the input files of the engine in the {it:EM3Translation} folder of the project, as the EUROMOD user interface does; the model files are never changed. Parameter values changed with {help euromod setinfo} in this Stata session are applied to the runs of their system. {p_end}
+
+{p 4 4 2}{opt model(string)} This parameter is the root folder of the EUROMOD project, where the model is stored. It must be a project of the EUROMOD platform: a folder with a {it:Model} subfolder, whose countries are stored as EM4 bundles or as EM3 XML files. Projects in the old layout (with an {it:XMLParam} folder) are refused; import them with the EUROMOD user interface first (see {help euromod##projects:Supported projects}).{p_end}
 
 {p 4 4 2}{opt system(string)} This parameter represents the name of a system in EUROMOD (e.g. DK_2023) that you want to run using the connector. {p_end}
 
@@ -66,7 +69,7 @@ When the run is successful, the EUROMOD output data will be loaded into the Stat
 {p 4 4 2}{opt country(string)} The official country code of the country of interest (for EU member states see: 
 https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Tutorial:Country_codes_and_protocol_order#Codes.2C_names_and_protocol_order_of_European_Union_.28EU.29_Member_States) {p_end}
 
-{pstd} Note: In case the installation path of EUROMOD is not the standard one (i.e. it is not c:\Program Files), one needs to first set the global EUROMOD_PATH before using the Stata connector. This path is where the StataPlugin.plugin is stored and should therefore always end with “Executable/”.{p_end}
+{pstd} Note: The commands load StataPlugin.plugin from the folder named by the global EUROMOD_PATH; when that is not set, from the folder named by the environment variable EUROMOD_STATA_PLUGIN_PATH of the operating system; otherwise from C:/Program Files/EUROMOD/Executable. It is the folder that holds StataPlugin.plugin and the EUROMOD engine library. In case EUROMOD is not installed in the standard location, set the global or the environment variable to that folder before using the Stata connector (see {help euromod##requirements:Requirements}).{p_end}
 
 {title:Options}{marker options}
 
@@ -74,7 +77,7 @@ https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Tutorial:Coun
 When using this option the data held in memory is overwritten by the data contained in the input dataset. {p_end}
 
 {pstd}{opt addons(string)}
-This parameter takes a string which lists the names of the add-ons and, optionally, their specific country implementation. {Addon}|{Addon}_{Country}.  Multiple add-ons can be used by passing them in a comma separated fashion.
+This parameter takes a string which lists the names of the add-ons and, optionally, their specific country implementation. {Addon}|{Addon}_{Country}.  Multiple add-ons can be used by passing them in a comma separated fashion; each add-on can be given once.
 The add-on system ({Addon}_{Country}) may be omitted, in which case it is resolved automatically (like the EUROMOD user interface does) by matching the run's system against the add-on's applicability; an error is raised if no system, or more than one system, applies (in which case the system must be given explicitly).
 For example, integrating the MTR and TCA add-ons for BG in the run of EUROMOD can be done with either of the following syntaxes: {p_end}
 
@@ -82,8 +85,8 @@ For example, integrating the MTR and TCA add-ons for BG in the run of EUROMOD ca
 {p 8 2 1}{it:euromod run, … addon("MTR, TCA")}{p_end}
 
 {pstd}{opt extensions(string)} This parameter allows to activate and deactivate global and country-specific extensions that deviate from the default configuration of the specific system-dataset combination. 
-This parameter takes a comma-separated list of {ShortNameExtension}={on|off}. 
-For example, activating the TCA and deactivating the UAA extensions can be done with the following syntax:{p_end}
+This parameter takes a comma-separated list of {ShortNameExtension}={on|off}. The value is {it:on} or {it:off} in any letter case; any other value, an extension name the model does not have, or an extension given twice is an error.
+For example, activating the UAA and deactivating the TCA extensions can be done with the following syntax:{p_end}
 
 {p 8 2 1}{it:euromod run, … extensions(UAA=on, TCA=off)}{p_end}
 
@@ -102,6 +105,8 @@ For example, overwriting the $flat_rate constant in the BG system and changing t
 
 {p 8 4 8} {it:euromod run, system("BG_2023") country("BG") dataset( "BG_2021_c1") constants("flat_rate = '0.2' f_cpi(2023) = '500'")} {p_end}
 
+{pstd}{opt settings(string)} Passes additional settings to the EUROMOD engine, written as quoted key-value pairs separated by commas: {it:'KEY': 'VALUE', 'KEY2': 'VALUE2'}. The options euro, sequentialrun and publiccomponentsonly add their own settings to this string; a comma is inserted between the string and those settings when the string does not end with one. {p_end}
+
 {pstd}{opt replace} This option will replace the data held before the simulation by the data resulting from the simulation.
 
 {pstd}{opt euro} This will convert the output of the EUROMOD simulation to euro if the output was in national currency. {p_end}
@@ -113,30 +118,31 @@ Enables the specification of a prefix that will be added to the variable names o
 
 {pstd}{opt publiccomponentsonly} This option will run the model with only the public components and ignoring the private components. {p_end}
 
-{pstd}{opt sequentialoutput} This option forces EUROMOD to let the spine run sequentially instead of in a parallelised way over all Households. {p_end}
+{pstd}{opt sequentialrun} This option forces EUROMOD to let the spine run sequentially instead of in a parallelised way over all Households. {p_end}
 
 {pstd}{opt keep} This option keeps the output of the simulation in memory and passes it to other simulation. One can keep only one simulation at a time in memory. {p_end}
 
+{pstd}{opt uselogger} Retired. The option is still accepted, so that existing do-files keep working, but it is ignored: the run prints the note "The uselogger option has been retired and is ignored." {p_end}
 
 {pstd}{opt outputdataset(string)} In case there are multiple output dataset returned by the EUROMOD simulation, one can pass the filename in advance to the command such that the respective dataset will be loaded into memory afterwards. 
 Otherwise the data can be loaded in a second step by the {help euromod getdata} command. {p_end}
 
-{pstd}{opt breakfun_id(string)} Allows the user to interrupt the simulation at a function of their choice in the spine. The user needs to provide the Function Identifier, which can be retrieved to the user interface.
-All outputdata in memory (excluding constants) is returned and concatenated to the active Stata dataframe. {p_end}
+{pstd}{opt breakfun_id(string)} Allows the user to interrupt the simulation at a function of their choice in the spine. The user needs to provide the Function Identifier, which can be retrieved from the user interface.
+The run stops after that function: all output data in memory (excluding constants) is returned as one output and concatenated to the active Stata dataframe. The engine reports the break as warnings (for example "Trying to manually break with ..."), which are counted in $EM_n_errors. This option works as of version 2.0.0; earlier versions ignored it. {p_end}
 
 {pstd}{opt outputpath(string)} In case this path is provided, the output will not only be passed through memory, but also generated as a text file stored on the specified path. {p_end}
 
-{pstd}{opt il_output(string)}: The usage of this option results into the creation of an additional DefOutput added to the spine which will be named “custom_output”. One can specify the income lists one likes to include by spacing them by commas. 
+{pstd}{opt il_output(string)}: The usage of this option results into the creation of an additional DefOutput added to the spine which will be named “custom_output”. One can specify the income lists one likes to include by separating them by spaces (a comma would become part of the name).
 For example, adding an additional DefOutput for the income lists ils_dispy and ils_tax would work as follows: {p_end}
 
-{p 8 4 2}{it:euromod run, system("BG_2023") country("BG") dataset("BG_2021_c1") il_output("ils_dispy, ils_tax")}{p_end}
+{p 8 4 2}{it:euromod run, system("BG_2023") country("BG") dataset("BG_2021_c1") il_output("ils_dispy ils_tax")}{p_end}
 
 {pstd}Note that this parameter can be used together with vars_output {p_end}
 
 {pstd}{opt vars_output(string)}: vars_output The usage of this option results into the creation of an additional DefOutput added to the spine which will be named “custom_output”. 
-One can specify the variables one likes to include by spacing them by commas. For example, adding an additional DefOutput for the variables  bsa_s and yem would work as follows:{p_end}
+One can specify the variables one likes to include by separating them by spaces (a comma would become part of the name). For example, adding an additional DefOutput for the variables  bsa_s and yem would work as follows:{p_end}
 
-{p 8 4 2}{it: euromod run, system("BG_2023") country("BG") dataset("BG_2021_c1") vars_output("bsa_s, yem")}{p_end}
+{p 8 4 2}{it: euromod run, system("BG_2023") country("BG") dataset("BG_2021_c1") vars_output("bsa_s yem")}{p_end}
 
 {pstd}Note that this parameter can be used together with il_output {p_end}
 
@@ -152,7 +158,7 @@ Below one finds a working example that would run EUROMOD and retrieve the IsDepe
 
 {p 8 4 2}{it: euromod run, system("BG_2023") country("BG") dataset("BG_2021_c1") extrainfo_output("'tu_bmaycct_bg':'IsDependentChild', 'tu_bcheydc_bg':'IsDependentChild,HeadID'")} {p_end}
 
-{pstd}{opt sequentialoutput} This option should only be used when a custom output is demanded through the il_output option or the vars_output option. 
+{pstd}{opt suppress_output} This option should only be used when a custom output is demanded through the il_output option or the vars_output option.
 It will suppress the original DefOutput and only return the custom output. 
 This can lead to considerable speed gains. {p_end}
 
@@ -162,14 +168,14 @@ This can lead to considerable speed gains. {p_end}
 {pstd}After a successful EUROMOD simulation, a series of global variables are stored in memory, what facilitates the user to validate and process the output of the simulation. 
 The following globals are available to the user after running {help euromod run} command:{p_end}
 
-{pstd}{opt $n_euromod_errors} The number of errors/warnings returned during the simulation. 
+{pstd}{opt $EM_n_errors} The number of errors/warnings returned during the simulation.
 Note the output of the simulation is not loaded into memory when an error occurs.{p_end}
 
 {pstd}{opt $EM_n_outputs}: The number of output datasets stored after simulation.{p_end}
 
 {pstd}{opt $EM_outputs}: A string containing the names of the outputs separated by spaces.{p_end}
 
-{pstd}{opt $EM_vars}: Is a variable spaced list of the variables contained in the EUROMOD output data loaded into memory. Note that this is the name of the variable in EUROMOD and that this might deviate because of two reasons: {p_end}
+{pstd}{opt $vars_EM}: Is a variable spaced list of the variables contained in the EUROMOD output data loaded into memory. Note that this is the name of the variable in EUROMOD and that this might deviate because of two reasons: {p_end}
 
 {p 8 8 4} - Variable names in Stata can be maximum 32 characters and therefore can be truncated when the variable name in EUROMOD exceeds 32 characters.{p_end}
 {p 8 8 4} - The usage of the prefix option. {p_end}
@@ -219,10 +225,15 @@ Running EUROMOD and Conditional if usage. {p_end}
 {p 4 4 2}
 Running EUROMOD, applying multiple constants and converting to Euro currency. {p_end}
 
+{p 4 8 2}{cmd:. euromod run, model({it:Path to model}) system(SE_2021) dataset(SE_2021_b1) country(SE) vars_output("yem lhw") il_output("ils_tax ils_dispy") suppress_output} {p_end}
+{p 4 4 2}
+Running EUROMOD with only a custom output of two variables and two income lists. {p_end}
+
 {marker requirements}
 {title:Requirements}
-In order to use the Stata Connector to EUROMOD, please install the latest software version of EUROMOD.
+In order to use the Stata Connector to EUROMOD, please install the latest software version of EUROMOD (version 3.8.9 or later).
 This can be downloaded from {browse "https://euromod-web.jrc.ec.europa.eu/download-euromod":here}.
+The global EUROMOD_PATH names the folder that holds StataPlugin.plugin and the EUROMOD engine library (see {help euromod##requirements:euromod}).
 
 {marker authors}
 {title:Authors}

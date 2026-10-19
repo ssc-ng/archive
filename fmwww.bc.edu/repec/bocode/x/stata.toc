@@ -81,6 +81,7 @@ p xtdpdqml module to perform quasi-maximum likelihood linear dynamic panel data 
 p xtdpdserial module to perform panel data serial correlation tests
 p xtdpthresh module to estimate Dynamic Panel Threshold Model with Endogeneity
 p xtdynestimb module implementing dynamic linear panel-data estimators robust to structural breaks, long-T overidentification, and error cross-sectional dependence
+p xtdyngcce module to provide bootstrap and generalized inference for CCE panel data models
 p xtdyntest module to perform specification tests after dynamic panel-data GMM estimation
 p xtendothresdpd module to estimate a Dynamic Panel Data Threshold Effects Model with Endogenous Regressors
 p xteurostat module to import data from Eurostat in panel data structure
@@ -168,6 +169,7 @@ p xtpmg module for estimation of nonstationary heterogeneous panels
 p xtpqardl module to estimate Panel Quantile Autoregressive Distributed Lag (PQARDL) models
 p xtpqcce module providing panel quantile CCE mean-group estimators (QCCEMG & CCEMG-CSQR)
 p xtpqcs module to estimate Panel Quantile Regression with Common Shocks
+p xtpqgmm module to estimate GMM panel data quantile model
 p xtpqml module to estimate Fixed-effects Poisson (Quasi-ML) regression with robust standard errors
 p xtpqroot module to provide Panel Quantile Unit Root Tests with Common Shocks & Structural Breaks
 p xtpraisk module to perform Prais-Winsten regression with AR(k) errors and panel-corrected standard errors

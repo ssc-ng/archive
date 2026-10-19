@@ -57,3 +57,86 @@ unit   T   p   q      t-stat      F-stat
    6  40   1   1     -2.6655      3.7879
    7  40   1   1     -2.7159      0.6293
    8  40   1   1     -5.6500     10.4519
+
+
+Breusch-Godfrey (order 1) p-value of each unit's ARDL residuals (column "BG p" in Table 3, e(unit) column bg_p):
+A) fixlag(1 1) case(3):  1:0.7984  2:0.5310  3:0.2497  4:0.1871  5:0.6542  6:0.5437  7:0.1133  8:0.0610
+B) maxlag(2) ic(bic) case(3):  1:0.6155  2:0.1973  3:0.2537  4:0.3143  5:0.0984  6:0.2183  7:0.2605  8:0.2389
+
+estat diagnostics (after the runs above; also deterministic):
+A) fixlag(1 1): obs/param = 3.17 for every unit (38 obs, 12 parameters); Breusch-Godfrey rejects at 5% in 0 of 8 units; binomial p = 1.0000.
+B) maxlag(2) ic(bic): obs/param = 4.63 for units with p=q=0 (37 obs, 8 parameters) and 4.11 for units with p=1, q=0 (9 parameters); smallest = 4.11;
+   Breusch-Godfrey rejects in 0 of 8 units.
+Check:  xtmvardlurt_multivariate y x1 x2 x3, fixlag(1 1) case(3) reps(99) nodisplay  then  estat diagnostics
+
+e(diag) after the runs above (p-values per unit, computed independently in Python; the p-values are deterministic):
+columns: bg1 bg2 jb bp arch reset  = Breusch-Godfrey(1), Breusch-Godfrey(2), Jarque-Bera, Breusch-Pagan/Koenker, ARCH(1), RESET
+A) fixlag(1 1) case(3)
+unit  bg1    bg2    jb     bp     arch   reset
+   1  0.7984 0.6137 0.7354 0.8609 0.1407 0.2296
+   2  0.5310 0.4362 0.1994 0.1552 0.9205 0.7252
+   3  0.2497 0.5149 0.6876 0.8003 0.1071 0.7217
+   4  0.1871 0.3094 0.8856 0.2960 0.9633 0.3018
+   5  0.6542 0.1528 0.8441 0.9971 0.2361 0.0446
+   6  0.5437 0.0576 0.7172 0.2443 0.7259 0.2032
+   7  0.1133 0.0066 0.9622 0.9783 0.3119 0.2210
+   8  0.0610 0.1468 0.9596 0.8105 0.1768 0.8826
+B) maxlag(2) ic(bic) case(3)
+unit  bg1    bg2    jb     bp     arch   reset
+   1  0.6155 0.6549 0.8667 0.9809 0.3098 0.2008
+   2  0.1973 0.2494 0.0696 0.0483 0.9851 0.8736
+   3  0.2537 0.4751 0.8232 0.9936 0.0953 0.4468
+   4  0.3143 0.4172 0.6576 0.4507 0.3139 0.3097
+   5  0.0984 0.2502 0.6055 0.6306 0.8753 0.2127
+   6  0.2183 0.1849 0.3858 0.4707 0.3094 0.0077
+   7  0.2605 0.3210 0.9178 0.7961 0.1595 0.1526
+   8  0.2389 0.3293 0.6707 0.9709 0.0182 0.1341
+Check:  matrix list e(diag)
+Counts of units rejecting at 5% in estat diagnostics: A) bg1 0, bg2 1, jb 0, bp 0, arch 0, reset 1;  B) bg1 0, bg2 0, jb 0, bp 1, arch 1, reset 1.
+
+estat paneltests / estat collinearity / e(pdiag) (v1.0.5), same two runs as above; reference values computed independently in Python (deterministic):
+columns of e(pdiag): n skew kurt s2 df vif_y vif_x1 vif_x2 vif_x3 vif_stat cond  (skew, kurt of each unit's residuals; s2 = rss/df; vif_stat = largest VIF among stationary regressors; cond = condition number of the unit-length-scaled design)
+Combined tests: Fisher = -2*sum(ln p) with chi2(2N); Z = sum(invnormal(p))/sqrt(N) with p = normal(Z); p-values clamped to [1e-15, 1-1e-15].
+A) fixlag(1 1) case(3)
+ unit  n    skew   kurt     s2  df  vif_y  vif_x1  vif_x2  vif_x3  vif_stat    cond
+    1 38 -0.0848 2.4004 2.1406  26 3.4500  3.4333  2.2098  2.3450    2.3688 32.2150
+    2 38  0.5057 4.0070 1.5053  26 2.5832  4.5272  6.3093  1.8280    1.6549 16.4424
+    3 38  0.0944 2.3385 1.9901  26 6.3491  8.9422 11.5778  4.0887    1.7930 60.7739
+    4 38  0.0976 2.6604 1.1474  26 6.2082 35.4332 28.7533  6.7476    3.7280 44.9180
+    5 38  0.2092 2.8024 1.3569  26 5.2952  2.2052  3.4961  4.1387    2.6629 42.9261
+    6 38 -0.3009 2.7597 1.4909  26 8.3339 12.5210 13.9810  9.4744    2.2770 68.0895
+    7 38 -0.0498 2.8033 1.4143  26 8.6382  5.7840  3.8960 13.6455    2.0406 59.3275
+    8 38 -0.0442 2.7897 0.9079  26 6.7299  5.8822 19.4934 29.3074    2.1002 53.2829
+bg1 Fisher 19.86 p=0.2266  Z=-1.025 p=0.1526  rej=0
+bg2 Fisher 29.66 p=0.0199  Z=-2.284 p=0.0112  rej=1
+jb Fisher 6.00 p=0.9881  Z=2.329 p=0.9901  rej=0
+bp Fisher 10.19 p=0.8563  Z=1.889 p=0.9705  rej=0
+arch Fisher 17.96 p=0.3265  Z=-0.232 p=0.4081  rej=0
+pooled skew 0.0534 kurt 2.8202 JB 0.554 p=0.7580
+Bartlett 6.72 p=0.4584
+
+B) maxlag(2) ic(bic) case(3)
+ unit  n    skew   kurt     s2  df  vif_y  vif_x1  vif_x2  vif_x3  vif_stat    cond
+    1 37  0.0208 2.5712 1.9503  29 2.7042  2.9226  1.5484  1.7915    1.3651 28.7278
+    2 37  0.6180 4.3894 1.3822  29 1.8751  3.4397  3.8215  1.8055    1.4915 13.0733
+    3 37 -0.0215 2.4994 1.8005  29 4.1299  6.7459  7.3044  3.2416    1.4872 54.2046
+    4 37  0.3682 2.9603 1.1104  29 2.3322 16.9883 13.9982  3.2661    1.6289 30.1084
+    5 37 -0.0248 2.1948 1.4465  28 4.1475  1.9976  3.6595  3.8774    2.0398 38.3923
+    6 37 -0.3885 2.2053 1.7154  29 6.0516  8.7601 10.0858  7.4708    1.6481 54.8877
+    7 37  0.0178 2.6683 1.2899  28 5.6181  3.5432  2.8767  7.6423    1.6735 49.6272
+    8 37 -0.0899 2.3030 0.9802  28 3.7852  3.4728 11.1586 16.2467    1.4318 40.7981
+bg1 Fisher 22.51 p=0.1275  Z=-1.812 p=0.0350  rej=0
+bg2 Fisher 17.50 p=0.3538  Z=-1.070 p=0.1423  rej=0
+jb Fisher 10.72 p=0.8262  Z=0.981 p=0.8367  rej=0
+bp Fisher 10.65 p=0.8306  Z=2.036 p=0.9791  rej=1
+arch Fisher 23.69 p=0.0965  Z=-0.903 p=0.1833  rej=1
+pooled skew 0.0625 kurt 2.7240 JB 1.133 p=0.5676
+Bartlett 5.55 p=0.5932
+
+Check:  xtmvardlurt_multivariate y x1 x2 x3, fixlag(1 1) case(3) reps(99) nodisplay  then  estat paneltests  and  estat collinearity  and  matrix list e(pdiag)
+
+Collinearity warning (v1.0.6): warns when the VIF among the stationary regressors exceeds 10 in any unit (main output and estat diagnostics; stored in e(vif_n), e(vif_max)).
+For the two test-data runs no unit exceeds 10, so no warning is printed: A) fixlag(1 1): e(vif_n) = 0, e(vif_max) = 3.7280;  B) maxlag(2) ic(bic): e(vif_n) = 0, e(vif_max) = 2.0398.
+The condition number does not trigger the warning (it is above 30 in 7 of 8 units (run A) and 6 of 8 (run B) because it includes the I(1) levels and the constant).
+
+Simulation behind the collinearity warning (T = 40, N = 10, 1000 replications): F-side power with 3 covariates is about 50% without correlation between the covariate innovations, 36-38% at 0.9 and 33-34% at 0.99; with 6 covariates 26-33% without and 29-35% with. The VIF of the stationary regressors exceeds 10 in 89% of units at correlation 0.9 with 3 covariates, in all units at 0.99, and in under 1% of units without correlation.

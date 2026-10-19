@@ -1,4 +1,4 @@
-*! xtmvardlurt_multivariate_graph  v1.0.0  03oct2026
+*! xtmvardlurt_multivariate_graph  v1.0.6  11oct2026
 *! Graphs after xtmvardlurt_multivariate: bootstrap distributions of t-bar and F-bar
 *! and unit-level bootstrap p-values.
 program define xtmvardlurt_multivariate_graph

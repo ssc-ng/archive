@@ -183,6 +183,7 @@ p turnbull module to estimate the Turnbull empirical distribution estimator of w
 p tvdiff module to compute pre- and post-treatment estimation of the Average Treatment Effect (ATE) with binary time-varying treatment
 p tvgc module to perform Time-Varying Granger Causality tests
 p tvpreg module to perform parameter path estimation in unstable environments
+p tvthresh module to estimate time-varying threshold models and tests 
 p tvtie module to estimate time-varying true individual-effects stochastic frontier models
 p tw3xls module to export publication-ready three-way and four-way tables into xls or xlsx
 p twby module to create a cross-tabulation of graphs
@@ -195,6 +196,7 @@ p twgravity module to estimate exponential-regression models with two-way fixed 
 p twitter2stata module to import data from Twitter
 p twofold module to perform multiple imputation using the two-fold fully conditional specification algorithm to impute missing values in longitudinal data
 p twolevelr2 module to compute within, between, and overall R-squared in linear two-level models
+p twopartlog module to estimate two-part log regression model with an optimal zero-handling constant for independent variables containing zeros
 p twopm module to estimate two-part models
 p twostep module to perform twostep multilevel analysis
 p twostep_nardl module providing Two-step estimation of the Nonlinear Autoregressive Distributed Lag (NARDL)

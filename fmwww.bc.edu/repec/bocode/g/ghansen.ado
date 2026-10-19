@@ -1,6 +1,9 @@
-*! ghansen 1.02 29sep2013
+*! ghansen 1.03 17oct2026 (local patch)
 * 02sep2011 Fix bug causing crash in Stata 9 and 10, optimize forvalues code
 * 29sep2013 Fix bug caused by minindex returning a matrix instead of a scalar when ic were positive
+* 17oct2026 Local patch: (1) break dates were looked up by position in the full dataset
+*           instead of position in the estimation sample, so dates were wrong under if/in;
+*           (2) Zt row displayed the Za break point and date.
 program define ghansen, rclass byable(recall, noheader)
 	version 9.2
 	syntax varlist(ts)  [if] [in], break(string) lagmethod(string) [maxlags(numlist min=1 max=1 >0 integer) trim(real 0.15) level(real 0.95)]
@@ -67,16 +70,24 @@ program define ghansen, rclass byable(recall, noheader)
 	local brtype="`break'"
 	mata: main("`lhs'","`rhs'","`brtype'","`lagmethod'",`maxlags',"`touse'",`trim',`level')
 	
+	* PATCH: Mata returns break points as positions within the estimation sample.
+	* Convert to row numbers in the dataset by adding the offset of the first
+	* observation in the sample.
+	tempvar obsno
+	qui gen long `obsno' = _n
+	qui summ `obsno' if `touse', meanonly
+	local off = r(min) - 1
+	
 	local tstat=tstat
 	local breakptadf=breakptadf
-	local badfdate = string(`timevar'[`breakptadf'],"`rts'")
+	local badfdate = string(`timevar'[`breakptadf'+`off'],"`rts'")
 	local lag=lag
 	local za=za
 	local breakptza=breakptza
-	local bzadate = string(`timevar'[`breakptza'],"`rts'")
+	local bzadate = string(`timevar'[`breakptza'+`off'],"`rts'")
 	local zt=zt
 	local breakptzt=breakptzt
-	local bztdate = string(`timevar'[`breakptzt'],"`rts'")
+	local bztdate = string(`timevar'[`breakptzt'+`off'],"`rts'")
 	local obs=obs
 	
 	
@@ -96,7 +107,8 @@ program define ghansen, rclass byable(recall, noheader)
 	noi di as text _col(13) "Statistic" _col(50) "1%" _col(63) "5%" _col(75) "10%"
 	di as text in smcl "{hline 78}"
 	di as text _col(4) "ADF" as result _col(9) %10.2f `tstat'  _col(29) %10.0f "`breakptadf'" _col(38) "`badfdate'" _col(43) %10.2f `r(a1)' _col(56) %10.2f  `r(a2)' _col(68) %10.2f  `r(a3)'
-	di as text _col(4) "Zt" as result _col(9) %10.2f `zt'  _col(29) %10.0f "`breakptza'" _col(38) "`bzadate'" _col(43) %10.2f `r(a1)' _col(56) %10.2f  `r(a2)' _col(68) %10.2f  `r(a3)'
+	* PATCH: Zt row now shows the Zt break point and date
+	di as text _col(4) "Zt" as result _col(9) %10.2f `zt'  _col(29) %10.0f "`breakptzt'" _col(38) "`bztdate'" _col(43) %10.2f `r(a1)' _col(56) %10.2f  `r(a2)' _col(68) %10.2f  `r(a3)'
 	di as text _col(4) "Za" as result _col(9) %10.2f `za'  _col(29) %10.0f "`breakptza'" _col(38) "`bzadate'" _col(43) %10.2f `r(z1)' _col(56) %10.2f  `r(z2)' _col(68) %10.2f  `r(z3)'	
 	di in gr in smcl "{hline 78}"
 	
@@ -308,4 +320,3 @@ mata
 	}
 	
 end
-   

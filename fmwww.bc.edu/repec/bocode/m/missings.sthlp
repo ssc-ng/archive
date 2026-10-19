@@ -1,6 +1,6 @@
 {smcl}
-{* 3sep2015/24sep2015/26nov2015/11may2017/27jun2017/3sep2020/27jan2023}{...}
-{cmd:help missings}{right: ({browse "http://www.stata-journal.com/article.html?article=up00!!":SJ23-2: dm0085_3})}
+{* 3sep2015/24sep2015/26nov2015/11may2017/27jun2017/3sep2020/27jan2023/3feb2023/5jul2026/13oct2026}{...}
+{cmd:help missings}{right:({browse "!!!":SJ27-1: dm0085_5})}
 {hline}
 
 {title:Title}
@@ -8,57 +8,51 @@
 {phang}
 {cmd:missings} {hline 2} Various utilities for managing missing values
 
+
 {title:Syntax}
 
 {p 8 16 2}
-{cmd:missings} {opt r:eport} [{varlist}] {ifin} [{cmd:,} 
-{opt num:eric} {opt str:ing} {opt sys:miss} 
+{cmd:missings} {opt r:eport} [{varlist}] {ifin} [{cmd:,} {it:common_options}
 {opt obs:ervations} {opt min:imum(#)} {opt p:ercent} {opt f:ormat(format)}
 {opt id:entify(varlist)}
-{opt sort(specification)} {opt show(#)} {it:{help list:list_options}}]
+{opt sort(specification)} {opt show(#)} {opt seeallz:eros} {it:{help list:list_options}}]
 
 {p 8 16 2}
 {cmd:missings} {opt b:reakdown} [{varlist}] {ifin} [{cmd:,} 
-{opt num:eric} {opt str:ing} {opt sys:miss} {opt min:imum(#)} {opt sort(specification)} {opt show(#)} 
+{it:common_options} {opt min:imum(#)} {opt sort(specification)} {opt show(#)} {opt seeallz:eros}
 {it:{help list:list_options}}]
 
 {p 8 16 2}
 {cmd:missings} {opt l:ist} [{varlist}] {ifin}   
-[{cmd:,} 
-{opt num:eric} {opt str:ing} {opt sys:miss} 
-{opt min:imum(#)}
-{opt id:entify(varlist)} 
+[{cmd:,} {it:common_options} {opt min:imum(#)}
+{opt id:entify(varlist)} {opt seeallz:eros}
 {it:{help list_options}}]
 
 {p 8 16 2}
 {cmd:missings} {opt tab:le} [{varlist}] {ifin}   
-[{cmd:,}
-{opt num:eric} {opt str:ing} {opt sys:miss} 
-{opt min:imum(#)}
-{opt id:entify(varlist)} 
+[{cmd:,} {it:common_options} {opt min:imum(#)}
+{opt id:entify(varlist)} {opt seeallz:eros}
 {it:{help tabulate_oneway:tabulate_options}}]
 
 {p 8 16 2}
 {cmd:missings} {opt tag} [{varlist}] {ifin}{cmd:,} {opt gen:erate(newvar)}
-[{opt num:eric} {opt str:ing} {opt sys:miss}] 
+[{it:common_options}]
 
 {p 8 16 2}
 {cmd:missings dropvars} [{varlist}] 
-[{cmd:,} 
-{opt num:eric} {opt str:ing} {opt sys:miss} 
-{opt force}]
-
+[{cmd:,} {it:common_options} {opt force}]
 
 {p 8 16 2}
 {cmd:missings dropobs} [{varlist}] {ifin}   
-[{cmd:,} 
-{opt num:eric} {opt str:ing} {opt sys:miss} 
-{opt force}]
+[{cmd:,} {it:common_options} {opt force}]
 
+
+{phang}
+{it:common_options} are {opt num:eric}, {opt str:ing}, and {opt sys:miss}.
 
 {pstd}
-{cmd:by:} may be used with any of {cmd:missings report}, {cmd:breakdown}, {cmd:missings list},
-or {cmd:missings table}.  See {manhelp by D}.
+{cmd:by:} may be used with any of {cmd:missings report}, {cmd:missings breakdown},
+{cmd:missings list}, or {cmd:missings table}.  See {manhelp by D}.
 
 
 {title:Description}
@@ -81,12 +75,11 @@ variables.
 optionally, counts are given by observations. 
 
 {pstd}
-{cmd:missing breakdown} issues a report on different missing values
-in {varlist}, that is the numbers present of (1) empty strings {cmd:""} if string 
-variables are included and (2) system missing and extended missing 
-values if numeric variables are included. This subcommand is most obviously 
-useful as a check on the presence of extended missing values for numeric 
-variables. 
+{cmd:missings breakdown} issues a report on different missing values in
+{varlist}: the numbers of 1) empty strings {cmd:""} if string variables are
+included and 2) system missing and extended missing values if numeric
+variables are included.  This subcommand is most obviously useful as a check
+on the presence of extended missing values for numeric variables. 
 
 {pstd}
 {cmd:missings list} lists observations with missing values in {varlist}. 
@@ -107,6 +100,13 @@ missing on all values.
 {cmd:missings dropobs} drops any observations that are missing on all
 values in {varlist}. 
 
+{pstd}
+With {cmd:missings report}, {cmd:missings breakdown}, {cmd:missings list}, or 
+{cmd:missings table}, 
+if there are no missings whatsoever to discuss, then the command by default
+bails out with a brief summary, even if the user has specified {cmd:minimum(0)}. 
+To override that behaviour, use the option {cmd:seeallzeros}. 
+
 
 {title:Options} 
 
@@ -125,30 +125,33 @@ be ignored.
 {cmd:.} only. This option has no effect with string variables, for which
 missing is deemed to be the empty string {cmd:""}, regardless. 
 
+{p 8 8 2}{cmd:missings breakdown, sysmiss} is legal but conveys no 
+more information than {cmd:missings report, sysmiss}.
+
 {phang}
-{opt observations} (with {cmd:missings report})  indicates counting of
+{opt observations} ({cmd:missings report})  indicates counting of
 missing values by observations, not the default of counting by
 variables. 
 
 {phang}
-{opt minimum(#)}  (with {cmd:missings report}; {cmd:missings breakdown}; {cmd:missings list}; and
-{cmd:missings table}) specifies the minimum number of missings to be
-shown explicitly. With {cmd:missings table}, the default is {cmd:minimum(0)};
-otherwise, it is {cmd:minimum(1)}.  
+{opt minimum(#)}  ({cmd:missings report}, {cmd:missings breakdown},
+{cmd:missings list}, and {cmd:missings table}) specifies the minimum number of
+missings to be shown explicitly. With {cmd:missings table}, the default is
+{cmd:minimum(0)}; otherwise, it is {cmd:minimum(1)}.  
 
 {phang}
-{opt percent} (with {cmd:missings report})  reports percents missing as well as
+{opt percent} ({cmd:missings report})  reports percents missing as well as
 counts. Percents are calculated relative to the number of observations or
 variables specified. 
 
 {phang}
-{opt format(format)} (with {cmd:missings report})  specifies a display 
+{opt format(format)} ({cmd:missings report})  specifies a display 
 format for percents. The default is {cmd:format(%5.2f)}. This option has no
 effect unless {opt percent} is also specified. 
 
 {phang}
 {opt identify(varlist)} or {opt identify(varname)}
-(with {cmd:missings report, observations}; {cmd:missings list}; and {cmd:missings table})
+({cmd:missings report}, {cmd:missings list}, and {cmd:missings table})
 insists on showing {it:varlist} or {it:varname} in the display of results.
 This can be especially useful to show (for example) identifier variables, which
 typically will not be missing, or key categorical variables such as education
@@ -158,41 +161,51 @@ With {cmd:missings table}, {it:varname} is used to produce a two-way table in
 contrast to a one-way table; two or more variables may not be specified.
 
 {phang}
-{opt sort(specification)} (with {cmd:missings report} and {cmd:missings breakdown})  specifies output should be
-sorted as specified. The {it:specification} must include either {cmd:missings}
-or {cmd:alpha} or any abbreviation of either keyword. {cmd:missings} means
-sorting by number of missing values. {cmd:alpha} means sorting by variable
-name. The specification may include {cmd:descending} to indicate sorting in
-descending order, for example, that variables with the most missing values will
-be shown first. 
+{opt sort(specification)} ({cmd:missings report} and {cmd:missings breakdown})
+specifies that output be sorted.  {it:specification} must be either
+{cmdab:m:issings} or {cmdab:a:lpha} and may also include {cmdab:d:escending}.
+{cmd:missings} means sorting is done by the number of missing values.
+{cmd:alpha} means sorting is done by the variable name.  Optionally including
+{cmd:descending} means to sort either the number of missing values or the
+variable names and display them in descending order; the default is ascending
+order.  For example, {cmd:sort(missings descending)} means the variables with
+the most missing values will be shown first. 
 
-{p 8 8 2}Note: to maintain compatibility with previous versions, the bare
-option {opt sort} is also supported, although not indicated in the syntax
-diagram. {opt sort} is equivalent to {cmd:sort(missings descending)}. 
-
-{phang}
-{opt show(#)} (with {cmd:missings report} and {cmd:missings breakdown}) specifies that at most the first {it:#}
-variables be shown.  This option has no effect unless sorting is also specified
-and is most obviously useful whenever the sort is on the number of missing
-values.  
+{pmore}
+Note: For backward compatibility, the {opt sort} option is still supported but
+no longer shown in the syntax diagram.  {opt sort} is equivalent to
+{cmd:sort(missings descending)}. 
 
 {phang}
-{it:list_options} (with {cmd:missings report}, {cmd:missings breakdown} and {cmd:missings list}) are options
-listed in {manhelp list D} that may be specified when {cmd:list} is used to
-show results. 
+{opt show(#)} ({cmd:missings report} and {cmd:missings breakdown}) specifies
+that at most the first {it:#} variables be shown.  This option has no effect
+unless {opt sort()} is also specified and is most useful when sorting on the
+number of missing values.
 
 {phang}
-{it:tabulate_options} (with {cmd:missings table})  are options listed in
+{opt seeallzeros} insists that the user sees display of output that is all 
+zeros, thus overriding default behaviour to show only a brief summary if there 
+are no missing values. This option always overrides {cmd:minimum()} if 
+also specified. That said, with {cmd:missings breakdown} extended missing values
+will not be tabulated if there are none. See also the {cmd:Description} above. 
+
+{phang}
+{it:list_options} ({cmd:missings report}, {cmd:missings breakdown}, and
+{cmd:missings list}) are options listed in {manhelp list D} that may be
+specified when {cmd:list} is used to show results. 
+
+{phang}
+{it:tabulate_options} ({cmd:missings table})  are options listed in
 {manhelp tabulate_oneway R:tabulate oneway} or
 {manhelp tabulate_twoway R:tabulate twoway}
 that may be specified when {cmd:tabulate} is used to show results. 
 
 {phang}
-{opt generate(newvar)} (with {cmd:missings tag}) specifies the name of a new
+{opt generate(newvar)} ({cmd:missings tag}) specifies the name of a new
 variable. {cmd:generate()} is required.
 
 {phang}
-{opt force} (with {cmd:missings dropvars} and {cmd:missings dropobs}) signals
+{opt force} ({cmd:missings dropvars} and {cmd:missings dropobs}) signals
 that the dataset in memory is being changed and is a required
 option when data are being dropped and the dataset in memory has not been
 saved as such. 
@@ -221,8 +234,8 @@ forward.
 {phang}{cmd:. webuse nlswork, clear}{p_end}
 {phang}{cmd:. missings report}{p_end}
 {phang}{cmd:. missings report, minimum(1000)}{p_end}
-{phang}{cmd:. missings report, sort(miss desc)}{p_end}
-{phang}{cmd:. missings report, sort(miss desc) show(10)}{p_end}
+{phang}{cmd:. missings report, sort(missings descending)}{p_end}
+{phang}{cmd:. missings report, sort(missings descending) show(10)}{p_end}
 {phang}{cmd:. missings list, minimum(5)}{p_end}
 {phang}{cmd:. missings list, minimum(5) id(race)}{p_end}
 {phang}{cmd:. missings table}{p_end}
@@ -238,6 +251,10 @@ forward.
 {phang}{cmd:. missings dropvars toad, force sysmiss}{p_end}
 {phang}{cmd:. set obs 30000}{p_end}
 {phang}{cmd:. missings dropobs, force}{p_end}
+
+{phang}{cmd:. sysuse auto, clear}{p_end}
+{phang}{cmd:. missings report price mpg weight, seeallzeros}{p_end}
+{phang}{cmd:. missings breakdown mpg weight price make, seeallzeros}
 
         
 {title:Stored results} 
@@ -269,12 +286,17 @@ Jeroen Weesie, Eric Uslaner, and Estie Sid Hudes contributed to the
 earlier development of {cmd:nmissing} and {cmd:dropmiss}. 
 
 {pstd}
-A question from Fahim Ahmad on Statalist prompted the addition of sorting
+A question from Fahim Ahmad on Statalist prompted the addition of {cmd:sort()}
 and {opt show(#)} options to {cmd:missings report}.  A question from
 Martyn Sherriff on Statalist prompted the addition of the {cmd:identify()}
-option. Discussion with Richard Goldstein led to clarification of the 
+option.  A discussion with Richard Goldstein led to clarification of the
 scope of {cmd:identify()}. A question from J{c o/}rgen Carling on Statalist 
-led to adding {cmd:missings breakdown}. 
+led to adding {cmd:missings breakdown}. Further discussion with Richard 
+Goldstein led to clarification of what is reported when there no missing
+values and introduction of the {cmd:seeallzeros} option. Choonjoo Lee pointed
+out two bugs with {cmd:missings breakdown}: The subcommand would fail if 
+missing values occurred only in string variables. It incorrectly counted
+all missing values under the {cmd:sysmiss} option. 
 
 
 {title:References} 
@@ -301,28 +323,38 @@ Reprinted in {it:Stata Technical Bulletin Reprints}, vol. 10, pp. 44-46.
 College Station, TX: Stata Press.
 
 {phang}
-------. 2003. Software Updates:
+------. 2003.
 {browse "http://www.stata-journal.com/sjpdf.html?articlenum=up0005":dm67_2: Numbers of missing and present values}.
 {it:Stata Journal} 3: 449.
 
 {phang}
 ------. 2005.
-{browse "http://www.stata-journal.com/sjpdf.html?articlenum=up0013":Software Updates: dm67_3: Numbers of missing and present values}.
+{browse "http://www.stata-journal.com/sjpdf.html?articlenum=up0013":dm67_3: Numbers of missing and present values}.
 {it:Stata Journal} 5: 607.
 
 {phang}
-------. 2008. Software Updates:
+------. 2008.
 {browse "http://www.stata-journal.com/sjpdf.html?articlenum=up0023":dm89_1: Dropping variables or observations with missing values}.
 {it:Stata Journal} 8: 594.
+
+{phang}
+------. 2023. 
+{browse "https://journals.sagepub.com/doi/pdf/10.1177/1536867X231196519":Replacing missing values: The easiest problems}. 
+{it:Stata Journal} 23: 884{c -}896. 
 
 
 {title:Also see}
 
-{p 4 14 2}Article:  {it:Stata Journal}, volume 17, number 3: {browse "http://www.stata-journal.com/article.html?article=up0056":dm0085_1},{break}
-                    {it:Stata Journal}, volume 15, number 4: {browse "http://www.stata-journal.com/article.html?article=dm0085":dm0085}{p_end}
+{p 4 14 2}
+Article:  
+          {it:Stata Journal}, volume 26, number 3: {browse "https://doi.org/10.1177/1536867X261478675":dm0085_4}{break}
+          {it:Stata Journal}, volume 23, number 2: {browse "https://doi.org/10.1177/1536867X231175350":dm0085_3}{break}
+          {it:Stata Journal}, volume 20, number 4: {browse "https://doi.org/10.1177/1536867X20976342":dm0085_2}{break}
+          {it:Stata Journal}, volume 17, number 3: {browse "http://www.stata-journal.com/article.html?article=up0056":dm0085_1}{break}
+          {it:Stata Journal}, volume 15, number 4: {browse "http://www.stata-journal.com/article.html?article=dm0085":dm0085}{p_end}
 
 {p 7 14 2}Help:  {helpb missing:[U] 12.2.1 Missing values},
 {manhelp codebook D}, {manhelp egen D}, {manhelp ipolate D}
 {manhelp misstable R}, {manhelp mvencode D}, {manhelp recode D},
 {manhelp mi MI:intro},{break}
-{helpb findname} (if installed), {helpb mipolate} (if installed){p_end}
+{helpb findname}, {helpb mipolate} (if installed){p_end}

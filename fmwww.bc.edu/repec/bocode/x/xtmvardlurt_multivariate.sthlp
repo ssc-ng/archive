@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0  03oct2026}{...}
+{* *! version 1.0.6  11oct2026}{...}
 {title:Title}
 
 {p 4 4 2}
@@ -36,7 +36,7 @@ unbalanced panels (different start or end dates) are.
 
 {p 4 4 2}
 For each unit the command estimates the multivariate ARDL unit root regression of
-Sam, McNown, Goh and Goh (2024),
+Sam, McNown, Goh and Goh (2025),
 
 {p 8 8 2}
 D.y = c + [trend] + {it:pi} L.y + {it:delta}'L.x + sum {it:phi}_i L{it:i}D.y + sum {it:Gamma}_j'L{it:j}D.x + {it:omega}'D.x + u,
@@ -75,18 +75,41 @@ panels the common index is aligned on calendar time. When lags are selected
 Simulations (Monte Carlo study shipped by the author) show size close to 5% for
 N = 10-50 units, 1-30 covariates, Cases 3-5, balanced and unbalanced panels, with and
 without a common factor, and strong power. Caveats: with 100 or more units the group
-t statistics can be mildly oversized; with automatic lag selection and fewer than about
-3 observations per parameter of the largest model searched, F-test p-values can be
-oversized (the command warns).
+t statistics can be mildly oversized.
 
+{title:Choosing the lags (important)}
+
+{p 4 4 2}
+The bootstrap resamples residuals as if they were serially independent. What breaks it is
+{it:too few lags}, which leaves serial correlation in the residuals, not a small number of
+observations per parameter. In simulations with serially correlated data, {cmd:fixlag(0 0)}
+gave F-test sizes of 12-55% whatever T was, whereas {cmd:fixlag(1 1)} and
+{cmd:ic(bic) maxlag(1)} or {cmd:maxlag(2)} kept size at 0-9% for T = 20-60 and 2-6 covariates,
+even with only 1.2-2 observations per parameter. Sequential lag addition based on a
+residual autocorrelation test under-augments and was oversized, so it is not offered.
+
+{p 4 4 2}
+The command therefore reports a Breusch-Godfrey (order 1) test on each unit's ARDL
+residuals (column {cmd:BG p} in Table 3; {cmd:e(unit)} column {cmd:bg_p}). If it rejects
+in 30% or more of the units, the command warns: add lags (for example {cmd:fixlag(1 1)}
+or {cmd:ic(bic) maxlag(2)}). The test over-rejects when T is short and the model is large,
+so with T below 35 treat the message as a prompt to compare lag choices, not as a verdict.
+A second warning appears when a unit has fewer than 1.5 observations per parameter.
+
+
+{title:Post-estimation}
+
+{p 4 4 2}
+{cmd:estat diagnostics}, {cmd:estat paneltests}, {cmd:estat collinearity}, {cmd:estat cases}, {cmd:estat lags} and {cmd:estat unitdata} are described in
+{helpb xtmvardlurt_multivariate_estat}; graphs are drawn with {cmd:xtmvardlurt_multivariate_graph}.
 
 {title:Stored results}
 
 {p 4 4 2}Scalars: {cmd:e(N_units)}, {cmd:e(N_dropped)}, {cmd:e(T_min)}, {cmd:e(T_max)}, {cmd:e(T_avg)}, {cmd:e(k)},
 {cmd:e(case)}, {cmd:e(reps)}, {cmd:e(maxlag)}, {cmd:e(level)}, {cmd:e(alpha)}, {cmd:e(seed)}, {cmd:e(CD)}, {cmd:e(CD_p)},
-{cmd:e(csd_boot)}, {cmd:e(balanced)}, {cmd:e(minratio)}, {cmd:e(searchratio)}, {cmd:e(tbar)}, {cmd:e(p_tbar)}, {cmd:e(Fbar)}, {cmd:e(p_Fbar)}.{p_end}
+{cmd:e(csd_boot)}, {cmd:e(balanced)}, {cmd:e(minratio)}, {cmd:e(bg_n)}, {cmd:e(tbar)}, {cmd:e(p_tbar)}, {cmd:e(Fbar)}, {cmd:e(p_Fbar)}.{p_end}
 {p 4 4 2}Matrices: {cmd:e(panel)} (6 x 7: statistic, p-value, critical values at 10%, 5%, 2.5%, 1% and at the decision level;
-rows tbar, fisher_t, invnorm_t, Fbar, fisher_F, invnorm_F) and {cmd:e(unit)} (unit, T, p, q, t, F, p_t, p_F, case).{p_end}
+rows tbar, fisher_t, invnorm_t, Fbar, fisher_F, invnorm_F) and {cmd:e(unit)} (unit, T, p, q, t, F, p_t, p_F, case, bg_p) and {cmd:e(diag)} (unit, bg1, bg2, jb, bp, arch, reset: residual-test p-values) and {cmd:e(vif_n)} and {cmd:e(vif_max)} (units with a VIF above 10 among the stationary regressors, and the largest) and {cmd:e(pdiag)} (unit, n, skew, kurt, s2, df, vif_y, vif_x1...vif_xk, vif_stat, cond: moments, residual variance, VIFs and condition number).{p_end}
 {p 4 4 2}Macros: {cmd:e(cmd)}, {cmd:e(cmdline)}, {cmd:e(depvar)}, {cmd:e(indepvars)}, {cmd:e(panelvar)}, {cmd:e(timevar)}, {cmd:e(ic)}, {cmd:e(lagmethod)}, {cmd:e(csdmode)}, {cmd:e(casename)}.{p_end}
 
 
@@ -100,7 +123,7 @@ and the unit-level bootstrap p-values.
 
 {title:References}
 
-{p 4 8 2}Sam, C. Y., McNown, R., Goh, S. K. and Goh, K. L. (2024). A multivariate autoregressive distributed lag unit root test.{p_end}
+{p 4 8 2}Sam, C. Y., McNown, R., Goh, S. K. and Goh, K. L. (2025). A multivariate autoregressive distributed lag unit root test. Studies in Economics and Econometrics 49(1): 17-33.{p_end}
 {p 4 8 2}Maddala, G. S. and Wu, S. (1999). A comparative study of unit root tests with panel data and a new simple test. {it:Oxford Bulletin of Economics and Statistics}.{p_end}
 {p 4 8 2}Choi, I. (2001). Unit root tests for panel data. {it:Journal of International Money and Finance}.{p_end}
 {p 4 8 2}Pesaran, M. H. (2004). General diagnostic tests for cross section dependence in panels.{p_end}

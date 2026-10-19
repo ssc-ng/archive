@@ -1,0 +1,23 @@
+d 'TWOPARTLOG': module to estimate two-part log regression model with an optimal zero-handling constant for independent variables containing zeros
+d
+d     twopartlog implements the two-part regression framework
+d proposed by Donald Lien, Yue Hu, and Long Liu (2025) to handle   
+d regression analysis where the independent variable contains
+d zeros. It generalizes the Started Logarithm (GSLT) and Inverse   
+d Hyperbolic Sine (GIHST) transformations by estimating the optimal
+d constant c via concentrated non-linear least squares, treats	 
+d zero values as a separate group via indicator variables, computes
+d average elasticities, and conducts continuity tests at x =	0. 
+d
+d KW: log regression
+d KW: two-part regression framework
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261018
+d
+d Author: Dereje Fedasa Hordofa,   Dire Dawa University, Ethiopia
+d Support: email derejefedasaa@@gmail.com
+d
+f twopartlog.ado
+f twopartlog.sthlp

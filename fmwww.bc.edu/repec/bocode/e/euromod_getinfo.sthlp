@@ -1,7 +1,7 @@
 {smcl}
-{* *! version 1.1.2  1 December, 2025 @ 12:00:00}{...}
+{* *! version 2.0.0  2 October, 2026 @ 12:00:00}{...}
 {viewerjumpto "Syntax" "euromod getinfo##syntax"} {viewerjumpto "Description" "euromod getinfo####description"}{viewerjumpto "Examples" "euromod getinfo####examples"}
-{viewerjumpto "Authors" "euromod getinfo####authors"}{cmd:help euromod getinfo} {it:(EUROMOD Connector v1.1.2)}
+{viewerjumpto "Authors" "euromod getinfo####authors"}{cmd:help euromod getinfo} {it:(EUROMOD Connector v2.0.0)}
 
 {hline}
 
@@ -10,8 +10,14 @@
 
 {p 4 4 2}
 {cmd:euromod getinfo}, 
-{bf:model}{it:(EUROMOD system name)}  
-{bf:country}{it:(EU country)} 
+{bf:model}{it:(path to the EUROMOD project)}
+[{bf:country}{it:(EU country)}
+{bf:system}{it:(EUROMOD system name)}
+{bf:dataset}{it:(EUROMOD dataset name)}
+{bf:parId}{it:(parameter identifier)}
+{bf:extension}{it:(extension name)}
+{bf:switchvalue}
+{bf:all}]
 
 {title:Description}{marker description}
 
@@ -19,7 +25,10 @@
 By default the information stored in return list will be the most specialized information. For example, when the system option is specified, information corresponding to the country or model will not be included in the return list. 
 This default behaviour can be overwritten by using the option {bf:all}.{p_end}  
 
-{pstd}{opt model(string)} This parameter is the root folder of the EUROMOD project, where the model is stored. This parameter is mandatory. When one only passes this parameter to the euromod_getinfo command, the command stores a list of countries available in the model in the return list.{p_end}
+{pstd}Every result listed below is always returned: an empty string when the model has no value for it, and {it:no} for a yes/no result that is not set. When an option names something the model does not have (a country, system, dataset or parameter), the command reports an error.{p_end}
+
+{pstd}{opt model(string)} This parameter is the root folder of the EUROMOD project, where the model is stored. This parameter is mandatory. When one only passes this parameter to the euromod_getinfo command, the command stores a list of countries available in the model in the return list.
+The project must be a project of the EUROMOD platform, with countries stored as EM4 bundles or as EM3 XML files (see {help euromod##projects:Supported projects}).{p_end}
 
 {p 8 4 2} Using this option can add the following information to the {bf:r() return list}.  {p_end}
 
@@ -32,7 +41,7 @@ This default behaviour can be overwritten by using the option {bf:all}.{p_end}
 {title:Options}{marker options}
 {dlgtab:Main}
 
-{pstd}{opt country(string)} The official country code of the country of interest. For EU member states see: {p_end}
+{pstd}{opt country(string)} The official country code of the country of interest (the short name of an add-on is accepted as well). For EU member states see: {p_end}
 
 {p 8 4 2} https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Tutorial:Country_codes_and_protocol_order#Codes.2C_names_and_protocol_order_of_European_Union_.28EU.29_Member_States. {p_end}
 
@@ -43,7 +52,7 @@ This default behaviour can be overwritten by using the option {bf:all}.{p_end}
 {txt}{center:{hline 130}}
 {center:{txt}{lalign 30:ctry_systems}{txt}{lalign 100: A space separated list representing the systems. }}
 {center:{txt}{lalign 30:ctry_datasets}{txt}{lalign 100: A space separated list representing the datasets. }}
-{center:{txt}{lalign 30:ctry_publicdatasets}{txt}{lalign 100: A space separated list representing the public datasets. }}
+{center:{txt}{lalign 30:ctry_publicdatasets}{txt}{lalign 100: A space separated list representing the public datasets (those not marked private). }}
 {center:{txt}{lalign 30:ctry_isBestMatch}{txt}{lalign 100: A space separated list which items, corresponds to ctry_allSystems and ctry_allDatasets. }}
 {center:{txt}{lalign 30:}{txt}{lalign 100: Every item indicates whether system data combination is a best match. }}
 {center:{txt}{lalign 30:ctry_allSystems}{txt}{lalign 100: A space separated list corresponding to ctry_isBestMatch and ctry_allDatasets. }}
@@ -53,7 +62,7 @@ This default behaviour can be overwritten by using the option {bf:all}.{p_end}
 {center:{txt}{lalign 30:ctry_bestMatchSystems}{txt}{lalign 100: A space separated list corresponding to ctry_bestMatchDatasets. }}
 {center:{txt}{lalign 30:}{txt}{lalign 100: Every item indicates the name of the system in a best match system dataset combination. }}
 {center:{txt}{lalign 30:ctry_bestMatchDatasets}{txt}{lalign 100: A space separated list corresponding to ctry_bestMatchSystems. }}
-{center:{txt}{lalign 30:}{txt}{lalign 100: Every item indicates the name of the system in a best match system dataset combination. }}
+{center:{txt}{lalign 30:}{txt}{lalign 100: Every item indicates the name of the dataset in a best match system dataset combination. }}
 
 {txt}{center:{hline 130}}
 
@@ -68,15 +77,19 @@ This default behaviour can be overwritten by using the option {bf:all}.{p_end}
 {center:{txt}{lalign 30:sys_private}{txt}{lalign 100: Indicating if the system is private yes/no. }}
 {center:{txt}{lalign 30:sys_name}{txt}{lalign 100: Name of the system }}
 {center:{txt}{lalign 30:sys_iD}{txt}{lalign 100: ID of the system. }}
+{center:{txt}{lalign 30:sys_order}{txt}{lalign 100: Order of the system in the model. }}
+{center:{txt}{lalign 30:sys_comment}{txt}{lalign 100: Comment of the system. }}
 {center:{txt}{lalign 30:sys_headDefInc}{txt}{lalign 100: Income variable used to determine who is Head of a HH. }}
 {center:{txt}{lalign 30:sys_currencyParam}{txt}{lalign 100: Currency of the parameters in the system. }}
 {center:{txt}{lalign 30:sys_currencyOutput}{txt}{lalign 100: Currency of the output of the simulation. }}
+{center:{txt}{lalign 30:sys_exchangeRateEuro}{txt}{lalign 100: Exchange rate to the euro used by the system. }}
+{center:{txt}{lalign 30:sys_datasets}{txt}{lalign 100: Datasets that can be used with the system. }}
 {center:{txt}{lalign 30:sys_bestMatchDatasets}{txt}{lalign 100: Best match datasets to the system. }}
 {txt}{center:{hline 130}}
 
 {txt}{center:{hline 130}}
 
-{pstd}{opt dataset(string)} Name of the dataset of interest {p_end}
+{pstd}{opt dataset(string)} Name of the dataset of interest (a {it:.txt} extension and surrounding spaces are ignored) {p_end}
 
 {p 8 4 2} Using this option adds the following information to the {bf: r() return list}.  {p_end}
 
@@ -92,14 +105,36 @@ This default behaviour can be overwritten by using the option {bf:all}.{p_end}
 {center:{txt}{lalign 30:data_name}{txt}{lalign 100: Name of the dataset. }}
 {center:{txt}{lalign 30:data_decimalSign}{txt}{lalign 100: Decimal sign of the dataset. }}
 {center:{txt}{lalign 30:data_currency}{txt}{lalign 100: Currency of the dataset. }}
+{center:{txt}{lalign 30:data_filePath}{txt}{lalign 100: File path stored for the dataset in the model. }}
+{center:{txt}{lalign 30:data_listStringOutVar}{txt}{lalign 100: String variables of the dataset that are passed to the output. }}
+{center:{txt}{lalign 30:data_coicopVersion}{txt}{lalign 100: COICOP version of the dataset. }}
+{center:{txt}{lalign 30:data_order}{txt}{lalign 100: Order of the dataset in the model. }}
+{center:{txt}{lalign 30:data_comment}{txt}{lalign 100: Comment of the dataset. }}
+{txt}{center:{hline 130}}
+
+{pstd}{opt parId(string)} Identifier of a parameter (a parameter has the same identifier in every system). It requires {opt system(string)} and {opt country(string)}; the system decides which value is returned. {p_end}
+
+{p 8 4 2} Using this option adds the following information to the {bf: r() return list}.  {p_end}
+
+{txt}{center:{hline 130}}
+	{center:{txt}{lalign 30: {bf:local}}{txt}{lalign 100: {bf:Description}}{txt}}
+{txt}{center:{hline 130}}
+{center:{txt}{lalign 30:par_value}{txt}{lalign 100: Value of the parameter in the system, including a change made with {help euromod setinfo}. }}
+{center:{txt}{lalign 30:}{txt}{lalign 100: An empty value is returned as the model stores it: empty (EM3 XML) or n/a (EM4 bundle). }}
+{center:{txt}{lalign 30:par_parID}{txt}{lalign 100: ID of the parameter. }}
+{center:{txt}{lalign 30:par_sysID}{txt}{lalign 100: ID of the system. }}
+{center:{txt}{lalign 30:par_order}{txt}{lalign 100: Order of the parameter in its function. }}
+{center:{txt}{lalign 30:par_comment}{txt}{lalign 100: Comment of the parameter. }}
 {txt}{center:{hline 130}}
 
 {pstd}{opt switchvalue} When using this option, the command requires fives additional options specified: {opt system(string)}, {opt dataset(string)}, {opt extension(string)}, {opt model(string)} and {opt country(string)}.
-When provided with the correct options, the command will look up the value of the switch set for the system,dataset and extension combination and store it in the return list under the local 'switchvalue'. {p_end}
+When provided with the correct options, the command will look up the value of the switch set for the system,dataset and extension combination and store it in the return list under the local 'switchvalue' ({it:on}, {it:off}, or {it:n/a} when the model sets no switch for the combination). {p_end}
 
-{p 8 4 2}{cmd:. euromod getinfo, model({it:Path to model}) system(BE_2020) dataset(BE_2020_c2) country(BE) extension(BTA)} {p_end}
+{p 8 4 2}{cmd:. euromod getinfo, model({it:Path to model}) system(BE_2020) dataset(BE_2020_c2) country(BE) extension(BTA) switchvalue} {p_end}
 {p 8 4 2}
 This example, is for retrieving the value of the extension switch set for the system BE_2020, dataset BE_2020_c2 and BTA extension. {p_end}
+
+{pstd}{opt all} Returns the information of every level named by the options (model, country, system and parameter) instead of only the most specific one. {p_end}
 
 {marker globals}
 {title:Globals}
@@ -136,11 +171,18 @@ For example, the following code snippet would loop over all possible dataset com
 {p 10 4 2}{cmd:		local system : word `i' of $EM_all_systems }{p_end}
 {p 12 4 2}{cmd:		qui import delimited "$input_data_path`dataset'.txt",clear }{p_end}
 {p 12 4 2}{cmd:		di "Generating output for `dataset' with system `system'" }{p_end}
-{p 12 4 2}{cmd:		qui euromod_run, dataset(`dataset') model($model_path_new) system(`system') replace} {p_end}
+{p 12 4 2}{cmd:		qui euromod_run, dataset(`dataset') model("PATH/TO/MODEL") system(`system') replace} {p_end}
 {p 12 4 2}{cmd:		if $EM_n_errors > 0 } { {p_end}
 {p 14 4 2}{cmd:		di in r "Warning or error has been returned for running system `system' with dataset `dataset'" }{p_end}
 {p 12 4 2}	{cmd:	} }{p_end}
 {p 8 4 2}} {p_end}}
+
+{p 4 4 2}
+Retrieving the value of a parameter in a system, then the information of every level at once:{p_end}
+
+{p 8 4 2}{cmd:. euromod getinfo, model("PATH/TO/MODEL") country(SE) system(SE_2021) parId(1F12A8B6-84ED-4D7F-AEA8-820F5DDDCC0E)}{p_end}
+{p 8 4 2}{cmd:. display "`r(par_value)'"}{p_end}
+{p 8 4 2}{cmd:. euromod getinfo, model("PATH/TO/MODEL") country(SE) system(SE_2021) parId(1F12A8B6-84ED-4D7F-AEA8-820F5DDDCC0E) all}{p_end}
 
 {marker authors}
 {title:Authors}

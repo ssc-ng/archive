@@ -1,4 +1,7 @@
-*! 1.4.0 NJC 27 Jan 2023 
+*! 1.6.0 NJC 12 Oct 2026
+*! 1.5.0 NJC 3 Jul 2026 
+* 1.4.1 NJC 3 Feb 2023 
+* 1.4.0 NJC 27 Jan 2023 
 * 1.3.0 NJC 3 Sep 2020 
 * 1.2.0 NJC 11 Jun 2017 
 * 1.1.1 NJC 11 May 2017 
@@ -54,7 +57,7 @@ program missings, rclass byable(recall)
 		syntax [varlist(default=none)] [if] [in] ///
 		[ , `common' OBServations MINimum(numlist max=1 >=0) ///
 		Percent Format(str) SORT SORT2(str asis) SHOW(numlist int min=1 >0)  ///
-		IDentify(varlist) * ]
+		IDentify(varlist) SEEALLZeros * ]
 
 		if "`format'" == "" local format %5.2f 
 
@@ -66,15 +69,15 @@ program missings, rclass byable(recall)
 	else if "`cmd'" == "breakdown" { 
 		syntax [varlist(default=none)] [if] [in] ///
 		[, `common' MINimum(numlist max=1 >=0) ///
-		SORT SORT2(str asis) SHOW(numlist int min=1 >0) *]
+		SORT SORT2(str asis) SHOW(numlist int min=1 >0) SEEALLZEROS *]
 	} 
 	else if "`cmd'" == "list" { 
 		syntax [varlist(default=none)] [if] [in] ///
-		[ , `common' MINimum(numlist max=1 >=0) IDentify(varlist) * ]
+		[ , `common' MINimum(numlist max=1 >=0) IDentify(varlist) SEEALLZeros * ]
 	}
 	else if "`cmd'" == "table" { 
 		syntax [varlist(default=none)] [if] [in] ///
-		[ , `common' MINimum(numlist max=1 >=0) IDentify(varlist) * ]
+		[ , `common' MINimum(numlist max=1 >=0) IDentify(varlist) SEEALLZeros * ]
 	}
 	else if "`cmd'" == "tag" { 
 		syntax [varlist(default=none)] [if] [in], ///
@@ -102,6 +105,8 @@ program missings, rclass byable(recall)
 			exit 4
 		}   
 	}
+	
+	if "`seeallzeros'" != "" local minimum 0 
 
 	// check syntax for sort options if specified 
 	if "`sort'`sort2'" != "" {
@@ -231,11 +236,11 @@ program missings, rclass byable(recall)
 	quietly count if `nmissing' & `touse'
 	local NM = r(N)
 	di "`NM' " cond(`NM' == 1, "observation", "observations") ///
-	" with `system'missing values" 
+	" / `N' with `system'missing values" 
 
 	// now actions for each subcommand 
 	if "`cmd'" == "report" {
-		if `NM' == 0 exit 0 
+		if `NM' == 0 & "`seeallzeros'" == "" exit 0 
 
 		if "`observations'" != "" { 
 			char `nmissing'[varname] "# `system'missing" 
@@ -305,12 +310,25 @@ program missings, rclass byable(recall)
 		return local varlist "`misslist'" 
 	}
 	else if "`cmd'" == "breakdown" { 
-		quietly ds `misslist', has(type string) 
-		local strhere = "`r(varlist)'" != "" 
+		if "`seeallzeros'" != "" { 
+			local misslist `varlist'
+		}
+		
+		if "`misslist'" == "" {
+			exit 0 
+		}
+		
+		if "`sysmiss'" == "" {
+			quietly ds `misslist', has(type string) 
+			local strhere = "`r(varlist)'" != "" 
+		}
+		else local strhere = 0 
+		
 		quietly ds `misslist', has(type numeric) 
 		local numhere = "`r(varlist)'" != "" 
+		if "`sysmiss'" != "" local misslist `r(varlist)'
 		
-		quietly if `numhere' { 
+		quietly if `numhere' | "`seeallzeros'" != "" { 
 			if "`sysmiss'" != "" local levels . 
 
 			else {
@@ -320,11 +338,14 @@ program missings, rclass byable(recall)
 				} 
 				local levels : list uniq levels 
 				local levels : list sort levels 
+				
+				if "`levels'" == "" & "`seeallzeros'" != "" local levels . 
 			} 
 
 			local nlevels : list sizeof levels
 		} 
-
+		else local nlevels = 0 
+		
 		// set up matrices in Mata
 		mata : allresults = J(0, 1, .)  
 		mata : numresults = J(0, `nlevels', .)
@@ -333,11 +354,13 @@ program missings, rclass byable(recall)
  
 		quietly foreach v of local misslist { 
 			local j = 0 
+					
+			if "`sysmiss'" != "" count if `v' == . & `touse'
+			else count if missing(`v') & `touse'
 			
-			count if missing(`v') & `touse'
 			mata : allresults = allresults \ `r(N)' 
  
-                        capture confirm numeric variable `v' 
+            capture confirm numeric variable `v' 
 
 			if _rc {
 				mata : strresults = strresults \ `r(N)' 
@@ -370,7 +393,7 @@ program missings, rclass byable(recall)
  	
 		getmata allcount = allresults 
 		char allcount[varname] "# missing"
-
+		
 		if `strhere' { 
 			getmata strcount = strresults 
 			char strcount[varname] "empty" 
@@ -385,6 +408,10 @@ program missings, rclass byable(recall)
 			} 
 		}
 		
+		quietly if "`seeallzeros'" == "" & "`minimum'" != "" {
+			keep if allcount >= `minimum'
+		}
+		
 		if "`sort'`sort2'" != "" {
 			if `missing' { 
 				if `descending' gsort - allcount  
@@ -395,7 +422,9 @@ program missings, rclass byable(recall)
 				else sort which
 			} 
 
-			if "`show'" != "" local inobs "in 1/`show'"
+			if "`show'" != "" { 
+				if `show' < _N local inobs "in 1/`show'"
+			} 
 		}
 
 		list `inobs', abbrev(9) subvarname noobs `options' 
@@ -405,7 +434,7 @@ program missings, rclass byable(recall)
 		return local varlist "`misslist'" 
 	} 
 	else if "`cmd'" == "list" {
-		if `NM' > 0 {
+		if `NM' > 0 | "`seeallzeros'" != "" {
 			local show : list identify | misslist 
 			local show : list uniq show
 			list `show' if `nmissing' >= `min' & `touse', `options'
@@ -413,7 +442,7 @@ program missings, rclass byable(recall)
 		return local varlist "`misslist'" 
 	}
 	else if "`cmd'" == "table" {
-		if `NM' > 0 {
+		if `NM' > 0 | "`seeallzeros'" != "" {
 			local cond `nmissing' >= `min' & `touse'
 
 			local nid : word count `identify' 

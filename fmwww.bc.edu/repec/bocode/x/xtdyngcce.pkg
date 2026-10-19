@@ -1,0 +1,49 @@
+d 'XTDYNGCCE': module to provide bootstrap and generalized inference for CCE panel data models
+d
+d  xtdyngcce provides two estimation commands for panel data models
+d with unobserved common factors (interactive fixed effects),
+d extending the Common Correlated Effects framework of Pesaran
+d (2006) in two directions that are not currently available in
+d Stata. xtdyncce fits the pooled CCE estimator in dynamic panels
+d and implements the recursive-design wild bootstrap of Juodis,
+d Stauskas and Tromp (2026, arXiv:2609.31442). In each replication
+d the dependent variable is regenerated recursively and the
+d cross-sectional averages are re-estimated from the bootstrap
+d data; both steps are required by the theory and distinguish the
+d procedure from a residual wild bootstrap. The command also
+d provides the three bias corrections benchmarked in that paper --
+d the half-panel jackknife of Dhaene and Jochmans (2015), the
+d analytical correction of Moon and Weidner (2017), and the fixed-T
+d minimum-distance correction of De Vos and Everaert (2021) -- a
+d leave-one-out jackknife variance in which the factor estimates
+d also omit the deleted unit, and an iterated (double) bootstrap
+d for studentized confidence intervals. xtgcce fits the Generalized
+d CCE mean-group estimator of Lu, Su and Ba (2026, Journal of
+d Econometrics 253, 106183). It augments the regression with the
+d time-series averages of the regressors in addition to the usual
+d cross-sectional averages. The time-series averages act as control
+d variables for the factor loadings, which makes the estimator
+d doubly robust: consistent under either the usual CCE rank
+d condition or the paper's control-variable condition, with no
+d efficiency loss when the rank condition holds. 
+d
+d KW: panel data
+d KW: pooled CCE
+d KW: generalized CCE
+d KW: mean-group estimator
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261018
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f xtdyncce.ado
+f xtdyncce.sthlp
+f xtdyngcce_example.do
+f xtdyngcce_mata.ado
+f xtdyngcce_methods.sthlp
+f xtdyngcce.sthlp
+f xtgcce.ado
+f xtgcce.sthlp

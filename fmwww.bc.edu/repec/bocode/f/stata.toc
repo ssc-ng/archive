@@ -31,6 +31,7 @@ p fejiv module to perform fixed effect jackknife IV (FEJIV) estimation
 p feldti module to compare two independent coefficients of reliability
 p fencode module to provide frequency-based encoding of string and numeric variables
 p fese module to calculate standard errors for fixed effects
+p fevc module for leave-out bias-corrected variance decompositions
 p ff module to browse and search Stata's built-in functions
 p ffrals module to provide Flexible-Fourier LM unit-root test with RALS and factor (RALS2) augmentation  for non-normal errors
 p fframeappend module to append data frames to currently active data frame
@@ -89,6 +90,7 @@ p fmm module to estimate finite mixture models
 p fmmhist module to generate a multi-class histogram after estimating a fmm model
 p fmmic module for postestimation with finite mixture models
 p fmmlc module for postestimation with finite mixture models
+p fmvardlurt module to provide Fourier multivariate ARDL unit-root and cointegration test with any number of covariates and bootstrap critical values
 p fndmtch module to find matching values
 p fndmtch2 module to find matching values for one variable in another 
 p fodstr modules to handle fractional day calculations 

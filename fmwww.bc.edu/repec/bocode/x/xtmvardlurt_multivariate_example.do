@@ -1,4 +1,4 @@
-*! xtmvardlurt_multivariate_example.do  v1.0.0  03oct2026
+*! xtmvardlurt_multivariate_example.do  v1.0.6  11oct2026
 *! Examples for xtmvardlurt_multivariate (panel multivariate ARDL unit root /
 *! cointegration test).  Run section by section.
 
@@ -76,6 +76,36 @@ matrix list e(panel)
 matrix list e(unit)
 display "t-bar = " e(tbar) "   bootstrap p = " e(p_tbar)
 xtmvardlurt_multivariate_graph
+
+* =============================================================================
+* 4b. Diagnostics: residual serial-correlation check (Breusch-Godfrey, order 1)
+*     The bootstrap needs serially uncorrelated residuals. The output prints a
+*     "Residual check" line, shows a "BG p" column in Table 3 (option units), and
+*     adds a note when the test rejects in 30% or more of the units.
+* =============================================================================
+* no lags: with serially uncorrelated errors (as here) rejections stay near 5%;
+* with autocorrelated errors and too few lags, expect many rejections and a note
+xtmvardlurt_multivariate y_rw x1 x2 x3, fixlag(0 0) reps(199) units
+display "units rejecting BG at 5%: " e(bg_n) " of " e(N_units)
+
+* adequate lags: rejections close to the 5% expected by chance
+xtmvardlurt_multivariate y_rw x1 x2 x3, fixlag(1 1) reps(199) units
+display "units rejecting BG at 5%: " e(bg_n) " of " e(N_units)
+* per-unit p-values are in the last column of e(unit)
+matrix list e(unit)
+
+* =============================================================================
+* 4c. Post-estimation (estat)
+* =============================================================================
+xtmvardlurt_multivariate y_coint x1 x2 x3, fixlag(1 1) reps(499) nodisplay
+estat diagnostics
+matrix list e(diag)
+estat paneltests
+estat collinearity
+matrix list e(pdiag)
+estat cases
+estat lags
+estat unitdata, saving(unit_results) replace
 
 * =============================================================================
 * 5. Unbalanced panel (different start/end dates) - works without changes

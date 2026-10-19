@@ -1,4 +1,4 @@
-*! _xtmvu_disp  v1.0.0  03oct2026  display routine of xtmvardlurt_multivariate
+*! _xtmvu_disp  v1.0.6  11oct2026  display routine of xtmvardlurt_multivariate
 program define _xtmvu_disp
 	version 14
 	syntax [, UNITs NOUnits]
@@ -14,10 +14,10 @@ program define _xtmvu_disp
 	di
 	di as text "{hline 78}"
 	di as result "  Panel Multivariate ARDL Unit Root and Cointegration Test"
-	di as text   "  Extension of Sam, McNown, Goh and Goh (2024); bootstrap inference"
+	di as text   "  Extension of Sam, McNown, Goh and Goh (2025); bootstrap inference"
 	di as text "{hline 78}"
 	di as text "  Dependent variable : " as result "`e(depvar)'"
-	di as text "  Covariates (k=`k')  : " as result "`e(indepvars)'"
+	di as text "  Covariates (k=`k')" _col(23) ": " as result "`e(indepvars)'"
 	di as text "  Panel / time       : " as result "`e(panelvar)' / `e(timevar)'"
 	di as text "  Deterministics     : " as result "`e(casename)'"
 	di as text "  Lag order          : " as result "`e(lagmethod)'"
@@ -122,13 +122,13 @@ program define _xtmvu_disp
 	di as text "  Case shares (units):  I = `c1'   II = `c2'   III = `c3'   IV = `c4'   (of `N')"
 	if `showu' {
 		di as text "{hline 78}"
-		di as text "  Unit" _col(14) "T" _col(20) "p" _col(25) "q" _col(32) "t-stat" _col(44) "F-stat" _col(54) "p(t)" _col(64) "p(F)" _col(73) "Case"
+		di as text "  Unit" _col(13) "T" _col(18) "p" _col(22) "q" _col(28) "t-stat" _col(38) "F-stat" _col(48) "p(t)" _col(56) "p(F)" _col(64) "BG p" _col(73) "Case"
 		di as text "{hline 78}"
 		forvalues i = 1/`N' {
 			local uid = `U'[`i',1]
 			local cc = `U'[`i',9]
 			local cname : word `cc' of `romans'
-			di as text %-11.0g `uid' _col(12) as result %4.0f `U'[`i',2] _col(19) %3.0f `U'[`i',3] _col(24) %3.0f `U'[`i',4] _col(30) %9.3f `U'[`i',5] _col(42) %9.3f `U'[`i',6] _col(53) %6.3f `U'[`i',7] _col(63) %6.3f `U'[`i',8] _col(73) "`cname'"
+			di as text %-9.0g `uid' _col(11) as result %4.0f `U'[`i',2] _col(17) %2.0f `U'[`i',3] _col(21) %2.0f `U'[`i',4] _col(24) %9.3f `U'[`i',5] _col(34) %9.3f `U'[`i',6] _col(45) %6.3f `U'[`i',7] _col(53) %6.3f `U'[`i',8] _col(61) %6.3f `U'[`i',10] _col(73) "`cname'"
 		}
 	}
 	else {
@@ -140,16 +140,23 @@ program define _xtmvu_disp
 	if e(N_dropped) > 0 {
 		di as text "  Note: " e(N_dropped) " unit(s) dropped (too few observations)."
 	}
-	if "`e(ic)'" != "" & strpos("`e(lagmethod)'","fixed") == 0 {
-		if e(searchratio) < 3 {
-			di as err "  Warning: fewer than 3 observations per parameter in the largest model searched;"
-			di as err "  F-test p-values may be oversized. Lower maxlag() or use fixlag()."
-		}
+	// residual serial-correlation check (Breusch-Godfrey, order 1, 5% level) on each unit's ARDL residuals
+	local bgn = e(bg_n)
+	local bgshare = `bgn'/`N'
+	if `bgshare' >= 0.30 {
+		di as text "  Note: Breusch-Godfrey (order 1, 5%) rejects residual independence in `bgn' of `N' units."
+		di as text "  The bootstrap assumes serially uncorrelated residuals; check robustness with more"
+		di as text "  lags (maxlag(), ic(bic)). See estat diagnostics."
 	}
 	else {
-		if e(minratio) < 3 {
-			di as err "  Warning: fewer than 3 observations per parameter; results may be unreliable."
-		}
+		di as text "  Residual check: Breusch-Godfrey (order 1) rejects in `bgn' of `N' units (about 5% expected by chance)."
+	}
+	if e(T_min) < 35 & `bgshare' >= 0.30 {
+		di as text "  (With short T and many parameters the test over-rejects; read it with care.)"
+	}
+	if e(minratio) < 1.5 {
+		di as err "  Warning: some units have fewer than 1.5 observations per parameter;"
+		di as err "  the model is nearly saturated. Use fewer covariates or lags."
 	}
 	if `N' >= 100 {
 		di as text "  Note: with 100 or more units the group t statistics can be mildly oversized;"

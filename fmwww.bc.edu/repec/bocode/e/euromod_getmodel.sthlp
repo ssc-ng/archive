@@ -1,7 +1,7 @@
 {smcl}
-{* *! version 1.1.2  1 December, 2025 @ 12:00:00}{...}
+{* *! version 2.0.0  2 October, 2026 @ 12:00:00}{...}
 {viewerjumpto "Syntax" "euromod getmodel##syntax"} {viewerjumpto "Description" "euromod getmodel####description"}{viewerjumpto "Options" "euromod getmodel####options"}{viewerjumpto "Examples" "euromod getmodel####examples"}
-{viewerjumpto "Authors" "euromod getmodel####authors"}{cmd:help euromod getmodel} {it:(EUROMOD Connector v1.1.2)}
+{viewerjumpto "Authors" "euromod getmodel####authors"}{cmd:help euromod getmodel} {it:(EUROMOD Connector v2.0.0)}
 
 {hline}
 
@@ -20,10 +20,12 @@
 {p 4 4 2} {cmd:euromod getmodel} 
 This command loads the latest public model of euromod and stores it either in the working directory or in the path provided by the option {it:folder}  {p_end}  
 
+{p 4 4 2} The public release may come in the layout of earlier EUROMOD versions (with an {it:XMLParam} folder), which the other euromod commands refuse. In that case open the downloaded project with the EUROMOD user interface and use its import of EM2 projects; the converted project works with the euromod commands as is (see {help euromod##projects:Supported projects}). {p_end}
+
 {title:Options}{marker options}
 
 {pstd}{opt folder(string)} 
-An optional argument that sets the path to where the folder should be downloaded and unzipped.{p_end}
+An optional argument that sets the path to where the folder should be downloaded and unzipped. The folder must exist; without the option, the working directory is used.{p_end}
 
 
 {marker examples}

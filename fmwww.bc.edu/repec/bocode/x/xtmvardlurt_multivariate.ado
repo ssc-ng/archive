@@ -1,6 +1,6 @@
-*! xtmvardlurt_multivariate  v1.0.0  03oct2026
+*! xtmvardlurt_multivariate  v1.0.6  11oct2026
 *! Panel multivariate ARDL unit root test with cointegration (F) test
-*! Extends Sam, McNown, Goh and Goh (2024) to panels; any number of covariates;
+*! Extends Sam, McNown, Goh and Goh (2025) to panels; any number of covariates;
 *! cross-sectional dependence handled by a cross-section residual bootstrap.
 *! Author: Yusuf Toyin Yusuf, Kwara State University (yusuf.yusuf@kwasu.edu.ng)
 program define xtmvardlurt_multivariate, eclass sortpreserve
@@ -84,10 +84,18 @@ program define xtmvardlurt_multivariate, eclass sortpreserve
 	}
 
 	// ------------------------------------------------------------ post
-	tempname U P
+	tempname U P D PD
 	matrix `U' = _xmu_unit
 	matrix `P' = _xmu_panel
-	matrix colnames `U' = unit T p q t_stat F_stat p_t p_F case
+	matrix `D' = _xmu_diag
+	matrix `PD' = _xmu_pdiag
+	matrix colnames `D' = unit bg1 bg2 jb bp arch reset
+	local pdn "unit n skew kurt s2 df vif_y"
+	forvalues j = 1/`k' {
+		local pdn "`pdn' vif_x`j'"
+	}
+	matrix colnames `PD' = `pdn' vif_stat cond
+	matrix colnames `U' = unit T p q t_stat F_stat p_t p_F case bg_p
 	matrix colnames `P' = stat pvalue cv10 cv05 cv025 cv01 cv_alpha
 	matrix rownames `P' = tbar fisher_t invnorm_t Fbar fisher_F invnorm_F
 	ereturn post , esample(`touse')
@@ -109,13 +117,21 @@ program define xtmvardlurt_multivariate, eclass sortpreserve
 	ereturn scalar balanced  = scalar(_xmu_balanced)
 	ereturn scalar minratio  = scalar(_xmu_minratio)
 	ereturn scalar searchratio = scalar(_xmu_searchratio)
+	ereturn scalar bg_n      = scalar(_xmu_bgn)
+	ereturn scalar nlow      = scalar(_xmu_nlow)
+	ereturn scalar maxm      = scalar(_xmu_maxm)
+	ereturn scalar vif_n     = scalar(_xmu_nvif)
+	ereturn scalar vif_max   = scalar(_xmu_maxvif)
 	ereturn scalar tbar      = `P'[1,1]
 	ereturn scalar p_tbar    = `P'[1,2]
 	ereturn scalar Fbar      = `P'[4,1]
 	ereturn scalar p_Fbar    = `P'[4,2]
 	ereturn matrix unit  = `U'
 	ereturn matrix panel = `P'
+	ereturn matrix diag  = `D'
+	ereturn matrix pdiag = `PD'
 	ereturn local cmd        "xtmvardlurt_multivariate"
+	ereturn local estat_cmd  "xtmvardlurt_multivariate_estat"
 	ereturn local cmdline    "xtmvardlurt_multivariate `0'"
 	ereturn local depvar     "`depvar'"
 	ereturn local indepvars  "`indepvars'"

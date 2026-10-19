@@ -1,0 +1,70 @@
+d 'TVTHRESH': module to estimate time-varying threshold models and tests 
+d
+d  Threshold regression normally assumes the threshold is the same
+d for every observation. tvthresh is for the case where it is not.
+d It provides nineteen commands covering specification testing,
+d estimation, simulation, plotting and table output. The gateway
+d command tvthomog tests whether the threshold is constant at all,
+d so a user can find out whether any of this is needed before
+d fitting anything. If it is, the estimators cover the four ways a
+d threshold can move: with time (tvtfourier, tvtlasso), with the
+d threshold variable's own recent past (tvtcotar, tvtcotrk, and
+d tvtinar for counts), with other observed variables (tvtcoint,
+d tvtboundary, tvtindex, tvtstar, tvtcovdep), and as an unobserved
+d state of its own (tvtlatent). tvtsel runs the library's
+d diagnostics on the user's data and reports which specifications
+d they point to. 
+d
+d KW: threshold models
+d KW: tests 
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261018
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f tvtboundary.ado
+f tvtboundary.sthlp
+f ../_/_tvt_drop.ado
+f ../l/ltvthresh.mlib
+f tvtcoint.ado
+f tvtcoint.sthlp
+f tvtcotar.ado
+f tvtcotar.sthlp
+f tvtcotrk.ado
+f tvtcotrk.sthlp
+f tvtcovdep.ado
+f tvtcovdep.sthlp
+f tvtexport.ado
+f tvtexport.sthlp
+f tvtfourier.ado
+f tvtfourier.sthlp
+f tvthomog.ado
+f tvthomog.sthlp
+f tvthresh_choose.sthlp
+f tvthresh_example.do
+f tvthresh.sthlp
+f tvtinar.ado
+f tvtinar.sthlp
+f tvtindex.ado
+f tvtindex.sthlp
+f tvtlasso.ado
+f tvtlasso.sthlp
+f tvtlatent.ado
+f tvtlatent.sthlp
+f tvtlr.ado
+f tvtlr.sthlp
+f tvtmathar.ado
+f tvtmathar.sthlp
+f tvtplot.ado
+f tvtplot.sthlp
+f tvtpredreg.ado
+f tvtpredreg.sthlp
+f tvtsel.ado
+f tvtsel.sthlp
+f tvtsim.ado
+f tvtsim.sthlp
+f tvtstar.ado
+f tvtstar.sthlp

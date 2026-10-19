@@ -1,12 +1,13 @@
-*! _xtmvu_mata  v1.0.0  03oct2026  Yusuf Toyin Yusuf
+*! _xtmvu_mata  v1.0.6  11oct2026  Yusuf Toyin Yusuf
 *! Mata engine: panel multivariate ARDL unit root / cointegration test
-*! (extends Sam, McNown, Goh and Goh 2024).  Loaded with -do- by _xtmvu_load.
+*! (extends Sam, McNown, Goh and Goh 2025).  Loaded with -do- by _xtmvu_load.
 mata:
 mata set matastrict off
 
+// version stamp: the loader reloads the engine when an older copy is still in Mata memory
 real scalar xmu_loaded()
 {
-	return(1)
+	return(106)
 }
 
 // columns of the F-test (1-based, in the design matrix)
@@ -46,6 +47,103 @@ real matrix xmu_Z(real colvector y, real matrix X, real scalar p, real scalar q,
 	for (j=1; j<=q; j++) Z = Z, dX[idx :- j, .]
 	Z = Z, dX[idx, .]
 	return(Z)
+}
+
+// Breusch-Godfrey LM test (given order) p-value for residuals r of a regression on Z
+real scalar xmu_bgp(real matrix Z, real colvector r, real scalar order)
+{
+	real scalar n, o, R2
+	real matrix W
+	real colvector e, b, res
+	n = rows(r)
+	W = Z
+	for (o=1; o<=order; o++) {
+		e = J(o,1,0) \ r[|1\n-o|]
+		W = W, e
+	}
+	b = invsym(cross(W,W))*cross(W,r)
+	res = r - W*b
+	R2 = 1 - cross(res,res)/cross(r,r)
+	return(chi2tail(order, n*R2))
+}
+
+// Jarque-Bera normality test p-value
+real scalar xmu_jbp(real colvector r)
+{
+	real scalar n, m2, S, K
+	n = rows(r)
+	m2 = mean(r:^2)
+	S = mean(r:^3)/m2^1.5
+	K = mean(r:^4)/m2^2
+	return(chi2tail(2, n*(S^2/6 + (K-3)^2/24)))
+}
+
+// centred R-squared of y on a constant and X
+real scalar xmu_r2c(real colvector y, real matrix X)
+{
+	real matrix W
+	real colvector b, res, yc
+	W = J(rows(y),1,1), X
+	b = invsym(cross(W,W))*cross(W,y)
+	res = y - W*b
+	yc = y :- mean(y)
+	return(1 - cross(res,res)/cross(yc,yc))
+}
+
+// Ramsey RESET (squares and cubes of the fitted values) p-value
+real scalar xmu_resetp(real matrix Z, real colvector dep, real colvector r)
+{
+	real scalar n, m, rss0, rss1, F
+	real colvector fit, b2, r2
+	real matrix Z2
+	n = rows(Z)
+	m = cols(Z)
+	fit = dep - r
+	Z2 = Z, fit:^2, fit:^3
+	b2 = invsym(cross(Z2,Z2))*cross(Z2,dep)
+	r2 = dep - Z2*b2
+	rss0 = cross(r,r)
+	rss1 = cross(r2,r2)
+	F = ((rss0-rss1)/2)/(rss1/(n-m-2))
+	return(Ftail(2, n-m-2, F))
+}
+
+// residual diagnostics of one unit: BG(1), BG(2), Jarque-Bera, Breusch-Pagan (Koenker), ARCH(1), RESET
+real rowvector xmu_diagrow(real matrix Z, real colvector dep, real colvector r)
+{
+	real scalar n, bp, ar
+	real colvector fit, u
+	n = rows(r)
+	fit = dep - r
+	bp = chi2tail(1, n*xmu_r2c(r:^2, fit))
+	u = r:^2
+	ar = chi2tail(1, (n-1)*xmu_r2c(u[|2\n|], u[|1\n-1|]))
+	return((xmu_bgp(Z,r,1), xmu_bgp(Z,r,2), xmu_jbp(r), bp, ar, xmu_resetp(Z,dep,r)))
+}
+
+// panel-level residual quantities of one unit: n, skewness, kurtosis, residual variance, df,
+// variance inflation factors of Ly and Lx(1..k), largest VIF among the stationary regressors, condition number
+real rowvector xmu_panelrow(real matrix Z, real colvector r, real scalar k, real scalar ntr)
+{
+	real scalar n, m, m2, S, K, s2, vst, cond
+	real rowvector idx, ssq, ev
+	real colvector vif
+	real matrix C, Zs
+	n = rows(Z)
+	m = cols(Z)
+	m2 = mean(r:^2)
+	S = mean(r:^3)/m2^1.5
+	K = mean(r:^4)/m2^2
+	s2 = cross(r,r)/(n-m)
+	idx = (1..k+1), ((k+3)..m)
+	C = correlation(Z[., idx])
+	vif = diagonal(invsym(C))
+	vst = max(vif[|k+2+ntr \ rows(vif)|])
+	ssq = sqrt(colsum(Z:^2))
+	Zs = Z :/ ssq
+	ev = symeigenvalues(cross(Zs,Zs))
+	cond = sqrt(max(ev)/min(ev))
+	return((n, S, K, s2, n-m, vif[|1 \ k+1|]', vst, cond))
 }
 
 // (t on Ly, F on fidx columns, rss, m)
@@ -222,7 +320,7 @@ void xmu_panel_run(string scalar vars, string scalar pv, string scalar tv, strin
 	tmin = min(tm); tmax = max(tm); Tspan = tmax - tmin + 1
 	fidx = xmu_fidx(k, cs)
 
-	U = J(N0, 10, 0)
+	U = J(N0, 16+k+8, 0)
 	Rc = J(Tspan, N0, .)
 	for (i=1; i<=N0; i++) {
 		y = data[|info[i,1],1 \ info[i,2],1|]
@@ -258,7 +356,7 @@ void xmu_panel_run(string scalar vars, string scalar pv, string scalar tv, strin
 		r = dep - Z*b
 		cstart = tt[1] - tmin + 1
 		Rc[|cstart+s0,i \ cstart+Ti-1,i|] = r
-		U[i,.] = (1, p, q, n, m, st[1], st[2], cstart, s0, Ti)
+		U[i,.] = (1, p, q, n, m, st[1], st[2], cstart, s0, Ti, xmu_diagrow(Z, dep, r), xmu_panelrow(Z, r, k, ntr))
 	}
 	kept = selectindex(U[.,1] :== 1)
 	Nk = rows(kept)
@@ -360,7 +458,7 @@ void xmu_panel_run(string scalar vars, string scalar pv, string scalar tv, strin
 		PAN[6,2+c] = xmu_cv(invn_F_s, cvs[c], 1)
 	}
 
-	UNI = J(Nk, 9, .)
+	UNI = J(Nk, 10, .)
 	for (u=1; u<=Nk; u++) {
 		i = kept[u]
 		UNI[u,1] = id[info[i,1]]
@@ -372,11 +470,20 @@ void xmu_panel_run(string scalar vars, string scalar pv, string scalar tv, strin
 		UNI[u,7] = pt[u]
 		UNI[u,8] = pF[u]
 		UNI[u,9] = 1 + (pt[u] < alpha) + 2*(pF[u] < alpha)
+		UNI[u,10] = U[i,11]
 	}
 
 	// diagnostics: obs per parameter (selected model) and for the largest model searched
 	minratio = min(U[kept,4] :/ U[kept,5])
 	maxm = 1 + k + 1 + ntr + maxlag + maxlag*k + k
+	DIAG = U[kept,1], U[kept,11..16]
+	for (u=1; u<=Nk; u++) DIAG[u,1] = id[info[kept[u],1]]
+	st_matrix("_xmu_diag", DIAG)
+	PDIAG = U[kept,1], U[kept,17..16+k+8]
+	for (u=1; u<=Nk; u++) PDIAG[u,1] = id[info[kept[u],1]]
+	st_matrix("_xmu_pdiag", PDIAG)
+	st_numscalar("_xmu_nvif", sum(U[kept,23+k] :> 10))
+	st_numscalar("_xmu_maxvif", max(U[kept,23+k]))
 	st_matrix("_xmu_unit", UNI)
 	st_matrix("_xmu_panel", PAN)
 	st_numscalar("_xmu_N", Nk)
@@ -390,6 +497,9 @@ void xmu_panel_run(string scalar vars, string scalar pv, string scalar tv, strin
 	st_numscalar("_xmu_Tavg", mean(U[kept,10]))
 	st_numscalar("_xmu_minratio", minratio)
 	st_numscalar("_xmu_searchratio", min(U[kept,4])/maxm)
+	st_numscalar("_xmu_bgn", sum(U[kept,11] :< 0.05))
+	st_numscalar("_xmu_nlow", sum((U[kept,4]/maxm) :< 3))
+	st_numscalar("_xmu_maxm", maxm)
 	st_numscalar("_xmu_k", k)
 	xmu_tbs = tbar_s
 	xmu_fbs = Fbar_s

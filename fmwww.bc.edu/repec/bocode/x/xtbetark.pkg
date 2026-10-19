@@ -9,10 +9,12 @@ d panel-appropriate sandwich is applied on top of the
 d AR(k)-adjusted likelihood, so the correction targets only the
 d cross-panel dependence the AR(k) term does not already handle. 
 d Two such corrections are available via vce() -- pcse (Beck and
-d Katz [1995]) and dk ( Driscoll and Kraay [1998])-- differing in
-d whether they include a time-lag smoothing kernel; a third, oim,
-d applies no panel correction at all  and provides results
-d identical to those produced by betark. 
+d Katz [1995]) and dk (Driscoll and Kraay [1998]) -- differing in
+d how they estimate the contemporaneous cross-panel score
+d covariance (pcse assumes it is constant over time; dk does not,
+d and can optionally add a time-lag kernel through dklag(#)); a
+d third, oim, applies no panel correction at all and provides
+d results identical to those produced by betark. 
 d
 d KW: Beta regression
 d KW: autoregressive errors
@@ -20,7 +22,7 @@ d KW: panel data
 d
 d Requires: Stata version 11
 d
-d Distribution-Date: 20260917
+d Distribution-Date: 20261018
 d
 d Author: Ariel Linden, Linden Consulting Group, LLC
 d Support: email alinden@@lindenconsulting.org

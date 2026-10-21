@@ -11,7 +11,7 @@ d inference. A source-only Mata backend and an optional parallel
 d Rust backend share the same Stata interface. 
 d
 d KW: leave-out variance decomposition
-d KW: bias correctionm
+d KW: bias correction
 d
 d Requires: Stata version 18
 d

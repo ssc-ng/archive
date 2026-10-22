@@ -331,8 +331,7 @@ function initSelect(m) {
 
 const H = {snaps: [], pres: null, name: "", sel: -1};
 
-function presenceOf(name) {
-  const p = H.pres;
+function presenceOf(name, p = H.pres) {
   let lo = 0, hi = p.p.length - 1;                 // names are sorted
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -440,11 +439,162 @@ async function initHistory(m) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Compare page                                                        */
+/* ------------------------------------------------------------------ */
+
+const CPAGE = 100;                    // rows per page
+const C = {a: 0, b: 0, pres: null, lists: null, tab: "", q: "", page: 1};
+
+// Added / removed / changed between two listed snapshots (a older than b).
+// Added and removed compare the two package lists. Changed means the
+// package is in both and its .pkg file was modified at some listed snapshot
+// after a, up to and including b (so a change that was later undone still
+// counts). Each row carries the detail shown next to the name.
+function diffSnapshots(ia, ib, namesA, namesB, pres) {
+  const setA = new Set(namesA), setB = new Set(namesB);
+  const added = [], removed = [], changed = [];
+  let same = 0;
+  const when = i => C.snaps[i][0];
+  for (const n of namesB) {
+    const rec = presenceOf(n, pres);
+    if (!setA.has(n)) {
+      let first = ib;                               // first listed snapshot after a that has it
+      for (let k = 0; rec && k < rec.runs.length; k += 2)
+        if (rec.runs[k + 1] > ia) { first = Math.max(rec.runs[k], ia + 1); break; }
+      added.push({n, d: "first listed " + when(first)});
+    } else {
+      const ch = rec ? rec.changed.filter(i => i > ia && i <= ib) : [];
+      if (ch.length) {
+        const shown = ch.slice(0, 3).map(when).join(", ");
+        changed.push({n, d: "package file changed " + shown + (ch.length > 3 ? ` (+${ch.length - 3} more)` : "")});
+      } else same++;
+    }
+  }
+  for (const n of namesA) if (!setB.has(n)) {
+    const rec = presenceOf(n, pres);
+    let last = ia;                                  // last listed snapshot before b that has it
+    for (let k = 0; rec && k < rec.runs.length; k += 2)
+      if (rec.runs[k] < ib && rec.runs[k] >= ia) last = Math.min(rec.runs[k + 1], ib - 1);
+    removed.push({n, d: "last listed " + when(last)});
+  }
+  return {added, removed, changed, same, nA: namesA.length, nB: namesB.length};
+}
+
+let cmpToken = 0;
+async function runCompare() {
+  let ia = +$("cmp-a").value, ib = +$("cmp-b").value;
+  const token = ++cmpToken;
+  $("cmp-result").hidden = true;
+  if (ia === ib) { status("Pick two different snapshots."); return; }
+  if (ia > ib) [ia, ib] = [ib, ia];                 // older one is always the base
+  const [da, db] = [C.snaps[ia][0], C.snaps[ib][0]];
+  status(`Loading ${da} and ${db}…`, true);
+  try {
+    const [namesA, namesB, pres] = await Promise.all([loadSnap(ia), loadSnap(ib), getJSON("presence.json")]);
+    if (token !== cmpToken) return;                 // superseded by a newer choice
+    C.pres = pres;
+    C.lists = diffSnapshots(ia, ib, namesA, namesB, pres);
+    C.da = da; C.db = db;
+    $("n-added").textContent = fmt(C.lists.added.length);
+    $("n-removed").textContent = fmt(C.lists.removed.length);
+    $("n-changed").textContent = fmt(C.lists.changed.length);
+    $("n-same").textContent = fmt(C.lists.same);
+    $("cmp-sum").textContent =
+      `${da} has ${fmt(C.lists.nA)} packages; ${db} has ${fmt(C.lists.nB)} ` +
+      `(${C.lists.nB >= C.lists.nA ? "+" : "−"}${fmt(Math.abs(C.lists.nB - C.lists.nA))}). ` +
+      `Packages are compared at these two snapshots only; "changed" means the package's ` +
+      `.pkg file was modified at some listed snapshot in between.`;
+    status(`Compared ${da} with ${db}.`);
+    $("cmp-result").hidden = false;
+    renderCompareList();
+  } catch (e) {
+    if (token === cmpToken) status("Could not compare: " + e.message);
+  }
+}
+
+function compareRows() {
+  const q = C.q.toLowerCase();
+  return (C.lists[C.tab] || []).filter(r => !q || r.n.toLowerCase().includes(q));
+}
+
+function renderCompareList() {
+  for (const b of document.querySelectorAll(".tile[data-t]"))
+    b.setAttribute("aria-pressed", String(b.dataset.t === C.tab));
+  $("cmp-listbox").hidden = !C.tab;
+  if (C.tab) {
+    const rows = compareRows(), pages = Math.max(1, Math.ceil(rows.length / CPAGE));
+    C.page = Math.max(1, Math.min(pages, C.page));
+    const from = (C.page - 1) * CPAGE, shown = rows.slice(from, from + CPAGE);
+    $("cmp-legend").textContent = `Packages ${C.tab} between ${C.da} and ${C.db}`;
+    $("cmp-list").innerHTML = shown.map(r =>
+      `<li><a class="nm" href="history.html#p=${encodeURIComponent(r.n)}" title="History of ${esc(r.n)}">${esc(r.n)}</a>` +
+      `<span class="detail">${esc(r.d)}</span></li>`).join("");
+    $("cmp-count").textContent = rows.length
+      ? `${fmt(from + 1)}–${fmt(from + shown.length)} of ${fmt(rows.length)}` +
+        (C.q ? ` matching "${C.q}"` : "")
+      : (C.q ? "No matches." : "None.");
+    $("pager").hidden = pages <= 1;
+    $("pg-info").textContent = `Page ${fmt(C.page)} of ${fmt(pages)}`;
+    $("pg-first").disabled = $("pg-prev").disabled = C.page === 1;
+    $("pg-next").disabled = $("pg-last").disabled = C.page === pages;
+    C.pages = pages;
+  }
+  const p = new URLSearchParams();
+  p.set("a", C.snaps[Math.min(+$("cmp-a").value, +$("cmp-b").value)][0]);
+  p.set("b", C.snaps[Math.max(+$("cmp-a").value, +$("cmp-b").value)][0]);
+  if (C.tab) p.set("t", C.tab);
+  if (C.q) p.set("q", C.q);
+  if (C.page > 1) p.set("pg", C.page);
+  saveHash(p);
+}
+
+function initCompare(m) {
+  C.snaps = S.snaps = m.snapshots;                  // loadSnap() reads S.snaps
+  const n = C.snaps.length, opts = C.snaps.map(([d, c], i) =>
+    `<option value="${i}">${d} (${fmt(c)} packages)</option>`).join("");
+  $("cmp-a").innerHTML = $("cmp-b").innerHTML = opts;
+  let keepPage = 1;
+  const fromHash = () => {                          // initial load, and a pasted/edited link
+    const h = hashParams();
+    const idxOf = (v, dflt) => v ? snapIndexOnOrBefore(C.snaps, v) : dflt;
+    $("cmp-b").value = idxOf(h.get("b"), n - 1);
+    $("cmp-a").value = idxOf(h.get("a"), Math.max(0, n - 13));   // about a year back
+    C.tab = ["added", "removed", "changed"].includes(h.get("t")) ? h.get("t") : "";
+    C.q = h.get("q") || ""; $("cmp-q").value = C.q;
+    C.page = keepPage = +h.get("pg") || 1;
+    runCompare().then(() => { if (keepPage > 1) { C.page = keepPage; renderCompareList(); } });
+  };
+  for (const id of ["cmp-a", "cmp-b", "cmp-swap"]) $(id).disabled = false;
+  $("stats").innerHTML = `Snapshots offered: every tag before <code>2021-12-21</code>, the first tag of each ` +
+    `month since, and the latest (<code>${m.latest}</code>). Data built ${m.built}.`;
+
+  const rerun = () => { C.page = 1; runCompare(); };
+  $("cmp-a").onchange = $("cmp-b").onchange = rerun;
+  $("cmp-swap").onclick = () => {
+    [$("cmp-a").value, $("cmp-b").value] = [$("cmp-b").value, $("cmp-a").value]; rerun();
+  };
+  for (const b of document.querySelectorAll(".tile[data-t]"))
+    b.onclick = () => { C.tab = C.tab === b.dataset.t ? "" : b.dataset.t; C.page = 1; renderCompareList(); };
+  let t;
+  $("cmp-q").addEventListener("input", e => {
+    C.q = e.target.value.trim(); C.page = 1;
+    clearTimeout(t); t = setTimeout(renderCompareList, 80);
+  });
+  const go = d => () => { C.page = d === "first" ? 1 : d === "last" ? C.pages : C.page + d; renderCompareList();
+    $("cmp-listbox").scrollIntoView({block: "nearest"}); };
+  $("pg-first").onclick = go("first"); $("pg-last").onclick = go("last");
+  $("pg-prev").onclick = go(-1); $("pg-next").onclick = go(1);
+  addEventListener("hashchange", fromHash);
+  fromHash();
+}
+
+/* ------------------------------------------------------------------ */
 
 getJSON("manifest.json").then(m => {
   if ($("ranges")) initRanges(m);
   if ($("tl")) initSelect(m);
   if ($("hq")) initHistory(m);
+  if ($("cmp-a")) initCompare(m);
 }).catch(e => {
   const msg = "Could not load the snapshot data (" + e.message + ").";
   if ($("loadstat")) status(msg);

@@ -35,6 +35,7 @@ ssc2 install <package_name>, date(<YYYY-MM-DD>)
 - [Select packages](browse.html): pick a snapshot, search its packages, tick the
   ones you want, and get the `ssc2` command that installs them as they stood on
   that day.
+- [Compare](compare.html): see which packages were added, removed or changed between any two snapshots.
 - [Package history](history.html) *(under development)*: in which snapshots a
   package is available, and when its package file changed.
 - [Availability](tags.html): the contiguous ranges of date tags, the earliest

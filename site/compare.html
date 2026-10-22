@@ -1,0 +1,54 @@
+---
+layout: default
+title: Compare
+nav_order: 3
+browser: true
+description: "Compare any two snapshots of the SSC archive: packages added, removed and changed"
+---
+  <div class="kicker">SSC archive · compare</div>
+  <h1>Compare any two snapshots</h1>
+  <p class="lede">See which packages were added, removed or changed between two
+    snapshots of the SSC archive.</p>
+
+  <fieldset>
+    <legend>Snapshots</legend>
+    <div class="row cmpsel">
+      <label for="cmp-a">From <select id="cmp-a" disabled></select></label>
+      <button type="button" class="addbtn" id="cmp-swap" disabled
+              aria-label="Swap the two snapshots">&#8646; swap</button>
+      <label for="cmp-b">To <select id="cmp-b" disabled></select></label>
+    </div>
+    <div class="loadstat" id="loadstat" role="status" aria-live="polite"></div>
+  </fieldset>
+
+  <div id="cmp-result" hidden>
+    <div class="tiles" role="group" aria-label="Show packages that were">
+      <button type="button" class="tile" data-t="added" aria-pressed="false">
+        <span class="n" id="n-added"></span><span class="l">added</span></button>
+      <button type="button" class="tile" data-t="removed" aria-pressed="false">
+        <span class="n" id="n-removed"></span><span class="l">removed</span></button>
+      <button type="button" class="tile" data-t="changed" aria-pressed="false">
+        <span class="n" id="n-changed"></span><span class="l">changed</span></button>
+      <div class="tile static"><span class="n" id="n-same"></span><span class="l">unchanged</span></div>
+    </div>
+    <p class="hint" id="cmp-sum"></p>
+
+    <fieldset id="cmp-listbox" hidden>
+      <legend id="cmp-legend"></legend>
+      <label for="cmp-q">Filter this list <span class="hint">(part of a name)</span></label>
+      <input type="text" id="cmp-q" spellcheck="false" autocomplete="off">
+      <div class="listbar">
+        <span class="count" id="cmp-count" role="status" aria-live="polite"></span>
+      </div>
+      <ul class="pkglist cmplist" id="cmp-list"></ul>
+      <nav class="pager" id="pager" aria-label="Pagination" hidden>
+        <button type="button" class="addbtn" id="pg-first" aria-label="First page">&laquo;</button>
+        <button type="button" class="addbtn" id="pg-prev">&lsaquo; Previous</button>
+        <span id="pg-info" role="status" aria-live="polite"></span>
+        <button type="button" class="addbtn" id="pg-next">Next &rsaquo;</button>
+        <button type="button" class="addbtn" id="pg-last" aria-label="Last page">&raquo;</button>
+      </nav>
+    </fieldset>
+  </div>
+
+  <div id="stats"></div>

@@ -800,7 +800,8 @@ function initHistory(m) {
         return k === idxs.length ? "on" : k ? "part" : "off";
       },
       cellLabel: i => `${H.snaps[i][0]}: ${stateOf(i)}`,
-      info: i => stateOf(i),
+      // "available" is implied by the rest of the page; say only what is notable
+      info: i => !H.on.has(i) ? stateOf(i) : H.chg.has(i) ? "package file changed since the previous snapshot" : "",
       action: i => H.on.has(i)
         ? `<a href="browse.html#s=${H.snaps[i][0]}&amp;p=${encodeURIComponent(H.name)}">` +
           `Install ${esc(H.name)} as of ${H.snaps[i][0]}</a>` : "",

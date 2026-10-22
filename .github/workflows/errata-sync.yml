@@ -1,0 +1,103 @@
+# Opens a PR adding snapshot dates that have neither a tag nor an ERRATA entry
+name: ERRATA sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    # after the mirror workflow (06:33 UTC) has had time to finish
+    - cron: "17 10 * * *"
+  # blocks merging while a TODO placeholder remains in ERRATA.md
+  pull_request:
+    paths:
+      - ERRATA.md
+
+# Creating the PR requires Settings > Actions > General > Workflow permissions >
+# "Allow GitHub Actions to create and approve pull requests" (enabled in this repo).
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  EARLIEST: "2026-01-01"
+  BRANCH: errata/missing-snapshots
+
+jobs:
+  check-todo:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Fail while ERRATA.md still has TODO reasons
+      run: |
+        if grep -n 'TODO' ERRATA.md; then
+          echo "::error file=ERRATA.md::Replace the TODO reasons before merging"
+          exit 1
+        fi
+
+  sync:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out repository code
+      uses: actions/checkout@v7
+
+    - name: Skip if an ERRATA PR is already open
+      id: open
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        n=$(gh pr list --head "$BRANCH" --state open --json number --jq length)
+        echo "count=$n" >> "$GITHUB_OUTPUT"
+
+    - name: Compare tags with ERRATA
+      id: sync
+      if: steps.open.outputs.count == '0'
+      run: |
+        git ls-remote --tags --refs origin | sed 's|.*refs/tags/||' > "$RUNNER_TEMP/tags.txt"
+        # up to yesterday (UTC): today's snapshot may not exist yet
+        ranges=$(python3 .github/scripts/errata_sync.py "$RUNNER_TEMP/tags.txt" \
+                 --start "$EARLIEST" --end "$(date -u -d yesterday +%F)")
+        if [ -z "$ranges" ]; then
+          echo "ERRATA and tags are in sync"
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "ranges<<EOF"
+            echo "$ranges" | sed 's/^/- /; s/ / to /'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create pull request
+      if: steps.sync.outputs.changed == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        # Repository variable ERRATA_ASSIGNEE (Settings > Secrets and variables >
+        # Actions > Variables): a bare GitHub username, e.g. "larsvilhuber", with no
+        # leading "@". Must be a user, not an org or team, with access to the repo.
+        # Set it with: gh variable set ERRATA_ASSIGNEE --body "username"
+        # Falls back to the user who triggered the run.
+        ASSIGNEE: ${{ vars.ERRATA_ASSIGNEE || github.actor }}
+        RANGES: ${{ steps.sync.outputs.ranges }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git checkout -b "$BRANCH"
+        git add ERRATA.md
+        git commit -m "ERRATA: add snapshot dates without a tag"
+        git push --force origin "$BRANCH"
+        {
+          echo "The following dates have no snapshot tag and no entry in [ERRATA](ERRATA.md):"
+          echo
+          echo "$RANGES"
+          echo
+          echo "They were added to the table with a placeholder reason."
+          echo
+          echo "@$ASSIGNEE: please replace every \`TODO\` in the Reason column of ERRATA.md"
+          echo "with the actual reason **before merging** this PR."
+        } > "$RUNNER_TEMP/body.md"
+        gh pr create --base "${{ github.event.repository.default_branch }}" \
+          --head "$BRANCH" --assignee "$ASSIGNEE" \
+          --title "ERRATA: snapshots missing since $EARLIEST" \
+          --body-file "$RUNNER_TEMP/body.md"

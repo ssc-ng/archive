@@ -473,9 +473,10 @@ function diffSnapshots(ia, ib, namesA, namesB, pres) {
   for (const n of namesA) if (!setB.has(n)) {
     const rec = presenceOf(n, pres);
     let last = ia;                                  // last listed snapshot before b that has it
-    for (let k = 0; rec && k < rec.runs.length; k += 2)
-      if (rec.runs[k] < ib && rec.runs[k] >= ia) last = Math.min(rec.runs[k + 1], ib - 1);
-    removed.push({n, d: "last listed " + when(last)});
+    for (let k = 0; rec && k < rec.runs.length; k += 2)   // a run may start long before a
+      if (rec.runs[k + 1] >= ia && rec.runs[k] < ib)
+        last = Math.max(last, Math.min(rec.runs[k + 1], ib - 1));
+    removed.push({n, d: `last listed ${when(last)}; gone by ${when(last + 1)}`});
   }
   return {added, removed, changed, same, nA: namesA.length, nB: namesB.length};
 }

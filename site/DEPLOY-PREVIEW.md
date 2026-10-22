@@ -22,11 +22,12 @@ Forked PRs never run the `preview` job's deploy step, since forks don't
 have access to repository secrets — that's a GitHub Actions security
 boundary, not a bug.
 
-The Cloudflare Pages **project name is `ssc-archive`**, set explicitly in
-the workflow (`--project-name=ssc-archive`) rather than derived from the
-repository name, which is `archive`. The project already exists at
-<https://ssc-archive.pages.dev/>; if it is ever recreated it must keep this
-name, or the workflow must be changed to match.
+The Cloudflare Pages **project name is derived automatically** from the
+GitHub repository name with an `ssc-` prefix
+(`ssc-${{ github.event.repository.name }}` in the workflow) — currently
+`ssc-archive`, at <https://ssc-archive.pages.dev/>. Nothing in the workflow
+needs editing if this pattern is copied into another repo; only the one-time
+Cloudflare project creation below needs to match.
 
 ## One-time GitHub Pages setup
 
@@ -81,12 +82,12 @@ can deploy anything.
    before opening a preview PR — `wrangler pages deploy` in CI does not
    create the project on its own. Create it once with
    [Wrangler](https://developers.cloudflare.com/workers/wrangler/)
-   (requires Node.js), with `main` as the production branch (already done
-   for this repository):
+   (requires Node.js), with `main` as the production branch (already done for
+   this repository, as `ssc-archive`):
 
    ```bash
    npx wrangler login
-   npx wrangler pages project create ssc-archive --production-branch main
+   npx wrangler pages project create "ssc-$(basename "$(git rev-parse --show-toplevel)")" --production-branch main
    ```
 
 5. **Verify the secrets are set:**

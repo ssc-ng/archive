@@ -138,25 +138,49 @@ function createTimeline(root, o) {
   root.classList.add("tl2");
   root.classList.toggle("plain", !o.state);
   root.innerHTML =
-    `<div class="tl2-top">` +
-    `<button type="button" class="stepbtn" data-s="-1" aria-label="Previous snapshot">&larr;</button>` +
-    `<span class="tl-date"></span><span class="tl-extra"></span>` +
-    `<button type="button" class="stepbtn" data-s="1" aria-label="Next snapshot">&rarr;</button>` +
-    `<input type="date" aria-label="Jump to date">` +
-    `<span class="snapnote" role="status"></span></div>` +
+    `<div class="tl2-stage">` +
+    `<div class="tl2-bubble">` +
+    `<button type="button" class="stepbtn" data-m="-1" aria-label="Previous month">&lsaquo;</button>` +
+    `<span class="tl2-mlabel"></span>` +
+    `<button type="button" class="stepbtn" data-m="1" aria-label="Next month">&rsaquo;</button></div>` +
+    `<div class="tl2-stem"></div>` +
     `<div class="tl2-bar tl2-months" role="group" aria-label="Months"></div>` +
-    `<div class="tl2-bar tl2-days" role="group" aria-label="Days of the selected month"></div>` +
+    `<svg class="tl2-funnel" aria-hidden="true" focusable="false"><polygon/><path/></svg>` +
+    `<div class="tl2-bar tl2-days" role="group" aria-label="Days of the selected month"></div></div>` +
+    `<div class="tl2-summary"><div class="tl2-big"></div><div class="tl2-info"></div>` +
+    `<div class="tl2-action"></div><div class="snapnote" role="status"></div></div>` +
     `<p class="hint tl2-keys">Arrow keys: one snapshot &middot; PgUp/PgDn: one month ` +
     `(Shift: one year) &middot; Home/End: first/last</p>`;
+  const $stage = root.querySelector(".tl2-stage"), $bubble = root.querySelector(".tl2-bubble");
+  const $stem = root.querySelector(".tl2-stem"), $fun = root.querySelector(".tl2-funnel");
   const $m = root.querySelector(".tl2-months"), $d = root.querySelector(".tl2-days");
-  const $date = root.querySelector(".tl-date"), $extra = root.querySelector(".tl-extra");
-  const $in = root.querySelector("input[type=date]"), $note = root.querySelector(".snapnote");
+  const $mlabel = root.querySelector(".tl2-mlabel"), $note = root.querySelector(".snapnote");
+  const $big = root.querySelector(".tl2-big"), $info = root.querySelector(".tl2-info");
+  const $action = root.querySelector(".tl2-action");
 
   const gapCell = (grow, text, right) =>
     `<span class="gapwrap${right ? " r" : ""}" style="flex-grow:${grow}">` +
     `<span class="tip gapcell" role="img" aria-label="${esc(text)}"></span>` +
     `<span class="tipbox" role="tooltip" aria-hidden="true">${esc(text)}</span></span>`;
   const range = (a, b) => a === b ? a : `${a} to ${b}`;
+
+  // Place the month bubble over the selected month's tick and draw the funnel
+  // from that tick down to the full width of the day bar.
+  function layout() {
+    const sel = $m.querySelector(".mcell.sel"), sb = $stage.getBoundingClientRect();
+    if (!sel || !sb.width) return;                  // not visible (e.g. a closed panel)
+    const c = sel.getBoundingClientRect(), dr = $d.getBoundingClientRect();
+    const cx = c.left + c.width / 2 - sb.left, bw = $bubble.offsetWidth;
+    $bubble.style.left = Math.max(0, Math.min(sb.width - bw, cx - bw / 2)) + "px";
+    const top = $bubble.offsetTop + $bubble.offsetHeight;
+    $stem.style.cssText = `left:${cx}px;top:${top}px;height:${Math.max(0, c.top - sb.top - top)}px`;
+    const h = $fun.getBoundingClientRect().height;
+    $fun.setAttribute("width", sb.width); $fun.setAttribute("height", h);
+    const x1 = c.left - sb.left, x2 = c.right - sb.left, dl = dr.left - sb.left, dr2 = dr.right - sb.left;
+    $fun.querySelector("polygon").setAttribute("points", `${x1},0 ${x2},0 ${dr2},${h} ${dl},${h}`);
+    $fun.querySelector("path").setAttribute("d", `M${x1},0 L${dl},${h} M${x2},0 L${dr2},${h}`);
+  }
+  if (window.ResizeObserver) new ResizeObserver(layout).observe(root);
 
   function render() {
     const cur = dates[idx], curYm = cur.slice(0, 7);
@@ -205,12 +229,15 @@ function createTimeline(root, o) {
       d = e + 1;
     }
     $d.innerHTML = html;
-    // ---- readout and controls
-    $date.textContent = cur;
-    $extra.textContent = o.readout ? o.readout(idx) : "";
-    root.querySelector('[data-s="-1"]').disabled = idx <= lo;
-    root.querySelector('[data-s="1"]').disabled = idx >= hi;
-    $in.min = dates[lo]; $in.max = dates[hi]; $in.value = cur;
+    // ---- bubble, selection summary
+    const pos = list.findIndex(M => M.ym === curYm);
+    $mlabel.textContent = curYm;
+    root.querySelector('[data-m="-1"]').disabled = pos <= 0;
+    root.querySelector('[data-m="1"]').disabled = pos >= list.length - 1;
+    $big.textContent = cur;
+    $info.textContent = o.info ? o.info(idx) : "";
+    $action.innerHTML = o.action ? o.action(idx) : "";
+    layout();
   }
 
   function renderKeepFocus() {
@@ -262,7 +289,7 @@ function createTimeline(root, o) {
       const day = +dates[idx].slice(8), ym = mc.dataset.ym;
       const cand = months.find(M => M.ym === ym).idxs.filter(i => i >= lo && i <= hi);
       go(cand.reduce((b, i) => Math.abs(+dates[i].slice(8) - day) < Math.abs(+dates[b].slice(8) - day) ? i : b));
-    } else if (sb) go(idx + +sb.dataset.s);
+    } else if (sb) go(jump(+sb.dataset.m));
   });
   root.addEventListener("keydown", e => {
     if (!e.target.closest(".tl2-bar")) return;
@@ -272,13 +299,6 @@ function createTimeline(root, o) {
     if (t === null) return;
     e.preventDefault();
     go(t);
-  });
-  $in.addEventListener("change", () => {
-    const want = $in.value;
-    if (!want) return;
-    const j = want < dates[lo] ? lo : Math.max(lo, Math.min(hi, snapIndexOnOrBefore(snaps, want)));
-    go(j, false);
-    if (dates[j] !== want) note(`No snapshot on ${want}: ${o.reason(want, want)} Showing ${dates[j]}.`);
   });
 
   render();
@@ -462,7 +482,7 @@ function initSelect(m) {
 
   S.tl = createTimeline($("tl-root"), {
     snaps: S.snaps, reason, idx: start,
-    readout: i => plural(S.snaps[i][1], "package"),
+    info: i => plural(S.snaps[i][1], "package"),
     onChange: i => S.pres && applySnap(i),
   });
 
@@ -633,7 +653,7 @@ function initCompare(m) {
   tlA = createTimeline($("cmp-a-tl"), {
     snaps: C.snaps, reason, lo: 0, hi: n - 2, idx: ia0,
     blockedReason: "The latest snapshot cannot be the starting point.",
-    readout: i => plural(C.snaps[i][1], "package"),
+    info: i => plural(C.snaps[i][1], "package"),
     onChange: i => {
       C.ia = i;
       const keep = tlB.get();                       // To offers only snapshots after From
@@ -646,7 +666,7 @@ function initCompare(m) {
   tlB = createTimeline($("cmp-b-tl"), {
     snaps: C.snaps, reason, lo: ia0 + 1, hi: n - 1, idx: ib0,
     blockedReason: "Must be later than the From snapshot.",
-    readout: i => plural(C.snaps[i][1], "package"),
+    info: i => plural(C.snaps[i][1], "package"),
     onChange: i => { C.ib = i; C.page = 1; setButtons(); runCompare(); },
   });
 
@@ -704,7 +724,7 @@ function initCompare(m) {
 /* Package history page                                                */
 /* ------------------------------------------------------------------ */
 
-const H = {snaps: [], pres: null, name: "", on: new Set(), chg: new Set(), tl: null, showAll: false};
+const H = {snaps: [], pres: null, name: "", on: new Set(), chg: new Set(), tl: null};
 
 function stateOf(i) {
   return H.on.has(i) ? (H.chg.has(i) ? "available, package file changed since the previous snapshot"
@@ -724,7 +744,7 @@ function showHistory(name, selDate) {
       near.map(n => `<button type="button" class="letter sug" data-n="${esc(n)}">${esc(n)}</button>`).join(" ");
     return;
   }
-  H.name = name; H.showAll = false;
+  H.name = name;
   H.on = new Set(); H.chg = new Set(rec.changed);
   for (let k = 0; k < rec.runs.length; k += 2)
     for (let i = rec.runs[k]; i <= rec.runs[k + 1]; i++) H.on.add(i);
@@ -739,32 +759,23 @@ function showHistory(name, selDate) {
   drawChanges();
   const sel = selDate ? snapIndexOnOrBefore(H.snaps, selDate) : H.tl.get();
   H.tl.set(sel);
-  drawPick(sel);
   const p = new URLSearchParams();
   p.set("p", name);
   if (selDate) p.set("s", H.snaps[sel][0]);
   saveHash(p);
 }
 
+// The dates of the package file changes: kept in the page for screen readers
+// (the highlighted days in the timeline show them to everyone else).
 function drawChanges() {
-  const all = [...H.chg].reverse(), shown = H.showAll ? all : all.slice(0, 12);
+  const all = [...H.chg].reverse();
   $("d-changes").innerHTML = all.length
-    ? `<span class="hint">Package file changed at${all.length > shown.length ? " (most recent)" : ""}:</span> ` +
-      shown.map(i => `<button type="button" class="letter chgbtn" data-i="${i}">${H.snaps[i][0]}</button>`).join(" ") +
-      (all.length > shown.length
-        ? ` <button type="button" class="letter" id="chg-all">show all ${fmt(all.length)}</button>` : "")
-    : `<span class="hint">The package file never changed.</span>`;
-}
-
-function drawPick(i) {
-  const d = H.snaps[i][0];
-  $("d-pick").innerHTML = `<b>${d}</b>: ${stateOf(i)}.` + (H.on.has(i)
-    ? ` <a href="browse.html#s=${d}&amp;p=${encodeURIComponent(H.name)}">Select ${esc(H.name)} as of ${d}</a>`
-    : "");
+    ? `<span>Package file changed at:</span> ` +
+      all.map(i => `<button type="button" tabindex="-1" data-i="${i}">${H.snaps[i][0]}</button>`).join(" ")
+    : `<span>The package file never changed.</span>`;
 }
 
 function pickSnap(i) {
-  drawPick(i);
   const p = hashParams(); p.set("s", H.snaps[i][0]); saveHash(p);
 }
 
@@ -789,7 +800,10 @@ function initHistory(m) {
         return k === idxs.length ? "on" : k ? "part" : "off";
       },
       cellLabel: i => `${H.snaps[i][0]}: ${stateOf(i)}`,
-      readout: i => stateOf(i),
+      info: i => stateOf(i),
+      action: i => H.on.has(i)
+        ? `<a href="browse.html#s=${H.snaps[i][0]}&amp;p=${encodeURIComponent(H.name)}">` +
+          `Install ${esc(H.name)} as of ${H.snaps[i][0]}</a>` : "",
       onChange: pickSnap,
     });
     const go = () => { const v = q.value.trim(); if (v) showHistory(v); };
@@ -800,7 +814,6 @@ function initHistory(m) {
       if (b) { q.value = b.dataset.n; showHistory(b.dataset.n); }
     });
     $("d-changes").addEventListener("click", e => {
-      if (e.target.id === "chg-all") { H.showAll = true; drawChanges(); return; }
       const b = e.target.closest("button[data-i]");
       if (b) { H.tl.set(+b.dataset.i); pickSnap(+b.dataset.i); }
     });

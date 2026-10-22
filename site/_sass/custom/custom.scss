@@ -64,11 +64,6 @@ button:focus-visible, input[type=checkbox]:focus-visible {
 .check input { margin-top: .22rem; accent-color: var(--navy); }
 .check b { font-weight: 600; }
 
-/* timeline */
-.tl-date {
-  font-family: ui-monospace,Consolas,Menlo,monospace; font-size: 1.25rem;
-  font-weight: 700; color: var(--navy);
-}
 .snapnote {
   font-size: .8rem; color: #8a6d1f; background: #fbf3da;
   border-radius: 4px; padding: .1rem .45rem; display: none;
@@ -277,11 +272,21 @@ button.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 .pager[hidden] { display: none; }
 
 /* two-level timeline (month bar over day bar) */
-.tl2-top { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-bottom: 1.4rem; }
-.tl2-top .tl-extra { font-size: .85rem; color: var(--muted); }
-.tl2 .snapnote { flex-basis: 100%; margin-top: .1rem; }
-.tl2-bar { display: flex; gap: 2px; height: 1.9rem; position: relative; margin-bottom: .6rem; }
-.tl2-months { margin-top: 1.2rem; }
+.tl2-stage { position: relative; padding-top: 3.3rem; }            /* room for the bubble */
+.tl2-bubble {
+  position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: .1rem;
+  background: #fff; border: 1px solid var(--navy); border-radius: 999px; padding: .05rem .2rem;
+  font: 600 .8rem ui-monospace,Consolas,Menlo,monospace; color: var(--navy); white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(18,58,99,.15); z-index: 3;
+}
+.tl2-mlabel { padding: 0 .25rem; }
+.tl2-bubble .stepbtn { width: 1.4rem; height: 1.4rem; border: none; background: transparent; font-size: 1rem; }
+.tl2-bubble .stepbtn:hover:not(:disabled) { background: var(--navy-soft); }
+.tl2-stem { position: absolute; width: 1px; background: var(--navy); opacity: .45; pointer-events: none; }
+.tl2-funnel { display: block; width: 100%; height: 34px; }
+.tl2-funnel polygon { fill: rgba(18,58,99,.07); }
+.tl2-funnel path { fill: none; stroke: var(--navy); stroke-opacity: .35; stroke-width: 1; }
+.tl2-bar { display: flex; gap: 2px; height: 1.9rem; position: relative; margin: 0; }
 .tl2-bar button {
   flex: 1 1 0; min-width: 0; padding: 0; border: none; border-radius: 2px; cursor: pointer;
   background: var(--navy-soft); color: var(--ink); font: .68rem ui-monospace,Consolas,Menlo,monospace;
@@ -292,7 +297,15 @@ button.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 .mcell[data-yr]::before {
   content: attr(data-yr); position: absolute; left: 0; bottom: calc(100% + 3px);
   font: .65rem ui-monospace,Consolas,Menlo,monospace; color: var(--muted); pointer-events: none;
+  background: #fff; padding: 0 2px;
 }
+.tl2-summary { text-align: center; margin-top: 1.3rem; }
+.tl2-big { font: 700 1.9rem/1.2 ui-monospace,Consolas,Menlo,monospace; color: var(--navy); }
+.tl2-info { font-size: .95rem; color: var(--muted); min-height: 1.4em; }
+.tl2-action { font-size: .95rem; }
+.tl2-action:empty { display: none; }
+.tl2 .snapnote { margin: .5rem auto 0; max-width: 40rem; }
+.tl2 .snapnote.show { display: block; }
 /* plain mode (Select, Compare): the selection is the dark one */
 .tl2.plain .tl2-bar button.sel { background: var(--navy); color: #fff; }
 /* state mode (History): colour is the package, the ring is the selection */
@@ -312,7 +325,7 @@ button.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 .tl2 .gapwrap .tipbox { left: 0; top: auto; bottom: calc(100% + 6px); width: max-content; max-width: 22rem; }
 .tl2 .gapwrap.r .tipbox { left: auto; right: 0; }
 .gapwrap:hover .tipbox { visibility: visible; }
-.tl2-keys { margin: .2rem 0 0; }
+.tl2-keys { margin: .8rem 0 0; text-align: center; }
 
 /* compare: expanding snapshot panels */
 .cmpsides { display: flex; gap: 1.2rem; flex-wrap: wrap; align-items: flex-start; }

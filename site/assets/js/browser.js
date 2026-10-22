@@ -257,7 +257,7 @@ function initSelect(m) {
   dp.min = S.snaps[0][0]; dp.max = S.snaps[n - 1][0]; dp.disabled = false;
   $("q").disabled = false;
   $("stats").innerHTML =
-    `Snapshots offered: every tag before <code>2021-12-21</code>, the first tag of each ` +
+    `Snapshots available: every tag before <code>2021-12-21</code>, the first tag of each ` +
     `month since, and the latest (<code>${m.latest}</code>). ` +
     `All ${fmt(m.tagCount)} tags are listed on the <a href="tags.html">availability page</a>. ` +
     `Data built ${m.built}. A package is a <code>.pkg</code> file under ` +
@@ -405,7 +405,7 @@ function pickSnap(i) {
 
 async function initHistory(m) {
   H.snaps = m.snapshots;
-  $("stats").innerHTML = `Snapshots: every tag before <code>2021-12-21</code>, the first tag of each ` +
+  $("stats").innerHTML = `Snapshots available: every tag before <code>2021-12-21</code>, the first tag of each ` +
     `month since, and the latest (<code>${m.latest}</code>). "Changed" compares a package's ` +
     `<code>.pkg</code> file with the one in the previous listed snapshot (a month apart for recent ones). Data built ${m.built}.`;
   status("Loading package index…", true);
@@ -476,7 +476,7 @@ function diffSnapshots(ia, ib, namesA, namesB, pres) {
     for (let k = 0; rec && k < rec.runs.length; k += 2)   // a run may start long before a
       if (rec.runs[k + 1] >= ia && rec.runs[k] < ib)
         last = Math.max(last, Math.min(rec.runs[k + 1], ib - 1));
-    removed.push({n, d: `last listed ${when(last)}; gone by ${when(last + 1)}`});
+    removed.push({n, d: `last listed ${when(last)}; removed by ${when(last + 1)}`});
   }
   return {added, removed, changed, same, nA: namesA.length, nB: namesB.length};
 }
@@ -566,7 +566,7 @@ function initCompare(m) {
     runCompare().then(() => { if (keepPage > 1) { C.page = keepPage; renderCompareList(); } });
   };
   for (const id of ["cmp-a", "cmp-b", "cmp-swap"]) $(id).disabled = false;
-  $("stats").innerHTML = `Snapshots offered: every tag before <code>2021-12-21</code>, the first tag of each ` +
+  $("stats").innerHTML = `Snapshots available: every tag before <code>2021-12-21</code>, the first tag of each ` +
     `month since, and the latest (<code>${m.latest}</code>). Data built ${m.built}.`;
 
   const rerun = () => { C.page = 1; runCompare(); };

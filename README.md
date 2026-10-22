@@ -1,7 +1,8 @@
 [![Mirror workflow](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml/badge.svg)](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml)
-[![Open PRs](https://img.shields.io/github/issues-pr/ssc-ng/archive)](https://github.com/ssc-ng/archive/pulls)
+[![Latest tag](https://img.shields.io/github/v/tag/ssc-ng/archive?sort=date&label=Latest%20snapshot)](https://github.com/ssc-ng/archive/tags)
+
 [![Open issues](https://img.shields.io/github/issues/ssc-ng/archive)](https://github.com/ssc-ng/archive/issues)
-[![Latest tag](https://img.shields.io/github/v/tag/ssc-ng/archive?sort=date&label=latest%20tag)](https://github.com/ssc-ng/archive/tags)
+[![Open PRs](https://img.shields.io/github/issues-pr/ssc-ng/archive)](https://github.com/ssc-ng/archive/pulls)
 
 # A mirror of the Statistical Software Components archive at BC
 

@@ -13,19 +13,8 @@ description: "Pick a snapshot of the SSC archive, select packages, and get the s
 
   <fieldset>
     <legend>Snapshot</legend>
-    <div class="timeline">
-      <input type="range" id="tl" min="0" step="1" value="0" disabled
-             aria-label="Snapshot timeline">
-      <div class="tl-labels"><span id="tl-min"></span><span id="tl-max"></span></div>
-      <div class="tl-readout">
-        <button type="button" class="stepbtn" id="prev" aria-label="Previous snapshot" disabled>&larr;</button>
-        <span class="tl-date" id="tl-date">loading&hellip;</span>
-        <button type="button" class="stepbtn" id="next" aria-label="Next snapshot" disabled>&rarr;</button>
-        <input type="date" id="datepick" aria-label="Jump to date" disabled>
-        <span class="snapnote" id="snapnote"></span>
-      </div>
-      <div class="loadstat" id="loadstat" role="status" aria-live="polite"></div>
-    </div>
+    <div id="tl-root"></div>
+    <div class="loadstat" id="loadstat" role="status" aria-live="polite"></div>
   </fieldset>
 
   <fieldset>

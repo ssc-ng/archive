@@ -52,18 +52,26 @@ class BuiltSiteTest(unittest.TestCase):
     def test_data_files_consistent(self):
         data = BUILT / "assets" / "data"
         manifest = json.loads((data / "manifest.json").read_text())
-        self.assertTrue(manifest["snapshots"])
-        for date, count in manifest["snapshots"]:
-            snap = json.loads((data / "snap" / f"{date}.json").read_text())
-            self.assertEqual(snap["d"], date)
-            self.assertEqual(len(snap["p"]), count)
-            self.assertEqual(snap["p"], sorted(snap["p"]))
         presence = json.loads((data / "presence.json").read_text())
+        snaps = manifest["snapshots"]
+        self.assertEqual(len(snaps), manifest["tagCount"])
+        self.assertEqual([d for d, _ in snaps], sorted(d for d, _ in snaps))
+        self.assertEqual(snaps[0][0], manifest["earliest"])
+        self.assertEqual(snaps[-1][0], manifest["latest"])
+        self.assertEqual(len(manifest["gaps"]), len(manifest["ranges"]) - 1)
+        self.assertFalse((data / "snap").exists(), "per-snapshot files are obsolete")
         self.assertEqual(presence["p"], sorted(presence["p"]))
         self.assertEqual(len(presence["p"]), len(presence["r"]))
         self.assertEqual(len(presence["p"]), len(presence["c"]))
-        self.assertEqual(len(manifest["gaps"]), len(manifest["ranges"]) - 1)
-        self.assertEqual(manifest["snapshots"][-1][0], manifest["latest"])
+        # the runs must reproduce each snapshot's package count
+        counts = [0] * len(snaps)
+        for runs in presence["r"]:
+            self.assertEqual(len(runs) % 2, 0)
+            for start, end in zip(runs[::2], runs[1::2]):
+                self.assertLessEqual(start, end)
+                for i in range(start, end + 1):
+                    counts[i] += 1
+        self.assertEqual(counts, [c for _, c in snaps])
 
 
 if __name__ == "__main__":

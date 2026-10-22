@@ -12,12 +12,22 @@ description: "Compare any two snapshots of the SSC archive: packages added, remo
 
   <fieldset>
     <legend>Snapshots</legend>
-    <div class="row cmpsel">
-      <label for="cmp-a">From <select id="cmp-a" disabled></select></label>
-      <button type="button" class="addbtn" id="cmp-swap" disabled
-              aria-label="Swap the two snapshots">&#8646; swap</button>
-      <label for="cmp-b">To <select id="cmp-b" disabled></select></label>
+    <div class="cmpsides">
+      <div class="cmpitem">
+        <span class="cmplabel" id="cmp-a-lbl">From</span>
+        <button type="button" class="cmpbtn" id="cmp-a-btn" disabled aria-expanded="false"
+                aria-controls="cmp-a-panel" aria-labelledby="cmp-a-lbl cmp-a-btn">loading&hellip;</button>
+      </div>
+      <div class="cmpitem">
+        <span class="cmplabel" id="cmp-b-lbl">To</span>
+        <button type="button" class="cmpbtn" id="cmp-b-btn" disabled aria-expanded="false"
+                aria-controls="cmp-b-panel" aria-labelledby="cmp-b-lbl cmp-b-btn">loading&hellip;</button>
+      </div>
     </div>
+    <div class="cmppanel" id="cmp-a-panel" hidden><div id="cmp-a-tl"></div></div>
+    <div class="cmppanel" id="cmp-b-panel" hidden><div id="cmp-b-tl"></div></div>
+    <p class="hint" style="margin:.6rem 0 0">Select a button to change the snapshot.
+      <b>To</b> offers only snapshots after <b>From</b>.</p>
     <div class="loadstat" id="loadstat" role="status" aria-live="polite"></div>
   </fieldset>
 

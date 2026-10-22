@@ -31,12 +31,13 @@ description: "Which snapshots of the SSC archive contain a package, and when its
   <fieldset id="hist" hidden>
     <legend>History of <code id="d-name"></code></legend>
     <p id="d-text" class="hint" style="margin:.1rem 0 .8rem"></p>
-    <div class="strip" id="strip" role="group" aria-label="Snapshots"></div>
-    <div class="tl-labels"><span id="d-min"></span><span id="d-max"></span></div>
+    <div id="hist-tl"></div>
     <div class="legend" aria-hidden="true">
-      <span><i class="sw on"></i> in snapshot</span>
+      <span><i class="sw on"></i> available</span>
       <span><i class="sw chg"></i> package file changed</span>
-      <span><i class="sw"></i> not in snapshot</span>
+      <span><i class="sw part"></i> available part of the month</span>
+      <span><i class="sw"></i> not in the package</span>
+      <span><i class="sw gap"></i> no snapshot</span>
     </div>
     <div id="d-changes" class="changes"></div>
     <div id="d-pick" class="pickbox" role="status" aria-live="polite"></div>

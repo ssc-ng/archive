@@ -32,12 +32,50 @@ class BuildDataTest(unittest.TestCase):
             ["2021-12-23", "2021-12-24", 2],
             ["2021-12-26", "2021-12-26", 1]])
 
-    def test_select_snapshots(self):
-        tags = [D(2017, 8, 10), D(2021, 4, 15), D(2021, 12, 21), D(2021, 12, 23),
-                D(2022, 1, 1), D(2022, 1, 2), D(2022, 2, 3), D(2022, 2, 9)]
-        self.assertEqual(bd.select_snapshots(tags), [
-            D(2017, 8, 10), D(2021, 4, 15), D(2021, 12, 21),
-            D(2022, 1, 1), D(2022, 2, 3), D(2022, 2, 9)])
+    def test_raw_line_ignores_temporary_copies_of_packages(self):
+        ok = ":100644 100644 aaa bbb M\tfmwww.bc.edu/repec/bocode/f/f_able.pkg"
+        bad = ":100644 000000 aaa 000 D\tfmwww.bc.edu/repec/bocode/_disabled/_grprod.pkg"
+        self.assertEqual(bd.RAW_LINE.match(ok).groups(), ("aaa", "bbb", "f_able"))
+        self.assertIsNone(bd.RAW_LINE.match(bad))
+
+    def test_replay_runs_and_changes(self):
+        # commits c1..c5; tags on c1, c3, c5 (c2 and c4 are not snapshots)
+        order = ["c1", "c2", "c3", "c4", "c5"]
+        changes = {
+            "c1": [("a", "a1"), ("b", "b1"), ("c", "c1")],
+            "c2": [("a", "a2")],                 # a changes (seen at c3)
+            "c3": [("b", "")],                   # b removed
+            "c4": [("b", "b2"), ("c", "")],      # b returns, c removed
+            "c5": [("d", "d1")],
+        }
+        snaps = {"c1": [D(2024, 1, 1)], "c3": [D(2024, 1, 3)], "c5": [D(2024, 1, 5)]}
+        dates, counts, runs, changed = bd.replay(order, changes, snaps)
+        self.assertEqual(dates, [D(2024, 1, 1), D(2024, 1, 3), D(2024, 1, 5)])
+        self.assertEqual(counts, [3, 2, 3])
+        self.assertEqual(runs, {"a": [0, 2], "b": [0, 0, 2, 2], "c": [0, 1], "d": [2, 2]})
+        self.assertEqual(changed, {"a": [1]})
+
+    def test_replay_change_that_is_undone_between_snapshots_is_not_a_change(self):
+        order = ["c1", "c2", "c3"]
+        changes = {"c1": [("a", "a1")], "c2": [("a", "a2")], "c3": [("a", "a1")]}
+        snaps = {"c1": [D(2024, 1, 1)], "c3": [D(2024, 1, 3)]}
+        _, _, runs, changed = bd.replay(order, changes, snaps)
+        self.assertEqual((runs, changed), ({"a": [0, 1]}, {}))
+
+    def test_replay_offline_tag_is_slotted_in_by_date(self):
+        order = ["c1", "c2"]
+        changes = {"c1": [("a", "a1"), ("b", "b1")], "c2": [("a", "a2")]}
+        snaps = {"c1": [D(2024, 1, 1)], "c2": [D(2024, 1, 9)]}
+        offline = {D(2024, 1, 5): {"a": "a1", "x": "x1"}}   # a re-made commit
+        dates, counts, runs, changed = bd.replay(order, changes, snaps, offline)
+        self.assertEqual(dates, [D(2024, 1, 1), D(2024, 1, 5), D(2024, 1, 9)])
+        self.assertEqual(counts, [2, 2, 2])
+        self.assertEqual(runs, {"a": [0, 2], "b": [0, 0, 2, 2], "x": [1, 1]})   # b is not in the re-made commit
+        self.assertEqual(changed, {"a": [2]})
+
+    def test_replay_rejects_tags_out_of_order(self):
+        with self.assertRaises(RuntimeError):
+            bd.replay(["c1", "c2"], {}, {"c1": [D(2024, 1, 2)], "c2": [D(2024, 1, 1)]})
 
     def test_errata_gaps_and_reasons(self):
         errata = bd.errata_gaps("\n".join([
@@ -57,10 +95,6 @@ class BuildDataTest(unittest.TestCase):
         self.assertEqual(gaps[1][3], "Mirror workflow not automated")
         self.assertEqual(gaps[2][3], bd.NO_REASON)
         self.assertEqual(gaps[3][3], "The mirror workflow failed")
-
-    def test_runs(self):
-        self.assertEqual(bd.runs([0, 1, 2, 5, 7, 8]), [0, 2, 5, 5, 7, 8])
-        self.assertEqual(bd.runs([]), [])
 
 
 if __name__ == "__main__":

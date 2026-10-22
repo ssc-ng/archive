@@ -4,8 +4,8 @@
 #   build:  runs on every PR and every push to main, daily by cron, and on
 #           demand. First generates the package data the browser page
 #           loads asynchronously (site/build_data.py -> site/assets/data/:
-#           a manifest, one small file per snapshot, and a package
-#           availability index), then builds the Jekyll site and uploads
+#           a manifest of every snapshot and one package
+#           availability index, from which the browser rebuilds any snapshot), then builds the Jekyll site and uploads
 #           the artifact. The data is generated in CI and lands in the
 #           deployed artifact only; nothing is committed back. On PRs the
 #           artifact can be downloaded from the run page to inspect the

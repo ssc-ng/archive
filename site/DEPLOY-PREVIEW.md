@@ -22,11 +22,11 @@ Forked PRs never run the `preview` job's deploy step, since forks don't
 have access to repository secrets — that's a GitHub Actions security
 boundary, not a bug.
 
-The Cloudflare Pages **project name is derived automatically** from the
-GitHub repository name (`${{ github.event.repository.name }}` in the
-workflow) — currently `archive`. Nothing in the workflow needs editing
-if the repo is ever renamed or this pattern is copied into another repo;
-only the one-time Cloudflare project creation below needs to match.
+The Cloudflare Pages **project name is `ssc-archive`**, set explicitly in
+the workflow (`--project-name=ssc-archive`) rather than derived from the
+repository name, which is `archive`. The project already exists at
+<https://ssc-archive.pages.dev/>; if it is ever recreated it must keep this
+name, or the workflow must be changed to match.
 
 ## One-time GitHub Pages setup
 
@@ -81,13 +81,12 @@ can deploy anything.
    before opening a preview PR — `wrangler pages deploy` in CI does not
    create the project on its own. Create it once with
    [Wrangler](https://developers.cloudflare.com/workers/wrangler/)
-   (requires Node.js), run from the repo root so the project name is
-   picked up from the checkout directory rather than typed by hand, and
-   set `main` as the production branch:
+   (requires Node.js), with `main` as the production branch (already done
+   for this repository):
 
    ```bash
    npx wrangler login
-   npx wrangler pages project create "$(basename "$(git rev-parse --show-toplevel)")" --production-branch main
+   npx wrangler pages project create ssc-archive --production-branch main
    ```
 
 5. **Verify the secrets are set:**
@@ -107,11 +106,3 @@ Once the secrets exist, every PR from a repo branch (not a fork) will get:
   (`--branch=pr-<PR number>`), rebuilt on every push to the PR.
 - A PR comment with the preview link, edited in place on each new commit
   rather than re-posted.
-
-## If the repository is ever renamed
-
-The Cloudflare Pages project name must be created to match the new
-repository name (Cloudflare project names can't easily be renamed once
-created). If you rename this repo, create a new Cloudflare Pages project
-matching the new name (step 4 above) — the workflow itself needs no
-changes, since it reads the project name from GitHub at deploy time.

@@ -30,15 +30,15 @@ ssc2 install <package_name>, date(<YYYY-MM-DD>)
 * e.g. ssc2 install reghdfe, date(2026-10-20)
 ```
 
-## Browse the packages
+## Explore the snapshots
 
-The [package browser](browse.html) lists every Stata package in a snapshot,
-lets you search it, compare it with an earlier snapshot, see when a package
-was available, and writes the `ssc2` command that installs the packages you
-pick as they stood on that day.
-
-The [snapshots page](tags.html) shows the contiguous ranges of date tags, the
-earliest and the latest.
+- [Select packages](browse.html): pick a snapshot, search its packages, tick the
+  ones you want, and get the `ssc2` command that installs them as they stood on
+  that day.
+- [Package history](history.html) *(under development)*: in which snapshots a
+  package is available, and when its package file changed.
+- [Availability](tags.html): the contiguous ranges of date tags, the earliest
+  and the latest, and the reasons for the gaps.
 
 ## Using the mirror directly
 

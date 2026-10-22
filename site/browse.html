@@ -1,12 +1,12 @@
 ---
 layout: default
-title: Packages
+title: Select packages
 nav_order: 2
 browser: true
-description: "Search the Stata packages in each snapshot of the SSC archive"
+description: "Pick a snapshot of the SSC archive, select packages, and get the ssc2 install commands"
 ---
-  <div class="kicker">SSC archive · package browser</div>
-  <h1>Browse the packages in a snapshot</h1>
+  <div class="kicker">SSC archive · install</div>
+  <h1>Select packages</h1>
   <p class="lede">Choose a snapshot, search its packages, tick the ones you
     want, and this page writes the <code>ssc2</code> commands that install
     them as the SSC archive stood on that day.</p>
@@ -34,27 +34,14 @@ description: "Search the Stata packages in each snapshot of the SSC archive"
     <input type="text" id="q" placeholder="e.g. reg, f_able" spellcheck="false"
            autocomplete="off" disabled>
     <div class="letters" id="letters" role="group" aria-label="Filter by first letter"></div>
-    <div class="row cmpbar">
-      <label class="check">
-        <input type="checkbox" id="cmpon" disabled>
-        <span><b>Compare with an earlier snapshot</b>
-          <span class="hint">marks packages added or removed since then</span></span>
-      </label>
-      <select id="cmpsel" aria-label="Snapshot to compare with" hidden></select>
-      <label class="check" id="onlywrap" hidden>
-        <input type="checkbox" id="onlychg"><span>only changes</span>
-      </label>
+    <p class="hint picknote">Tick packages below to build their <code>ssc2</code>
+      install commands.</p>
+    <div class="listbar">
+      <span class="count" id="count" role="status" aria-live="polite"></span>
+      <button type="button" class="addbtn" id="clearsel" disabled>Clear selections</button>
     </div>
-    <div class="count" id="count" role="status" aria-live="polite"></div>
     <ul class="pkglist" id="list"></ul>
     <button type="button" class="addbtn" id="more" hidden>show more</button>
-  </fieldset>
-
-  <fieldset id="detail" hidden>
-    <legend>History of <code id="d-name"></code></legend>
-    <p id="d-text" class="hint" style="margin:.1rem 0 .6rem"></p>
-    <div class="strip" id="strip" role="group" aria-label="Snapshots containing this package"></div>
-    <div class="tl-labels"><span id="d-min"></span><span id="d-max"></span></div>
   </fieldset>
 
   <fieldset>
@@ -73,8 +60,7 @@ description: "Search the Stata packages in each snapshot of the SSC archive"
 
   <div class="results">
     <div class="results-bar"><span>Results</span>
-      <span class="barbtns"><button id="clearbtn" type="button">Clear</button>
-      <button id="copybtn" type="button">Copy</button></span></div>
+      <span class="barbtns"><button id="copybtn" type="button" disabled>Copy</button></span></div>
     <pre id="out"></pre>
   </div>
 

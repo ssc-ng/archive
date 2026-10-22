@@ -61,6 +61,8 @@ class BuiltSiteTest(unittest.TestCase):
         presence = json.loads((data / "presence.json").read_text())
         self.assertEqual(presence["p"], sorted(presence["p"]))
         self.assertEqual(len(presence["p"]), len(presence["r"]))
+        self.assertEqual(len(presence["p"]), len(presence["c"]))
+        self.assertEqual(len(manifest["gaps"]), len(manifest["ranges"]) - 1)
         self.assertEqual(manifest["snapshots"][-1][0], manifest["latest"])
 
 

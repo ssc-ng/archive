@@ -1,0 +1,45 @@
+---
+layout: default
+title: Package history
+nav_order: 3
+browser: true
+description: "Which snapshots of the SSC archive contain a package, and when its package file changed"
+---
+  <div class="kicker">SSC archive · history</div>
+  <h1>Package history <span class="badge dev">Under development</span></h1>
+  <p class="lede">See in which snapshots a package is available, and when its
+    package file changed.</p>
+  <p class="devnote"><b>Under development.</b> This page shows which snapshots
+    contain a package, and when its <code>.pkg</code> file differs from the
+    previous snapshot. It does not yet show <em>version</em> history: that has
+    to be parsed from every historical snapshot, which has not been done.
+    Because a changed file only tells us <em>that</em> something changed, a later
+    version of this page is planned to let you browse by the labeled version
+    recorded inside each <code>.pkg</code> file.</p>
+
+  <fieldset>
+    <legend>Package</legend>
+    <label for="hq">Package name <span class="hint">(start typing to see
+      suggestions)</span></label>
+    <input type="text" id="hq" list="pkgdl" placeholder="e.g. reghdfe" spellcheck="false"
+           autocomplete="off" disabled>
+    <datalist id="pkgdl"></datalist>
+    <div class="loadstat" id="loadstat" role="status" aria-live="polite"></div>
+    <div id="suggest" class="suggest"></div>
+  </fieldset>
+
+  <fieldset id="hist" hidden>
+    <legend>History of <code id="d-name"></code></legend>
+    <p id="d-text" class="hint" style="margin:.1rem 0 .8rem"></p>
+    <div class="strip" id="strip" role="group" aria-label="Snapshots"></div>
+    <div class="tl-labels"><span id="d-min"></span><span id="d-max"></span></div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="sw on"></i> in snapshot</span>
+      <span><i class="sw chg"></i> package file changed</span>
+      <span><i class="sw"></i> not in snapshot</span>
+    </div>
+    <div id="d-changes" class="changes"></div>
+    <div id="d-pick" class="pickbox" role="status" aria-live="polite"></div>
+  </fieldset>
+
+  <div id="stats"></div>

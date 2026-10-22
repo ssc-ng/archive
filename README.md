@@ -4,6 +4,24 @@
 
 This repository contains a sequence of updates from the SSC Archive at BC.
 
+## How can you use it?
+
+Use the [`ssc2`](https://ssc-ng.net/ssc2/) package to install from date-stamped snapshots of SSC:
+
+```{stata}
+* Install from SSC
+ssc install ssc2
+
+* The current stable release
+net install ssc2, all replace from("https://raw.githubusercontent.com/ssc-ng/ssc2/latest/")
+
+* install packages
+ssc2 install <package_name>, date(<YYYY-MM-DD>)
+* e.g. ssc2 install reghdfe, date(2026-10-20)
+```
+
+For more information, see the [`ssc2`](https://ssc-ng.net/ssc2/) project page.
+
 ## How the mirror is created
 
 See [mirror.repec.sh](mirror.repec.sh). The process can take up to 60 minutes. The downloaded mirror is in the [releases branch](https://github.com/ssc-ng/archive/tree/releases).

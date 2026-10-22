@@ -9,7 +9,7 @@ On the following dates, no snapshot was created. Reasons are listed. **2021-12-2
 | 2021-12-22 | 2021-12-22 | Mirror workflow not automated |
 | 2024-08-11 | 2024-08-11 | Unknown error |
 | 2026-03-08 | 2026-03-10 | The mirror workflow failed. | 
-| 2026-10-21 | 2026-10-21 | BC website down for maintenance |
+| 2026-10-22 | 2026-10-22 | BC website down for maintenance |
 
 ## Early dates
 

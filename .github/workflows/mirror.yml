@@ -11,7 +11,7 @@ on:
         description: "Suffix to be added to tag"
         required: false
   schedule:
-    - cron: "33 3 * * *"
+    - cron: "33 6 * * *"
 
 # The default GITHUB_TOKEN in this repository is read-only; the Deploy step
 # needs to push to the releases branch and create tags. See SETUP.md.

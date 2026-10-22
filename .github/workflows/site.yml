@@ -37,8 +37,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  # Per ref: deployments of main stay serialized (never cancelled), while
+  # each PR has its own group, so one PR's run cannot displace a queued main
+  # deployment or another PR's preview. A newer push to the same PR replaces
+  # its older run, which is all that is wanted.
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:

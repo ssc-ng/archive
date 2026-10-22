@@ -82,9 +82,21 @@ function initRanges(m) {
   $("tagsummary").innerHTML =
     `<b>${fmt(m.tagCount)}</b> snapshots in <b>${m.ranges.length}</b> contiguous ranges, ` +
     `from <b>${m.earliest}</b> (earliest) to <b>${m.latest}</b> (latest).`;
-  document.addEventListener("keydown", e => {   // WCAG 1.4.13: dismissable
-    if (e.key === "Escape" && document.activeElement.classList.contains("tip"))
-      document.activeElement.blur();
+  // WCAG 1.4.13 (dismissable): Escape hides any open tooltip, whether it is
+  // showing because of hover or of focus, without moving the pointer or
+  // focus. The dismissed state (a class on <body>, which overrides the
+  // hover/focus rules in custom.scss) lasts until the pointer enters a
+  // tooltip trigger again or focus moves onto one.
+  const root = document.body;
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") root.classList.add("tips-dismissed");
+  });
+  document.addEventListener("focusin", e => {
+    if (e.target.closest(".tip")) root.classList.remove("tips-dismissed");
+  });
+  document.addEventListener("mouseover", e => {
+    const tip = e.target.closest(".tip");
+    if (tip && !tip.contains(e.relatedTarget)) root.classList.remove("tips-dismissed");
   });
 }
 
@@ -94,7 +106,8 @@ function initRanges(m) {
 
 const PAGE = 150;                     // rows rendered per "show more"
 const S = {                           // all mutable state in one place
-  snaps: [], idx: 0, names: [], q: "", letter: "", limit: PAGE, sel: new Set()
+  snaps: [], idx: 0, req: 0,          // idx = loaded snapshot, req = requested
+  names: [], q: "", letter: "", limit: PAGE, sel: new Set()
 };
 const cache = new Map();              // snapshot date -> sorted names
 
@@ -104,31 +117,58 @@ function loadSnap(i) {
   return getJSON("snap/" + d + ".json").then(j => (cache.set(d, j.p), j.p));
 }
 
+// Show a snapshot in the timeline controls (requested or loaded).
+function showSnap(i) {
+  $("tl").value = i;
+  $("tl-date").textContent = S.snaps[i][0];
+  $("prev").disabled = i === 0;
+  $("next").disabled = i === S.snaps.length - 1;
+  $("datepick").value = S.snaps[i][0];
+}
+
+// While a snapshot loads, the list still describes the previous one, so it
+// is inert and Copy is off; commands are always built from the loaded
+// snapshot (S.idx) and its names, never from the requested date.
+function setLoading(on) {
+  $("list").inert = $("letters").inert = $("more").inert = on;
+  $("list").classList.toggle("stale", on);
+  if (on) $("copybtn").disabled = true; else command();
+}
+
+// Resolves true if this request is the one now shown, false if it failed
+// or was superseded by a newer one.
 let loadToken = 0;
 async function selectSnap(i) {
-  S.idx = Math.max(0, Math.min(S.snaps.length - 1, i));
-  const token = ++loadToken, d = S.snaps[S.idx][0];
-  $("tl").value = S.idx;
-  $("tl-date").textContent = d;
-  $("prev").disabled = S.idx === 0;
-  $("next").disabled = S.idx === S.snaps.length - 1;
-  $("datepick").value = d;
+  const req = Math.max(0, Math.min(S.snaps.length - 1, i));
+  const token = ++loadToken, d = S.snaps[req][0];
+  S.req = req;
+  showSnap(req);
   $("snapnote").classList.remove("show");
   const t0 = performance.now(), hit = cache.has(d);
-  if (!hit) status("Loading snapshot " + d + "…", true);
+  if (!hit) { status("Loading snapshot " + d + "…", true); setLoading(true); }
   try {
-    const names = await loadSnap(S.idx);
-    if (token !== loadToken) return;            // a newer selection superseded us
-    S.names = names;
+    const names = await loadSnap(req);
+    if (token !== loadToken) return false;      // a newer selection superseded us
+    S.idx = req; S.names = names;
+    const have = new Set(names), gone = [...S.sel].filter(n => !have.has(n));
+    gone.forEach(n => S.sel.delete(n));         // no commands for absent packages
     status(`${fmt(names.length)} packages in ${d}` +
-      (hit ? " (cached)" : ` · loaded in ${Math.round(performance.now() - t0)} ms`));
+      (hit ? " (cached)" : ` · loaded in ${Math.round(performance.now() - t0)} ms`) +
+      (gone.length ? `. Not in this snapshot, so deselected: ${gone.join(", ")}` : ""));
     S.limit = PAGE;
+    setLoading(false);
     render();
     idle(() => [S.idx - 1, S.idx + 1].forEach(j => {
       if (j >= 0 && j < S.snaps.length) loadSnap(j).catch(() => {});
     }));
+    return true;
   } catch (e) {
-    if (token === loadToken) status("Could not load snapshot " + d + ": " + e.message);
+    if (token !== loadToken) return false;
+    showSnap(S.idx);                            // back to what is actually loaded
+    setLoading(false);
+    status("Could not load snapshot " + d + ": " + e.message +
+      (S.names.length ? ` Still showing ${S.snaps[S.idx][0]}.` : ""));
+    return false;
   }
 }
 
@@ -229,27 +269,30 @@ function initSelect(m) {
   S.letter = h.get("l") || "";
   (h.get("p") || "").split(",").filter(Boolean).forEach(x => S.sel.add(x));
 
-  let timer;
-  const later = (fn, ms) => { clearTimeout(timer); timer = setTimeout(fn, ms); };
+  // Separate timers: typing in Search must not cancel a pending slider fetch.
+  let snapTimer, searchTimer;
   tl.addEventListener("input", () => {
     $("tl-date").textContent = S.snaps[+tl.value][0];
-    later(() => selectSnap(+tl.value), 120);   // fetch only once the drag settles
+    clearTimeout(snapTimer);
+    snapTimer = setTimeout(() => selectSnap(+tl.value), 120);   // fetch once the drag settles
   });
-  $("prev").onclick = () => selectSnap(S.idx - 1);
-  $("next").onclick = () => selectSnap(S.idx + 1);
+  $("prev").onclick = () => selectSnap(S.req - 1);
+  $("next").onclick = () => selectSnap(S.req + 1);
   dp.addEventListener("change", () => {
-    if (!dp.value) return;
-    const i = snapIndexOnOrBefore(S.snaps, dp.value);
-    selectSnap(i).then(() => {
-      if (S.snaps[i][0] !== dp.value) {
-        $("snapnote").textContent = "no listed snapshot on " + dp.value + "; showing " + S.snaps[i][0];
+    const want = dp.value;                      // selectSnap() overwrites dp.value
+    if (!want) return;
+    const i = snapIndexOnOrBefore(S.snaps, want);
+    selectSnap(i).then(ok => {
+      if (ok && S.snaps[i][0] !== want) {
+        $("snapnote").textContent = "no listed snapshot on " + want + "; showing " + S.snaps[i][0];
         $("snapnote").classList.add("show");
       }
     });
   });
   $("q").addEventListener("input", e => {
     S.q = e.target.value.trim(); S.limit = PAGE;
-    later(render, 80);
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(render, 80);
   });
   document.addEventListener("keydown", e => {
     if (e.key === "/" && !/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) {

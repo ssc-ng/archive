@@ -6,6 +6,8 @@
 
 # A mirror of the Statistical Software Components archive at BC
 
+**Website:** <https://ssc-ng.net/archive/> — browse and search the packages in each snapshot, and get the `ssc2` command to install them.
+
 This repository contains a sequence of updates from the SSC Archive at BC.
 
 ## How can you use it?
@@ -25,6 +27,10 @@ ssc2 install <package_name>, date(<YYYY-MM-DD>)
 ```
 
 For more information, see the [`ssc2`](https://ssc-ng.net/ssc2/) project page.
+
+## Website
+
+The [website](https://ssc-ng.net/archive/) is a Jekyll site (just-the-docs theme, shared with [ssc2](https://ssc-ng.net/ssc2/)) in [`site/`](site/). Its package browser loads data asynchronously from static JSON files generated at build time by [`site/build_data.py`](site/build_data.py); pull requests get a Cloudflare Pages preview (see [`site/DEPLOY-PREVIEW.md`](site/DEPLOY-PREVIEW.md)).
 
 ## How the mirror is created
 

@@ -1,0 +1,145 @@
+# Build and deploy the archive website (site/ directory) via Action-based
+# GitHub Pages deployment using Jekyll (just-the-docs theme).
+#
+#   build:  runs on every PR and every push to main, daily by cron, and on
+#           demand. First generates the package data the browser page
+#           loads asynchronously (site/build_data.py -> site/assets/data/:
+#           a manifest of every snapshot and one package
+#           availability index, from which the browser rebuilds any snapshot), then builds the Jekyll site and uploads
+#           the artifact. The data is generated in CI and lands in the
+#           deployed artifact only; nothing is committed back. On PRs the
+#           artifact can be downloaded from the run page to inspect the
+#           output without deploying anything.
+#   deploy: runs only for main (pushes, cron, manual runs), never PRs.
+#   preview: runs only for pull requests opened from a branch of this
+#           repository (not a fork -- forks can't read deploy secrets).
+#           Deploys the built site to Cloudflare Pages as a per-PR preview
+#           and posts (or updates) the preview link as a PR comment. See
+#           site/DEPLOY-PREVIEW.md for the one-time Cloudflare setup.
+#
+# The daily rebuild follows the mirror workflow (06:33 UTC, up to an hour),
+# so the newest snapshot appears on the site the same day.
+#
+# Requires: repository Settings -> Pages -> Source = "GitHub Actions".
+
+name: site
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 8 * * *"      # after the mirror's daily run
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  # Per ref: deployments of main stay serialized (never cancelled), while
+  # each PR has its own group, so one PR's run cannot displace a queued main
+  # deployment or another PR's preview. A newer push to the same PR replaces
+  # its older run, which is all that is wanted.
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run the tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Generate the package data
+        run: python3 -I site/build_data.py site/assets/data
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: site
+      - name: Build Jekyll site
+        run: bundle exec jekyll build
+        working-directory: site
+      - name: Check the built site
+        # Every root-absolute link must carry the baseurl prefix, and the
+        # data files must be present. Without the prefix the theme's
+        # stylesheets 404 on project Pages and the site deploys completely
+        # unstyled -- invisible in the build log, so checked here.
+        run: python3 -m unittest tests.test_site -v
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/_site
+      - name: Build Jekyll site for the Cloudflare preview
+        # Cloudflare Pages serves PR previews at the domain root
+        # (pr-<n>.ssc-<repo>.pages.dev/), not under /archive/, so the main
+        # build's baseurl-prefixed asset links would 404 there and the
+        # preview would render unstyled (and could not find its data).
+        # Rebuild into a separate directory with an empty baseurl for that
+        # deploy only; the GitHub Pages artifact above is unaffected.
+        run: bundle exec jekyll build --baseurl "" --destination _site-preview
+        working-directory: site
+      - name: Upload site artifact for preview deploy
+        # upload-pages-artifact above produces a Pages-specific tarball
+        # that wrangler can't consume, so the preview job needs its own
+        # plain copy of the built site.
+        uses: actions/upload-artifact@v7
+        with:
+          name: site-preview
+          path: site/_site-preview
+          retention-days: 14
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      # The organization site owns the custom domain; this project site
+      # lives under its repo-name path on that host.
+      url: https://ssc-ng.net/archive/
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+
+  preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write     # only for the PR comment
+    steps:
+      - name: Download site artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: site-preview
+          path: _site
+      - name: Deploy PR preview
+        id: preview
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # The Pages project name is the repository name with an 'ssc-'
+          # prefix (ssc-archive), matching the project created once with
+          # `wrangler pages project create`.
+          command: >-
+            pages deploy ./_site
+            --project-name=ssc-${{ github.event.repository.name }}
+            --branch=pr-${{ github.event.pull_request.number }}
+      - name: Publish preview link
+        if: steps.preview.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          URL: ${{ steps.preview.outputs.pages-deployment-alias-url }}
+        run: |
+          echo "📖 Preview: $URL" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR" --repo "$REPO" --edit-last --create-if-none \
+            --body "📖 **Preview:** $URL — commit \`${GITHUB_SHA:0:7}\`"

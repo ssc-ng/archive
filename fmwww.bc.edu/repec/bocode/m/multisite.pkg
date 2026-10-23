@@ -9,7 +9,7 @@ d KW: ITT
 d
 d Requires: Stata version 12
 d
-d Distribution-Date: 20250228
+d Distribution-Date: 20261021
 d
 d Author: Clement de Chaisemartin,  Sciences Po
 d Support: email clementdechaisemartin@@gmail.com
@@ -22,3 +22,11 @@ d Support: email bingxue.li@@sciencespo.fr
 d
 f multisite.ado
 f multisite.sthlp
+f multisite_regitt.ado
+f multisite_regitt.sthlp
+f multisite_reglate.ado
+f multisite_reglate.sthlp
+f multisite_varitt.ado
+f multisite_varitt.sthlp
+f multisite_varlate.ado
+f multisite_varlate.sthlp

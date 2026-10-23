@@ -1,4 +1,5 @@
-*! NJC 1.0.0 16 Nov 2006 
+*! 1.1.0 NJC 1 Nov 2024
+*! 1.0.0 NJC 16 Nov 2006 
 * Pareto dot plot 
 * Wilkinson, Leland. 2006. Revising the Pareto chart. 
 * American Statistician 60(4): 332-334. 
@@ -81,10 +82,10 @@ program pdplot, sort
 	}	
 
 	// list 
-	char `freq'[varname] "Freq." 
+	char `freq'[varname] "Frequency" 
 	char `rank'[varname] "Rank" 
 	list `varlist' `rank' `freq' `lo' `hi' if `tag', ///
-		subvarname noobs sep(0) 
+		abbrev(9) subvarname noobs sep(0) 
 
 	if "`dotsonly'" == "" { 
 		di as res "  (`level'% acceptance intervals from `nreps' random samples)" 
@@ -97,8 +98,8 @@ program pdplot, sort
 		#delimit ; 
 		local bars  rbar `lo' `hi' `rank' if `tag',              
     		`horizontal' 
-    		bcolor(none) 
-    		barw(0.2) 
+    		bfcolor(none) 
+    		barw(0.4) 
                 note(`level'% acceptance intervals)
 		`aiopts'            
 		|| ; 
@@ -108,7 +109,8 @@ program pdplot, sort
 	if "`horizontal'" != "" { 
 		#delimit ; 
 		twoway `bars' 
-		scatter `rank' `freq' if `tag',                  
+		scatter `rank' `freq' if `tag',     
+		ms(Oh)
 		xla(, ang(h)) 
 		xaxis(1 2) 
 		xla(`percents', ang(h) axis(1))           
@@ -125,7 +127,8 @@ program pdplot, sort
 	else {
 		#delimit ; 
 		twoway `bars' 
-		scatter `freq' `rank' if `tag',                          
+		scatter `freq' `rank' if `tag', 
+		ms(Oh)
 		yaxis(1 2) 
 		yla(`percents', ang(h) axis(1))                   
 		yla(, ang(h) axis(2)) 

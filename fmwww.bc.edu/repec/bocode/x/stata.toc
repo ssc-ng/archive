@@ -222,6 +222,7 @@ p xttestpanel module to perform post-estimation diagnostic test suite for linear
 p xttrans2 module to compute tables of transition probabilities 
 p xttvpivmg module to perform time-varying parameter IV mean-group estimation of heterogeneous panels
 p xtusreg module to estimate dynamic panel models under irregular time spacing
+p xtutest module to test for an inverse U-shaped (or U-shaped) relationship and estimate its turning point in heterogeneous panels with cross-sectional dependence
 p xtvar module to compute panel vector autoregression 
 p xtvar2 module to compute panel vector autoregression 
 p xtvc module to compute confidence intervals for the variance component of random-intercept linear models

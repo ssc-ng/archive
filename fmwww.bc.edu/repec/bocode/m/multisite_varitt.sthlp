@@ -1,13 +1,14 @@
 {smcl}
-{* *! version 1  2024-12-13}{...}
+{* *! version 1.1  2026-10-19}{...}
 {viewerjumpto "Syntax" "multisite_varITT##syntax"}{...}
 {viewerjumpto "Description" "multisite_varITT##description"}{...}
+{viewerjumpto "Stored results" "multisite_varITT##results"}{...}
 
 {title:Title}
 
 {p 4 8}
 {cmd:multisite_varITT} {hline 2} Estimates and conducts inference on the variance of ITTs across sites in multi-site randomized trials, 
-and provides the ratio of the standard deviation of ITTs across sites to the average ITT, see Section 4.1 of de Chaisemartin & Deeb (2024). 
+and provides the ratio of the standard deviation of ITTs across sites to the average ITT, see Section 3.1 of de Chaisemartin & Deeb (2026) and the application in Section 4.2. The variance is estimated from corrected moments of sites' ITT estimators (Proposition 1); standard errors use the influence function of Theorem 1.
 The command can also be used to estimate the variance of ITT effects across strata in stratified RCTs.
 {p_end}
 
@@ -34,6 +35,15 @@ The command can also be used to estimate the variance of ITT effects across stra
 {cmd:site} is a numeric variable identifying each site/stratum.
 {p_end}
 
+{marker results}{...}
+{title:Stored results}
+
+{p 4 8}
+{cmd:e(itt_hat)}, {cmd:e(se_itt_hat)}, {cmd:e(lb_CI_itt)}, {cmd:e(ub_CI_itt)}: weighted average ITT, its standard error and 95% confidence interval.
+{p_end}
+{p 4 8}
+{cmd:e(var_itt)}, {cmd:e(se_varitt)}, {cmd:e(lb_CI_var_itt)}, {cmd:e(ub_CI_var_itt)}: variance of ITTs across sites, its standard error and 95% confidence interval. {cmd:e(N)}, {cmd:e(Sites)}: number of units and sites used.
+{p_end}
 
 {marker FAQ}{...}
 {title:FAQ}
@@ -63,7 +73,7 @@ The command can also be used to estimate the variance of ITT effects across stra
 {marker references}{...}
 {title:References}
 
-{p 4 8}de Chaisemartin, C and Deeb, A (2024).
+{p 4 8}de Chaisemartin, C and Deeb, A (2026).
 {browse "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4615304":Estimating treatment-effect heterogeneity across sites, in multi-site randomized experiments with few units per site}.{p_end}
 
 
@@ -76,5 +86,4 @@ The command can also be used to estimate the variance of ITT effects across stra
 
 {title:Contact}
 {browse "mailto:adeeb1@worldbank.org":adeeb1@worldbank.org}
-{browse "mailto:bingxue.li@sciencespo.fr":bingxue.li@sciencespo.fr}
 {browse "mailto:chaisemartin.packages@gmail.com":chaisemartin.packages@gmail.com}

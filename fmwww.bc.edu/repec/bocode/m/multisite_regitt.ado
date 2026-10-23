@@ -1,4 +1,5 @@
 program multisite_regITT, eclass
+* version 1.1 (2026-10-19): variance of the coefficients scaled by 1/n^2 as in Theorem thm:beta (was 1/(n(n-1)))
     version 14.2
 	syntax varlist(min=3 max=3 numeric) [if] [aweight] [,controls(varlist numeric) mediators(varlist numeric) y0 fs(varlist numeric min=1 max=1)]
     preserve
@@ -346,7 +347,9 @@ keep `if'
 	* Generate Covariance of betas 
 	// V_beta^ITT: sample variance of phi_4s
 	matrix accum V_beta = *, deviations noconstant
-	matrix V_beta = V_beta /((r(N)-1)*r(N))
+	* V_hat = (1/n) sum_i psi_i psi_i' (Theorem thm:beta); SE = sqrt(V_hat / n). The sum of squared
+	* deviations is divided by n and then by n (earlier versions divided by n-1 and n).
+	matrix V_beta = V_beta /(r(N)*r(N))
 	
 	* Display Beta vector and Var-Cov matrix
 	matrix list beta

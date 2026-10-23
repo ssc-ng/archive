@@ -1,0 +1,30 @@
+d 'XTUTEST': module to test for an inverse U-shaped (or U-shaped) relationship and estimate its turning point in heterogeneous panels with cross-sectional dependence
+d
+d      For each unit i, xtutest estimates	 y_it = a_i + b1_i
+d x_it + b2_ix_it^2 + c_i' w_it + d_i' zbar_t + e_it,	 where w
+d are the controls and zbar_t are the cross-section averages of (y,
+d x, x^2, w), which absorb unobserved common factors	(common
+d correlated effects; Pesaran 2006). The mean-group estimate is the
+d average of the unit coefficients, and its variance	is
+d estimated from their dispersion (Pesaran and Smith 1995). Slopes
+d may differ freely across units. 
+d
+d KW: panbel data
+d KW: cross-sectional dependence
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261021
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f xtutest.ado
+f xtutest.sthlp
+f ../_/_xtutest_display.ado
+f ../_/_xtutest_load.ado
+f ../_/_xtutest_mata.ado
+f ../_/_xtutest_pooled.ado
+f xtutest_apec.dta
+f xtutest_example.do
+f xtutest_graph.ado

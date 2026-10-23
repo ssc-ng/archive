@@ -1,4 +1,5 @@
 program multisite_varITT , eclass
+* version 1.1 (2026-10-19): influence function of the variance estimator as in Theorem thm:sigma (see below)
 version 14.2
 syntax varlist(min=3 max=3 numeric)  [if] [aweight]
 preserve
@@ -76,7 +77,10 @@ sum forbound
 scalar bound=r(sum)
 gen var_s=prop2*((ATE_s-ATE_hat)^2-V_rob_s)
 sum var_s
-gen var_s_cent=var_s-r(mean)
+* influence function of Theorem thm:sigma: psi_i = w_hat_i [ (ITT_i - ITT)^2 - V_i - sigma2 ]
+* (earlier versions used w_hat_i [(ITT_i - ITT)^2 - V_i] - sigma2, which treats the
+*  normalized site weights as fixed; the two coincide when all sites have the same size)
+gen var_s_cent=var_s-prop2*bound
 gen var_s_cent_sq=var_s_cent^2
 sum var_s_cent_sq
 scalar var_est=r(mean)/r(N)

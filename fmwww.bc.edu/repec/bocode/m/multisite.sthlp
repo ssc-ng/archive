@@ -1,9 +1,7 @@
 {smcl}
-{* *! version 1  2018-07-27}{...}
-{viewerjumpto "Syntax" "did_multiplegt##syntax"}{...}
-{viewerjumpto "Arguments" "did_multiplegt##options"}{...}
-{viewerjumpto "Description" "did_multiplegt##description"}{...}
-{viewerjumpto "Examples" "did_multiplegt##examples"}{...}
+{* *! version 2  2026-10-19}{...}
+{viewerjumpto "Syntax" "multisite##syntax"}{...}
+{viewerjumpto "Description" "multisite##description"}{...}
 
 {title:Title}
 
@@ -12,6 +10,7 @@
 multi-site randomized experiments with few units per site.
 {p_end}
 
+{marker syntax}{...}
 {title:Syntax}
 
 {p 4 8}{cmd:multisite}
@@ -21,7 +20,7 @@ multi-site randomized experiments with few units per site.
 {title:Description}
 
 {p 4 8}
-{cmd:multisite} wraps in four commands to estimate treatment-effect heterogeneity across sites in multi-site RCTs, and more generally in stratified RCTs. The four commands wrapped by {cmd:multisite} respectively estimate the variance of ITTs across sites, the variance of LATEs across sites, the regressions of ITTs on explanatory variables, and the sign of univariate regression coefficients from regressions of site-level LATEs on explanatory variables.
+{cmd:multisite} wraps in four commands to estimate treatment-effect heterogeneity across sites in multi-site RCTs, and more generally in stratified RCTs. The four commands wrapped by {cmd:multisite} respectively estimate the variance of ITTs across sites, the variance of LATEs across sites, the regressions of ITTs on explanatory variables, and relationships between site-level LATEs across outcomes and treatment arms.
 
 {p 4 8}One just needs to install {cmd:multisite} and execute it once to install those four commands.
 
@@ -47,7 +46,7 @@ multi-site randomized experiments with few units per site.
 {p_end}
 
 {p 4 8}
-{cmd:multisite_regLATE} estimates the sign of univariate regression coefficients from regressions of site-level LATEs on site-level characteristics in multi-site randomized trials.
+{cmd:multisite_regLATE} estimates the coefficients from a regression of a treatment's site-level LATE on one outcome on its site-level LATEs on other outcomes, and the covariance-variance ratio relating two treatments' site-level LATEs on the same outcome, in multi-site randomized trials.
 
 {p 12 12}
 {help multisite_regLATE}. 
@@ -55,7 +54,7 @@ multi-site randomized experiments with few units per site.
 
 {title:References}
 
-{p 4 8}de Chaisemartin, C and Deeb, A (2024).
+{p 4 8}de Chaisemartin, C and Deeb, A (2026).
 {browse "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4615304":Estimating treatment-effect heterogeneity across sites, in multi-site randomized experiments with few units per site}.{p_end}
 
 {title:Authors}
@@ -66,5 +65,4 @@ multi-site randomized experiments with few units per site.
 
 {title:Contact}
 {browse "mailto:adeeb1@worldbank.org":adeeb1@worldbank.org}
-{browse "mailto:bingxue.li@sciencespo.fr":bingxue.li@sciencespo.fr}
 {browse "mailto:chaisemartin.packages@gmail.com":chaisemartin.packages@gmail.com}

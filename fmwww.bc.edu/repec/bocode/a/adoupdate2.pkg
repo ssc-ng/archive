@@ -1,0 +1,17 @@
+d 'ADOUPDATE2': module to temporarily provide ado update functionality	
+d
+d  Pending update of the official Stata ado command, this package
+d allows you to use ado2 update and ado2 update, update commands.
+d There is no help file. 
+d
+d KW: package management
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261023
+d
+d Author: Kit Baum,  Boston College
+d Support: email baum@@bc.edu
+d
+f ado2.ado
+f adoupdate2.ado

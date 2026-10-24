@@ -11918,6 +11918,7 @@ fmwww.bc.edu/repec/bocode/a/ainequal.ado
 fmwww.bc.edu/repec/bocode/a/airnet.sthlp
 fmwww.bc.edu/repec/bocode/a/altrdvce.mo
 fmwww.bc.edu/repec/bocode/a/artpepdlg.sthlp
+fmwww.bc.edu/repec/bocode/a/adoupdate2.ado
 fmwww.bc.edu/repec/bocode/a/addtex.pkg
 fmwww.bc.edu/repec/bocode/a/ac2.hlp
 fmwww.bc.edu/repec/bocode/a/allsubsets.hlp
@@ -12084,6 +12085,7 @@ fmwww.bc.edu/repec/bocode/a/ardldml_buildmlib.do
 fmwww.bc.edu/repec/bocode/a/approx.py
 fmwww.bc.edu/repec/bocode/a/aaniv.pkg
 fmwww.bc.edu/repec/bocode/a/apcest.sthlp
+fmwww.bc.edu/repec/bocode/a/ado2.ado
 fmwww.bc.edu/repec/bocode/a/aextlogit.pkg
 fmwww.bc.edu/repec/bocode/a/aggreg.ado
 fmwww.bc.edu/repec/bocode/a/atip_reglas.ado
@@ -12312,6 +12314,7 @@ fmwww.bc.edu/repec/bocode/a/asinhcauchyinnerw3.ado
 fmwww.bc.edu/repec/bocode/a/actest.sthlp
 fmwww.bc.edu/repec/bocode/a/all_bsadf.mtx
 fmwww.bc.edu/repec/bocode/a/ad_pkg_meta.ado
+fmwww.bc.edu/repec/bocode/a/adoupdate2.pkg
 fmwww.bc.edu/repec/bocode/a/aextlogit.ado
 fmwww.bc.edu/repec/bocode/a/ad-gh.gitignore
 fmwww.bc.edu/repec/bocode/a/autolog.html

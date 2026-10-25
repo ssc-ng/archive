@@ -28,6 +28,7 @@ p wgtdistrim module for trimming extreme sampling weights
 p wgttest module to test the impact of sampling weights in regression analysis
 p whereis module to keep track of ancillary programs and files
 p which_version module to return location and programmer's version of ado-files
+p whichdidshouldiuse module to classify a panel's difference-in-differences design
 p whichlist module to input list of package file items and output lists of present and absent items
 p whichpkg module to display information on components of a Stata package
 p white module to perform White's test for heteroscedasticity

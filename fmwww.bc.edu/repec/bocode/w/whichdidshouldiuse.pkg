@@ -1,0 +1,33 @@
+d 'WHICHDIDSHOULDIUSE': module to classify a panel's difference-in-differences design
+d
+d      whichdidshouldiuse reads a panel and classifies its
+d difference-in-differences design as CLA, SAD, HAD, SFSD or OTHER,
+d names a	 suitable estimator, and points you at the relevant
+d chapter of Clement de Chaisemartin and Xavier D'Haultfoeuille's  
+d      difference-in-differences textbook.    It classifies; it
+d does not estimate. There are no fixed effects, weights or
+d standard-error options, because nothing is being	  fitted. 
+d
+d KW: panel data
+d KW: DiD
+d KW: TWFE
+d
+d Requires: Stata version 16 and distinct, did_had, gtools from SSC (q.v.)
+d
+d Distribution-Date: 20261024
+d
+d Author:   Alberto Trelles,  Sciences Po
+d Support: email chaisemartin.packages@@gmail.com
+d
+d Author: Clement de Chaisemartin,  Sciences Po
+d Support: email clementdechaisemartin@@gmail.com
+d
+d Author:  Anzony Quispe ,  Brown University
+d Support: email chaisemartin.packages@@gmail.com
+d
+f whichdidshouldiuse.ado
+f whichdidshouldiuse.sthlp
+f ../g/gentzkowetal_didtextbook.dta
+f ../m/moser_voena_didtextbook.dta
+f ../p/pierce_schott_didtextbook.dta
+f wolfers2006_didtextbook.dta

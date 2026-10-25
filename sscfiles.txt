@@ -14666,6 +14666,7 @@ fmwww.bc.edu/repec/bocode/p/power_concord.sthlp
 fmwww.bc.edu/repec/bocode/p/pystacked2_p.ado
 fmwww.bc.edu/repec/bocode/p/pip_find_src.ado
 fmwww.bc.edu/repec/bocode/p/psave.ado
+fmwww.bc.edu/repec/bocode/p/pierce_schott_didtextbook.dta
 fmwww.bc.edu/repec/bocode/p/province_devcat.sthlp
 fmwww.bc.edu/repec/bocode/p/panelhetero_illustration.do
 fmwww.bc.edu/repec/bocode/p/pmvnormal.ado
@@ -17515,6 +17516,7 @@ fmwww.bc.edu/repec/bocode/w/weaverjquery.ado
 fmwww.bc.edu/repec/bocode/w/which.mo
 fmwww.bc.edu/repec/bocode/w/witch.hlp
 fmwww.bc.edu/repec/bocode/w/weavermath.ado
+fmwww.bc.edu/repec/bocode/w/whichdidshouldiuse.ado
 fmwww.bc.edu/repec/bocode/w/wtdttt.pkg
 fmwww.bc.edu/repec/bocode/w/writeinput.hlp
 fmwww.bc.edu/repec/bocode/w/wksmirnov.sthlp
@@ -17532,6 +17534,7 @@ fmwww.bc.edu/repec/bocode/w/wksmirnov.pkg
 fmwww.bc.edu/repec/bocode/w/which_version.ado
 fmwww.bc.edu/repec/bocode/w/wmreg.sthlp
 fmwww.bc.edu/repec/bocode/w/wid_list_age_codes.sthlp
+fmwww.bc.edu/repec/bocode/w/whichdidshouldiuse.pkg
 fmwww.bc.edu/repec/bocode/w/weathr.pkg
 fmwww.bc.edu/repec/bocode/w/wscv.ado
 fmwww.bc.edu/repec/bocode/w/weaverzoom.ado
@@ -17580,6 +17583,7 @@ fmwww.bc.edu/repec/bocode/w/welflossas.ado
 fmwww.bc.edu/repec/bocode/w/wtd_perc.sthlp
 fmwww.bc.edu/repec/bocode/w/whitetst.hlp
 fmwww.bc.edu/repec/bocode/w/wosaddress.html
+fmwww.bc.edu/repec/bocode/w/whichdidshouldiuse.sthlp
 fmwww.bc.edu/repec/bocode/w/wine.dta
 fmwww.bc.edu/repec/bocode/w/wwwhelp.sthlp
 fmwww.bc.edu/repec/bocode/w/wavenardl.sthlp
@@ -17708,6 +17712,7 @@ fmwww.bc.edu/repec/bocode/w/weeklyclaims.ado
 fmwww.bc.edu/repec/bocode/w/Weaver_Markup.sthlp
 fmwww.bc.edu/repec/bocode/w/wtdttt.ado
 fmwww.bc.edu/repec/bocode/w/wittelognormal_notes.pdf
+fmwww.bc.edu/repec/bocode/w/wolfers2006_didtextbook.dta
 fmwww.bc.edu/repec/bocode/w/wdireshape.hlp
 fmwww.bc.edu/repec/bocode/w/weakiv.ado
 fmwww.bc.edu/repec/bocode/w/wxsum.sthlp
@@ -23440,6 +23445,7 @@ fmwww.bc.edu/repec/bocode/m/metareg.hlp
 fmwww.bc.edu/repec/bocode/m/mlt.html
 fmwww.bc.edu/repec/bocode/m/ml_spline.ado
 fmwww.bc.edu/repec/bocode/m/mtreatreg_normal_p.ado
+fmwww.bc.edu/repec/bocode/m/moser_voena_didtextbook.dta
 fmwww.bc.edu/repec/bocode/m/midas_dlg_qrsim.dlg
 fmwww.bc.edu/repec/bocode/m/metaxl_cmp.sthlp
 fmwww.bc.edu/repec/bocode/m/mf_elabel_valuelabel_class.sthlp

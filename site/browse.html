@@ -1,0 +1,56 @@
+---
+layout: default
+title: Select packages
+nav_order: 2
+browser: true
+description: "Pick a snapshot of the SSC archive, select packages, and get the ssc2 install commands"
+---
+  <div class="kicker">SSC archive · install</div>
+  <h1>Select packages</h1>
+  <p class="lede">Choose a snapshot, search its packages, tick the ones you
+    want, and this page writes the <code>ssc2</code> commands that install
+    them as the SSC archive stood on that day.</p>
+
+  <fieldset>
+    <legend>Snapshot</legend>
+    <div id="tl-root"></div>
+    <div class="loadstat" id="loadstat" role="status" aria-live="polite"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Packages</legend>
+    <label for="q">Search <span class="hint">(part of a name; <kbd>/</kbd> to focus)</span></label>
+    <input type="text" id="q" placeholder="e.g. reg, f_able" spellcheck="false"
+           autocomplete="off" disabled>
+    <div class="letters" id="letters" role="group" aria-label="Filter by first letter"></div>
+    <p class="hint picknote">Tick packages below to build their <code>ssc2</code>
+      install commands.</p>
+    <div class="listbar">
+      <span class="count" id="count" role="status" aria-live="polite"></span>
+      <button type="button" class="addbtn" id="clearsel" disabled>Clear selections</button>
+    </div>
+    <ul class="pkglist" id="list"></ul>
+    <button type="button" class="addbtn" id="more" hidden>show more</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>Install</legend>
+    <label class="check">
+      <input type="checkbox" id="replaceopt" checked>
+      <span><b>Replace any installed version</b>
+      <span class="hint">adds <code>replaceall</code>; without it an existing
+      installation is refused, as official ssc does</span></span>
+    </label>
+    <label class="check" style="margin-top:.5rem">
+      <input type="checkbox" id="bootstrap">
+      <span>Include the one-time <b>ssc2 installation</b> line</span>
+    </label>
+  </fieldset>
+
+  <div class="results">
+    <div class="results-bar"><span>Results</span>
+      <span class="barbtns"><button id="copybtn" type="button" disabled>Copy</button></span></div>
+    <pre id="out"></pre>
+  </div>
+
+  <div id="stats"></div>

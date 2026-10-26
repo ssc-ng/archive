@@ -10,6 +10,11 @@ theme: just-the-docs
 url: "https://ssc-ng.net"
 baseurl: "/archive"
 
+# Where the mirrored snapshots live: the repository (one tag per date) and
+# the directory inside it that holds the <letter>/<package>.pkg files.
+repo_url: "https://github.com/ssc-ng/archive"
+pkg_root: "fmwww.bc.edu/repec/bocode"
+
 search_enabled: false
 color_scheme: light
 

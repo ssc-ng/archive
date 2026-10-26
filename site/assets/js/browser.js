@@ -40,6 +40,11 @@ function status(msg, busy) {
   el.textContent = msg;
   el.classList.toggle("busy", !!busy);
 }
+// The package's .pkg file in the mirror as of a snapshot: GitHub's file view
+// shows the file with its directory (<letter>/) in the tree beside it.
+const pkgFileUrl = (date, name) =>
+  `${window.REPO_URL}/blob/${date}/${window.PKG_ROOT}/${name[0].toLowerCase()}/${encodeURIComponent(name)}.pkg`;
+
 function hashParams() { return new URLSearchParams(location.hash.slice(1)); }
 function saveHash(p) { history.replaceState(null, "", "#" + p.toString()); }
 
@@ -337,7 +342,7 @@ function installTooltipDismissal() {
 /* ------------------------------------------------------------------ */
 
 function initRanges(m) {
-  const link = d => `<a href="https://github.com/ssc-ng/archive/releases/tag/${d}">${d}</a>`;
+  const link = d => `<a href="${window.REPO_URL}/releases/tag/${d}">${d}</a>`;
   const rows = [];
   m.ranges.forEach(([from, to, n], i) => {
     const g = i > 0 && m.gaps[i - 1];
@@ -804,7 +809,8 @@ function initHistory(m) {
       info: i => !H.on.has(i) ? stateOf(i) : H.chg.has(i) ? "package file changed since the previous snapshot" : "",
       action: i => H.on.has(i)
         ? `<a href="browse.html#s=${H.snaps[i][0]}&amp;p=${encodeURIComponent(H.name)}">` +
-          `Install ${esc(H.name)} as of ${H.snaps[i][0]}</a>` : "",
+          `Install ${esc(H.name)} as of ${H.snaps[i][0]}</a>` +
+          `<br><a href="${pkgFileUrl(H.snaps[i][0], H.name)}">Browse packages at this date</a>` : "",
       onChange: pickSnap,
     });
     const go = () => { const v = q.value.trim(); if (v) showHistory(v); };

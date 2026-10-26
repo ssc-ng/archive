@@ -8,6 +8,7 @@
      document is parsed. The data it needs is NOT embedded: it is fetched
      asynchronously from assets/data/ (see build_data.py). -->
 {% if page.browser %}
+<script>window.REPO_URL = {{ site.repo_url | jsonify }}; window.PKG_ROOT = {{ site.pkg_root | jsonify }};</script>
 <script>window.DATA_BASE = "{{ '/assets/data/' | relative_url }}";</script>
 <script src="{{ '/assets/js/browser.js' | relative_url }}" defer></script>
 {% endif %}

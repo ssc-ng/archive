@@ -1,0 +1,24 @@
+d 'MEXPLOT': module to draw mean and median excess plots 
+d
+d  mexplot plots for varname  mean of (varname - u | varname > u)
+d and optionally median of (varname - u | varname > u)	against a
+d varying threshold u. The first plot is variously known as a mean
+d excess plot or a mean residual life plot.  A linear pattern in
+d (the tail of) a distribution is expected if and only if the data
+d resemble a generalised Pareto distribution. The command is an
+d updated version of that discussed at the 6th London Stata meeting
+d in 2000. 
+d
+d KW: distributions
+d KW: graphics
+d KW: extremes
+d
+d Requires: Stata version 8.2
+d
+d Distribution-Date: 20261025
+d
+d Author: Nicholas J. Cox, Durham University
+d Support: email N.J.Cox@@durham.ac.uk
+d
+f mexplot.ado
+f mexplot.sthlp

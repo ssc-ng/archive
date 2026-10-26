@@ -1,0 +1,28 @@
+d 'HILLPLOT': module to draw Hill plots for distribution tails 
+d
+d  Data are for a variable x with distribution function F(x).
+d Ordered values are labelled x_(1) >= ... >= x_(n).  Note that
+d indexing here is the reverse of a more common convention. Given
+d some slowly varying function L(x):  if pr(X > x) = 1 - F(x) =
+d L(x) x^-alpha for large x and alpha > 0, then for k < n, the tail
+d index alpha can be estimated by the reciprocal of (1 / k) SUM [
+d log x_(i) / x_(k+1) ]. hillplot plots estimates of alpha versus k
+d and optionally estimates of alpha versus log(k / n) = log(1 -
+d F(x)). This is not the Hill plot as known in biochemistry and
+d pharmacology. The command is an updated version of that discussed
+d at the 6th London Stata meeting in 2000. 
+d
+d KW: Hill plot
+d KW: distributions
+d KW: graphics
+d KW: extremes
+d
+d Requires: Stata version 8.2
+d
+d Distribution-Date: 20261025
+d
+d Author: Nicholas J. Cox, Durham University
+d Support: email N.J.Cox@@durham.ac.uk
+d
+f hillplot.ado
+f hillplot.sthlp

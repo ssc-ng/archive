@@ -142,6 +142,7 @@ p metatef module to perform IPD meta analysis of an interaction between treatmen
 p metatrend module to implement regression methods for detecting trends in cumulative meta-analysis
 p metatrim module to perform nonparametric analysis of publication bias
 p metaxl module providing tools to handle metadata
+p mexplot module to draw mean and median excess plots 
 p mfcurve module for plotting results from multifactorial research designs
 p mfelogit module to estimate marginal effects (AME) and average treatment effects (ATE) in fixed effect logit models
 p mfilegr module to view and save multiple graphs with filenames based on a numeric identifier

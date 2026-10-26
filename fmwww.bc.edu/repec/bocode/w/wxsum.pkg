@@ -30,5 +30,5 @@ d Support: email jcoliver@@arizona.edu
 d
 f wxsum.ado
 f wxsum.sthlp
-f ../t/temp.dta
-f ../r/rain.dta
+f wxsum_temp.dta
+f wxsum_rain.dta

@@ -9959,6 +9959,7 @@ fmwww.bc.edu/repec/bocode/x/xtpqardl.sthlp
 fmwww.bc.edu/repec/bocode/x/xtile2.pkg
 fmwww.bc.edu/repec/bocode/x/xcorplot.html
 fmwww.bc.edu/repec/bocode/x/xtnptimevar.sthlp
+fmwww.bc.edu/repec/bocode/x/xtcsd.sthlp
 fmwww.bc.edu/repec/bocode/x/xtdpdqml_estat.ado
 fmwww.bc.edu/repec/bocode/x/xtpmg_examples.do.txt
 fmwww.bc.edu/repec/bocode/x/xtpvarcoint.sthlp
@@ -24163,6 +24164,7 @@ fmwww.bc.edu/repec/bocode/b/bollenstine.ado
 fmwww.bc.edu/repec/bocode/b/bayesqual13_win.plugin
 fmwww.bc.edu/repec/bocode/b/bimpoisson.sthlp
 fmwww.bc.edu/repec/bocode/b/bandplot.ado
+fmwww.bc.edu/repec/bocode/b/bapm.ado
 fmwww.bc.edu/repec/bocode/b/bsrifhdreg.ado
 fmwww.bc.edu/repec/bocode/b/biascon.ado
 fmwww.bc.edu/repec/bocode/b/bimpoisson2_lf.ado
@@ -24212,6 +24214,7 @@ fmwww.bc.edu/repec/bocode/b/bacondeco.sthlp
 fmwww.bc.edu/repec/bocode/b/bcoeff.pkg
 fmwww.bc.edu/repec/bocode/b/bihist.hlp
 fmwww.bc.edu/repec/bocode/b/baltagireplication.do
+fmwww.bc.edu/repec/bocode/b/bapm.sthlp
 fmwww.bc.edu/repec/bocode/b/bcoeffs.sthlp
 fmwww.bc.edu/repec/bocode/b/btbygraphstyle.sthlp
 fmwww.bc.edu/repec/bocode/b/boxtid.html

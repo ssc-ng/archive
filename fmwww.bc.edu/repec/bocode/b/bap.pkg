@@ -15,10 +15,12 @@ d KW: plot
 d
 d Requires: Stata version 14.2
 d
-d Distribution-Date: 20240502
+d Distribution-Date: 20261026
 d
 d Author: Niels Henrik Bruun, Aalborg University Hospital
 d Support: email niels.henrik.bruun@@gmail.com
 d
 f bap.ado
 f bap.sthlp
+f bapm.ado
+f bapm.sthlp

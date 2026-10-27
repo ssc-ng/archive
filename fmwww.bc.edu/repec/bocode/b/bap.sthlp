@@ -42,12 +42,18 @@ line (default is lcolor(gs8) lpattern(solid))
 {synopt:{opt loa:linestyle(string)}}  A {help twoway:twoway} line specification for the LOA 
 lines (default is lcolor(gs8) lpattern(dash))
 
+{synopt:{opt p:ointlabel(varname)}}  Use varname as point label
+
+{synopt:{opt p:ointlabelsiz(string)}}  Set {help textsizestyle:point label size}
+
 {synopt:{opt R:oweq(string)}}  A string for setting roweq in the returned r(bap) 
 matrix. It is useful when combining more Bland-Altman analyses into one
 
 {synopt:{opt low:ess}}  Use a lowess curve instead of the mean of the differences
 
-{synopt:{opt k:eepvariables}}  keep the variables for the means and the differences
+{synopt:{opt noCIM:ean}}  Do not add CI for the mean.
+
+{synopt:{opt noCIL:oa}}  Do not add CI for the LOAs.
 
 {synopt:{opt *}} Any {help twoway:twoway} option{p_end}
 {synoptline}
@@ -69,10 +75,12 @@ The mean measurements with 95% CI, the bias with 95% CI, the SEM, and the LOA li
 
 {phang}Get Bland-Altman dataset:{p_end}
 {phang}{stata `". infile using "https://www-users.york.ac.uk/~mb55/datasets/pefr.dct", clear"'}{p_end}
-{phang}{stata `". label variable wright1 "PEFR 1, Wright (l/min)"'}{p_end}
-{phang}{stata `". label variable wright2 "PEFR 2, Wright (l/min)"'}{p_end}
-{phang}{stata `". label variable mini1 "PEFR 1, mini Wright (l/min)"'}{p_end}
-{phang}{stata `". label variable mini2 "PEFR 2, mini Wright (l/min)"'}{p_end}
+{phang}{stata `". label data "PEFR (l/min) data""'}{p_end}
+{phang}{stata `". label variable wright1 "Wright 1st"'}{p_end}
+{phang}{stata `". label variable wright2 "Wright 2nd"'}{p_end}
+{phang}{stata `". label variable mini1 "mini Wright 1st"'}{p_end}
+{phang}{stata `". label variable mini2 "mini Wright 2nd"'}{p_end}
+
 
 {phang}Making a Bland-Altman plot:{p_end}
 {phang}{stata `". bap mini1 mini2"'}{p_end}
@@ -100,9 +108,9 @@ The mean measurements with 95% CI, the bias with 95% CI, the SEM, and the LOA li
 {break}2017 Taffe - biasplot; A Package to Effective Plots to Assess Bias and Precision in Method Comparison Studies
 {break}2023 Chatfield - blandaltman; A command to create variants of Bland–Altman plots
 
+
 {marker author}{...}
 {title:Authors and support}
-
 
 {phang}{bf:Author:}{break}
  	Niels Henrik Bruun, {break}

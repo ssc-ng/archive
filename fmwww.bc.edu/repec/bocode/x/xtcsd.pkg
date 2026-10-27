@@ -1,6 +1,6 @@
 d 'XTCSD': module to test for cross-sectional dependence in panel data models
 d
-d xtcsd tests for cross-sectional dependence in Fixed Effects or
+d  xtcsd tests for cross-sectional dependence in Fixed Effects or
 d Random Effects models. xtcsd tests the hypothesis of
 d cross-sectional independence in panel data models with small T
 d and large N by implementing two semi-parametric tests proposed by
@@ -13,9 +13,12 @@ d KW: fixed effects
 d KW: random effects
 d KW: cross sectional dependence
 d
-d Requires: Stata version 6
+d Requires: Stata version 18
 d
-d Distribution-Date: 20070410
+d Distribution-Date: 20261026
+d
+d Author: Wu LiangHai,  Anhui University of Technology
+d Support: email agd2010@@yeah.net
 d
 d Author: R. E. De Hoyos, University of Cambridge
 d Support: email red29@@cam.ac.uk
@@ -24,4 +27,4 @@ d Author: Vasilis Sarafidis, University of Sydney
 d Support: email  V.Sarafidis@@econ.usyd.edu.au
 d
 f xtcsd.ado
-f xtcsd.hlp
+f xtcsd.sthlp

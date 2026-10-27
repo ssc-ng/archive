@@ -1,6 +1,6 @@
 {smcl}
 {hline}
-index of NJC's best Stata stuff (version 30 July 2026)  
+index of NJC's best Stata stuff (version 25 October 2026)  
 {hline}
 
 {title:Description} 

@@ -1,6 +1,6 @@
 {smcl}
 {hline}
-index of NJC's Stata stuff (version 30 July 2026)
+index of NJC's Stata stuff (version 25 October 2026)
 {hline}
 
 {title:Description}
@@ -119,10 +119,6 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}fit two-parameter beta distribution
 {space 4}psup(OS betareg)
 
-{space 4}{help bincoverage}
-{space 4}www.stata.com/users/rgutierrez (R.G. Gutierrez, NJC)
-{space 4}true coverage probabilities for binomial confidence intervals
-
 {space 4}{help binsm}
 {space 4}gr26 stb37 (NJC)
 {space 4}bin smoothing and summary on scatter plots
@@ -217,18 +213,13 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}sup(SSC mipolate)
 
 {space 4}{help circstat}
-{space 4}www.stata.com/users/njc (NJC)
-{space 4}circular statistics (1) 
-{space 4}sup(SSC circular)
-
-{space 4}{help circstat}
 {space 4}SSC (NJC)
-{space 4}circular statistics (2)
+{space 4}circular statistics (1)
 {space 4}sup(SSC circular)
 
 {space 4}{help circular}
 {space 4}SSC (NJC)
-{space 4}circular statistics (3; for Stata 8 up)
+{space 4}circular statistics (2; for Stata 8 up)
 {space 4}+
 
 {space 4}{help cisets}
@@ -399,13 +390,8 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}pobs(foreach, forval)
 
 {space 4}{help cpyxplot}
-{space 4}www.stata.com/users/njc (NJC)
-{space 4}scatter plots for each y vs each x variable (1) 
-{space 4}obs(crossplot)
-
-{space 4}{help cpyxplot}
 {space 4}SSC (NJC)
-{space 4}scatter plots for each y vs each x variable (2) 
+{space 4}scatter plots for each y vs each x variable 
 {space 4}obs(crossplot) 
 
 {space 4}{help cquantile}
@@ -581,35 +567,40 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}{help distplot}
 {space 4}SSC (NJC)
 {space 4}distribution function plots (1) 
-{space 4}sup(SJ 19-1)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help distplot}
 {space 4}gr41 stb51 (NJC)
 {space 4}distribution function plots (2) 
-{space 4}sup(SJ 19-1)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help distplot}
 {space 4}gr41_1 sj3-2 (NJC)
 {space 4}distribution function plots (3)
-{space 4}sup(SJ 19-1)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help distplot}
 {space 4}gr41_2 sj3-4 (NJC)
 {space 4}distribution function plots (4)
-{space 4}sup(SJ 19-1)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help distplot}
 {space 4}gr41_3 sj5-3 (NJC)
 {space 4}distribution function plots (5)
-{space 4}sup(SJ 19-1) 
+{space 4}sup(SJ 26-3) 
 
 {space 4}{help distplot}
 {space 4}gr41_4 sj10-1 (NJC)
 {space 4}distribution function plots (6)
-{space 4}sup(SJ 19-1) 
+{space 4}sup(SJ 26-3) 
 
 {space 4}{help distplot}
 {space 4}gr41_5 sj19-1 (NJC)
+{space 4}distribution function plots (7)
+{space 4}sup(SJ 26-3) 
+
+{space 4}{help distplot}
+{space 4}gr41_6 sj26-3 (NJC)
 {space 4}distribution function plots (7)
 {space 4}+            
 
@@ -724,11 +715,6 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}SSC (NJC, C.F. Baum, U. Kohler, S. Stillman, N. Winter)
 {space 4}more {help egen} functions
 {space 4}+
-
-{space 4}{help egenodd}
-{space 4}www.stata.com/users/njc (NJC)
-{space 4}{help egen} extensions
-{space 4}sup(STB 50, 57)
 
 {space 4}{help entropyetc}
 {space 4}SSC (NJC)
@@ -954,6 +940,10 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}Harrell-Davis estimator of quantiles
 {space 4}+
 
+{space 4}{help hillplot}
+{space 4}SSC (NJC)
+{space 4}Hill plots for distribution tails
+
 {space 4}{help histplot}
 {space 4}SSC (NJC)
 {space 4}histograms
@@ -1152,11 +1142,6 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}pobs(OS Mata)
 
 {space 4}{help matodd}
-{space 4}www.stata.com/users/njc (NJC)
-{space 4}various matrix tasks
-{space 4}pobs(OS Mata)
-
-{space 4}{help matodd}
 {space 4}dm69 stb50 (NJC)
 {space 4}various matrix tasks
 {space 4}pobs(OS Mata)
@@ -1181,6 +1166,10 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}univariate kernel density estimation, for variables or groups
 {space 4}sup(SSC codensity}
 
+{space 4}{help mexplot}
+{space 4}SSC (NJC)
+{space 4}mean and median excess plots
+
 {space 4}{help mipolate}
 {space 4}SSC (NJC) 
 {space 4}interpolation of missing values 
@@ -1194,27 +1183,32 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}{help missings} 
 {space 4}SSC (NJC) 
 {space 4}various utilities for managing missing values (1) 
-{space 4}sup(SJ 23-2)         
+{space 4}+  NOTE: update in sj27-1 pending 
 
 {space 4}{help missings} 
 {space 4}dm0085 sj15-4  
 {space 4}various utilities for managing missing values (2) 
-{space 4}sup(SJ 23-2) 
+{space 4}sup(SSC) 
 
 {space 4}{help missings} 
 {space 4}dm0085_1 sj17-3  
 {space 4}various utilities for managing missing values (3) 
-{space 4}sup(SJ 23-2)
+{space 4}sup(SSC) 
 
 {space 4}{help missings} 
 {space 4}dm0085_2 sj20-4  
 {space 4}various utilities for managing missing values (3) 
-{space 4}sup(SJ 23-2)
+{space 4}sup(SSC)
 
 {space 4}{help missings} 
 {space 4}dm0085_3 sj23-2  
 {space 4}various utilities for managing missing values (4) 
-{space 4}+ 
+{space 4}sup(SSC)
+
+{space 4}{help missings} 
+{space 4}dm0085_3 sj26-3 
+{space 4}various utilities for managing missing values (5)
+{space 4}sup(SSC) NOTE update in sj27-1 pending 
 
 {space 4}{help mlowess}
 {space 4}SSC (NJC)
@@ -1506,7 +1500,7 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}{help ordplot}
 {space 4}SSC (NJC)
 {space 4}cumulative distribution plots of ordinal variable
-{space 4}sup(SSC distplot)
+{space 4}sup(SJ distplot)
 
 {space 4}{help outfix2}
 {space 4}SSC (NJC)
@@ -1634,40 +1628,45 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}{help qplot}
 {space 4}gr42_2 sj4-1 (NJC)
 {space 4}quantile plots, generalized (4)
-{space 4}sup(SJ 24-4)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help qplot}
 {space 4}gr42_3 sj5-3 (NJC)
 {space 4}quantile plots, generalized (5)
-{space 4}sup(SJ 24-4)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help qplot}
 {space 4}gr42_4 sj6-4 (NJC)
 {space 4}quantile plots, generalized (6) 
-{space 4}sup(SJ 24-4)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help qplot}
 {space 4}gr42_5 sj10-4 (NJC)
 {space 4}quantile plots, generalized (7) 
-{space 4}sup(SJ 24-4)         
+{space 4}sup(SJ 26-3)         
 
 {space 4}{help qplot}
 {space 4}gr42_6 sj12-1 (NJC)
 {space 4}quantile plots, generalized (8) 
-{space 4}sup(SJ 24-4)         
+{space 4}sup(SJ 26-3)         
 
 {space 4}{help qplot}
 {space 4}gr42_6 sj16-3 (NJC)
 {space 4}quantile plots, generalized (9) 
-{space 4}sup(SJ 24-4)
+{space 4}sup(SJ 26-3)
 
 {space 4}{help qplot}
 {space 4}gr42_7 sj19-3 (NJC)
 {space 4}quantile plots, generalized (10) 
-{space 4}sup(SJ 24-4)     
+{space 4}sup(SJ 26-3)     
 
 {space 4}{help qplot}
 {space 4}gr42_8 sj24-4 (NJC)
+{space 4}quantile plots, generalized (11) 
+{space 4}sup(SJ 26-3) 
+   
+{space 4}{help qplot}
+{space 4}gr42_9 sj26-3 (NJC)
 {space 4}quantile plots, generalized (11) 
 {space 4}+                 
 
@@ -2046,11 +2045,6 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}sup(tab_chi)
 
 {space 4}tab_chi
-{space 4}www.stata.com/users/njc (NJC)
-{space 4}tabulation and chi-square tasks (1) 
-{space 4}sup(SSC)
-
-{space 4}tab_chi
 {space 4}SSC (NJC)
 {space 4}tabulation and chi-square tasks (2) 
 {space 4}+ (chitest/chitesti/tabsplit/tabm)
@@ -2125,10 +2119,6 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}one-, two- and three-way bar charts for tables (4) 
 {space 4}+
 
-{space 4}tails
-{space 4}www.stata.com/meetings/6uk (NJC)
-{space 4}plotting and fitting distributions with long or heavy tails
-
 {space 4}{help textbarplot}
 {space 4}SSC (NJC) 
 {space 4}horizontal text and bar plot 
@@ -2158,19 +2148,9 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}change values of a variable to mode(s)
 {space 4}sup(STB 50, OS egen)
 
-{space 4}{help topichlp}
-{space 4}www.stata.com/users/njc (NJC)
-{space 4}help files on various general topics
-{space 4}sup(SSC)
-
 {space 4}{help torats}
 {space 4}SSC (C.F. Baum, NJC)
 {space 4}facilitate transfer of data to RATS
-
-{space 4}{help tostring}
-{space 4}www.stata.com/users/jwernow (NJC, J.B. Wernow)
-{space 4}change numeric variables to string
-{space 4}sup(OS tostring)
 
 {space 4}{help tostring}
 {space 4}dm80 stb56 (NJC, J.B. Wernow)
@@ -2243,13 +2223,8 @@ listed thematically at {help njc_best_stuff:NJC best stuff}.
 {space 4}+
 
 {space 4}{help univstat}
-{space 4}www.stata.com/users/njc (NJC)
-{space 4}summary statistics in matrix form (1)
-{space 4}sup(SSC)
-
-{space 4}{help univstat}
 {space 4}SSC (NJC)
-{space 4}summary statistics in matrix form (2)
+{space 4}summary statistics in matrix form 
 
 {space 4}{help upsetplot}
 {space 4}SSC (T. Morris, NJC)

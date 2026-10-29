@@ -1,4 +1,4 @@
-*! boottest 4.5.4 22 October 2026
+*! boottest 4.5.5 24 October 2026
 *! Copyright (C) 2015-26 David Roodman
 
 * This program is free software: you can redistribute it and/or modify
@@ -98,7 +98,11 @@ program define boottest, rclass sortpreserve
     if `julia' {
       qui jl GetEnv
       local env `r(env)'
-      qui jl SetEnv boottest
+      qui findfile boottest_project.toml
+      local projectfile `r(fn)'
+      qui findfile boottest_manifest.toml
+      jl SetEnv @boottest, quietly update project(`projectfile') manifest(`r(fn)') pin  // update the project environment if the definition files in the ado path are newer
+      qui jl SetEnv @boottest
 
       if !0$boottest_julia_loaded {
         cap jl version
@@ -114,9 +118,9 @@ program define boottest, rclass sortpreserve
           ssc install julia, replace
         }
 
-// _jl: pushfirst!(LOAD_PATH, "D:/OneDrive/Documents/Macros/WildBootTests.jl")
+//         _jl: pushfirst!(LOAD_PATH, "D:/OneDrive/Documents/Macros/WildBootTests.jl")
         jl AddPkg StableRNGs
-        jl AddPkg WildBootTests, minver(1.1.0)
+        jl AddPkg WildBootTests, minver(1.1.3)
         _jl: using StableRNGs, WildBootTests
         global boottest_julia_loaded 1
       }
@@ -274,7 +278,7 @@ program define boottest, rclass sortpreserve
     if inlist("`cmd'","xtreg","xtivreg","xtivreg2") local NFE = e(N_g) + 0`e(singleton)'
     else local NFE = cond(`DID', 0`e(N_clust)',                       ///
                                  cond("`cmd'"=="areg", 1+e(df_a),     ///
-                                       max(0`e(K1)', 0`df_a', 0`df_a_initial')))  // reghdfe
+                                       max(0`e(K1)', 0`e(df_a)', 0`df_a', 0`df_a_initial')))  // reghdfe
 
     local _FEname = cond(inlist("`cmd'","xtreg","xtivreg","xtivreg2"), "`e(ivar)'", cond(`DID', "`e(clustvar)'", "`e(absvar)'`absvars'"))
     if `"`_FEname'"' != "" {
@@ -377,9 +381,6 @@ program define boottest, rclass sortpreserve
 
       local colnames: colnames e(b)
       if `partial' local colnames `colnames' `e(partial1)'
-  //     local colnames: subinstr local colnames "b." ".", all  // introduced in 51192a82d181920ca7009f95cc7744a2f031c9bf but interferes with _ms_parse_parts below
-  //     local colnames: subinstr local colnames "bn." ".", all
-          local colnames: subinstr local colnames "bn." "b.", all
 
       local k = `:word count `colnames'' + (`partial' & 0`e(partialcons)')
       local _cons _cons
@@ -388,9 +389,6 @@ program define boottest, rclass sortpreserve
 
       if `IV' {
         local Xnames_endog `e(instd)'
-  //       local Xnames_endog: subinstr local Xnames_endog "b." ".", all
-  //       local Xnames_endog: subinstr local Xnames_endog "bn." ".", all
-          local colnames: subinstr local colnames "bn." "b.", all
         local Xnames_exog: list colnames - Xnames_endog
         local cons = `cons' | e(partialcons)==1
 
@@ -767,17 +765,21 @@ program define boottest, rclass sortpreserve
           if "``X''" != "" jl PutVarsToMat ``X'' if `hold', dest(`X')
             else _jl: `X' = Matrix{Float`precision'}(undef,0,0)
         }
-        foreach X in Ynames wtname FEname {
+        foreach X in Ynames wtname  {
           if "``X''" != "" {
             jl PutVarsToMat ``X'' if `hold', dest(`X')
             _jl: `X' = dropdims(`X'; dims=2)
           }
-          else _jl: `X' = Vector{Float`precision'}(undef,0)
+          else _jl: `X' = Float`precision'[]
         }
-        _jl: FEname = iszero(`NFE') ? Vector{Int64}(undef,0) : Vector{Int64}(FEname)
+        if 0`NFE' {
+          jl PutVarsToMat `FEname' if `hold', dest(FEname)
+          _jl: FEname = Int64.(FEname[:])
+        }
+        else _jl: FEname = Int64[]
         _jl: allclustvars = iszero(`hasclust') ? Matrix{Int64}(undef,0,0) : Matrix{Int64}(allclustvars)
-  // jl: using JLD
-  // jl: @save "/Users/davidroodman/Downloads/tmp.jld" Ynames Xnames_exog Xnames_endog ZExclnames wtname allclustvars FEname scnames R r R1 r1 gridminvec gridmaxvec gridpointsvec b V rng
+//   jl: using JLD
+//   jl: @save "c:/users/drood/Downloads/tmp.jld" Ynames Xnames_exog Xnames_endog ZExclnames wtname allclustvars FEname scnames R r R1 r1 gridminvec gridmaxvec gridpointsvec b V rng
         _jl: using Random; Random.seed!(rng, `=runiformint(0, 9007199254740992)')  // chain Stata rng to Julia rng
         _jl: _boottest_jl = wildboottest!(Float`precision', R, r; resp=Ynames, predexog=Xnames_exog, predendog=Xnames_endog, inst=ZExclnames, ///
                             obswt=wtname, clustid=allclustvars, feid=FEname, scores=scnames, ///
@@ -1036,10 +1038,11 @@ program define boottest, rclass sortpreserve
   exit `rc'
 end
 
-cap program _julia_boottest, plugin using(jl.plugin)  // create an extra handle to the plugin to reduce the chance that Stata unloads it
+cap program _julia_boottest, plugin using(jl.plugin)  // create an extra handle to the plugin to reduce chance that Stata unloads it
 
 
 * Version history
+* 4.5.5  Add proper toml files to define Julia environment. Move to WildBootTests 1.1.2.
 * 4.5.4  Bug fixes: jk with non-zero r_1; null not imposed in AR (!). Thanks to Joe Francis and his AI agents.
 * 4.5.3  Fix crash after "reghdfe, a()". Fix score bootstrap crashes.
 * 4.5.2  Revert one 4.5.1 change (51192a82d181920ca7009f95cc7744a2f031c9bf) because it created a new bug.

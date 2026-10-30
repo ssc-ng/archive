@@ -12,13 +12,14 @@ d KW: GMM
 d KW: panel data
 d KW: endogeneity
 d
-d Requires: Stata version 11
+d Requires: Stata version 13
 d
-d Distribution-Date: 20260117
+d Distribution-Date: 20261029
 d
 d Author:   Manh Hoang-Ba,  Eureka Uni Team, Vietnam
 d Support: email   hbmanh9492@@gmail.com
 d
 f xtgmmfa.ado
 f xtgmmfa.sthlp
+f ../l/lxtgmmfa.mlib
 f ../j/js22data.dta

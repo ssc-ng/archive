@@ -1,0 +1,24 @@
+d 'COINTPART': module to implement Cointegration by Parts -- FIEG, BIEG and GIEG subsample tests
+d
+d  cointpart tests whether two or more I(1) series cointegrate over
+d part of the sample rather than throughout it. Standard
+d residual-based tests apply a single window to the whole record
+d and lose power when the long-run relationship holds over only a
+d sub-period, because the stationary episode is diluted by the
+d rest. 
+d
+d KW: cointegration
+d KW: tests
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261029
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f cointpart.ado
+f cointpart.sthlp
+f cointpart_example.do
+f cointpart_methods.sthlp
+f cointpart_sealevel.dta

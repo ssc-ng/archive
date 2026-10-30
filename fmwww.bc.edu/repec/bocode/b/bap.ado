@@ -1,5 +1,6 @@
-*! version 0.2 2024-04-23 Niels Henrik Bruun	
+*! version 0.21 2024-04-23 Niels Henrik Bruun	
 *! Support: Niels Henrik Bruun, niels.henrik.bruun@gmail.com
+*! 2026-10-28 v0.21 Bugfix in bapm
 *! 2026-05-18 v0.2 SEM calculating bug is fixed
 *! 2026-04-14 v0.2 SEM calculating bug is fixed
 *! 2026-04-14 v0.2 Minimal detechtable change (MDC) added in table r(bap)
@@ -8,7 +9,7 @@
 * 2023-12-16 v0.1 created
 *TODO different coloring of markers by a group variable?
 program define bap, rclass
-		version 14.2
+		version 15.1
 		
     syntax varlist(min=2 max=2 numeric) [if], /* 
       */[ /* 

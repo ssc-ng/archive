@@ -1,0 +1,35 @@
+d 'NTCOINT': module to provide test of nontrivial cointegration
+d
+d  ntcoint implements the squared-correlations ratio (SCR) test of
+d Hualde, J. and J. Olmo (2026), "Testing for Nontrivial
+d Cointegration", Journal of Business & Economic Statistics,
+d doi:10.1080/07350015.2026.2638497. Standard cointegration methods
+d cannot distinguish a genuine long-run equilibrium relationship
+d from "trivial" cointegration, which arises merely because one of
+d the series is stationary, so that a standard unit vector lies in
+d the cointegrating space. Two independent processes, one I(0) and
+d one I(1), are cointegrated in that formal sense while sharing no
+d equilibrium at all. Testing for nontrivial cointegration with
+d conventional tools requires a sequential procedure that is, in
+d general, inconsistent. 
+d
+d KW: cointegration
+d KW: stationarity
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261029
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f ntcoint.ado
+f ntcoint.sthlp
+f ntcoint_authcv1.mata
+f ntcoint_authcv2.mata
+f ntcoint_cv1.mata
+f ntcoint_cv2.mata
+f ntcoint_ecbyields.do
+f ntcoint_ecbyields.dta
+f ntcoint_example.do
+f ntcoint_methods.sthlp

@@ -1,1901 +1,607 @@
-/******************************************************************************
-						PROGRAM DEFINES XTGMMFA
-		Performs GMM estimation for factor-augmented panel data model 
-								with fixed T
-
-			Author: 	Manh Hoang-Ba
-			Support:	hbmanh9492@gmail.com
-
-			Ref.: 		Juodis & Sarafidis (2022)
-
-	Draft 2.1:
-		- Small sample adjustment	--> Done!
-									
-******************************************************************************/
+*! xtgmmfa     - Fixed-T linear GMM for factor-augmented panels (Juodis & Sarafidis)
+*! version 2.0 - 29/10/2026 
+*! author: Manh Hoang-Ba, hbmanh9492@gmail.com
 
 cap program drop xtgmmfa
-program define xtgmmfa, eclass
-	version 11
-	
-	if replay() {
-		if "`e(cmd)'"!="xtgmmfa" {
-			di in red "last estimate not xtgmmfa"
-			exit 301
-		}
-		else syntax [, Level(cilevel)]
-	}
-	else {
-		syntax varlist(num fv ts) [if] [in] , 		///
-						GMMvars(string)				///		// done
-					[	UNOFactors(string)			///		// done
-						IVvars(varlist ts fv)		///		// done
-						Wmat(int 2)					///		// done
-						Robust						///		// vcetype
-						CLuster(varname)			///		// vcetype
-						ONEstep						///		// done
-						Level(cilevel)				///		// report
-						NOCONStant 					///		// done	
-						OBSFactors(varlist ts fv)	///		// done
-						rho(real 0.75)				///
-						small						///
-						]
-		
-		local cmdline xtgmmfa `0'
-		
-*			- touse var
-		tempvar touse0 touse
-		mark `touse' `if' `in'
-		qui gen byte `touse0' = `touse'
-		
-*			- idvar, tvar
-		tempname ivar tvar b V theta Vtheta Fe_hat ///
-				n_c r_ga df_m wald waldp bic j_df j j_s j_p le d G reg_unb ft_unb
+program define xtgmmfa, eclass sortpreserve
+    version 13
 
-//	Check for rho
-		if `rho'<=0 {
-			di in red "rho must be positive"
-			exit 198
-		}
-
-// Check for xtset 
-		qui xtset
-		if "`r(panelvar)'" == "" {
-			di in red "Data must be xtset before using this command"
-			exit 459
-		}	
-		
-*			- noconstant
-		if "`noconstant'" != "" {
-			local nocons nocons
-		}
-
-		
-*			- varlist: tempvars + varlist name + maxlag of y
-
-		_rmcoll `varlist' if `touse', `nocons'
-		local varlist0 "`r(varlist)'"
-
-		fvrevar `varlist0' if `touse'
-		local tempvars "`r(varlist)'"					// tempvars
-		
-		markout `touse' `tempvars'
-		gettoken depvar indepvars : tempvars			// tempvar_names
-		
-		fvexpand `varlist0' if `touse'
-		local varnames "`r(varlist)'"					// varnames
-		gettoken depname rest: varnames
-
-		if "`noconstant'" != "" {
-			local cons = 0
-			local indepnames "`rest'"
-		}
-		else {
-			local cons = 1
-			local indepvars0 `indepvars'
-			tempname _cons
-			qui gen byte `_cons' = 1 if `touse'
-			local tempvars `tempvars' `_cons'
-			
-			local indepnames "`rest' _cons"
-		}
-		
-
-*			- gmmvars
-	*	Parsing gmmvars(varlist(ts fv), mlag(int -1))
-		local 0 `gmmvars'
-		cap syntax varlist(ts fv), [mlag(int -1)]
-		if _rc {
-			di as err _n "gmmvars(`0') invalid."
-			exit 198
-		}
-		local gmmvars `varlist'
-		
-		_rmcoll `gmmvars' if `touse', //expand
-		local gmmvars "`r(varlist)'"
-		
-		fvrevar `gmmvars' if `touse'
-		local zvars1 "`r(varlist)'"
-
-		qui foreach var of local zvars1 {
-			replace `var'=0 if `var'==. & `touse'	
-		}
-		
-		qui _rmcoll `zvars1' if `touse', forcedrop
-		local zvars1 "`r(varlist)'"	
-
-*			- ivvars
-		if `cons' == 1 {
-			local ivvars `ivvars' `_cons'
-			
-			_rmcoll `ivvars' if `touse', noconstant
-			local ivvars "`r(varlist)'"
-		}
-		else {
-			if "`ivvars'" != "" {
-				_rmcoll `ivvars' if `touse'
-				local ivvars "`r(varlist)'"
-			}
-		}
-		
-		fvrevar `ivvars' if `touse'
-		local zvars2 "`r(varlist)'"
-
-		qui _rmcoll `zvars2' if `touse', noconstant forcedrop
-		local zvars2 "`r(varlist)'"	
-		
-		local zvars `zvars1' `zvars2'
-		markout `touse'	 `zvars' //`V'
-		
-*			- vvars
-		*	Parsing unofactors(varlist(ts fv), ///
-									[wvar(varname) ///
-									method(regu | bss) ///
-									type(int 1) ///
-									lmax(int 2)	///
-									seed(int 120) ///
-									power(int 0) ///
-									er ///
-									NOREGressor])
-
-		local 0 `unofactors'
-		cap syntax [anything], [wvar(varname) ///
-									bss ///
-									type(int 1) ///
-									lmax(int 2)	///
-									seed(int 120) ///
-									power(int 0) ///
-									er ///
-									NOREGressor]
-		if _rc {
-			di as err _n "unofactors(`0') invalid."
-			exit 198
-		}
-		
-		if "`anything'" == "" {
-			if "`noregressor'"== "" local vvars `depname' `rest'
-			else {
-				di in red "`noregressor' cannot be specified with an empty Vlist."
-				di in red "unofactors(`unofactors') invalid."
-				exit 198
-			}
-		}
-		else {
-			local 0 `anything'
-			cap syntax varlist(ts fv)
-			if "`noregressor'"== "" local vvars `varlist' `depname' `rest'
-			else local vvars `varlist'
-		}
-		
-		if "`bss'"=="" local method "regu"
-		else local method "bss"
-		
-		if "`method'"=="regu" local method_i = 1
-		else local method_i = 2
-		
-		if "`er'"=="" local stat "gr"
-		
-		if "`small'" != "" local small_vl = 1
-		else local small_vl = 0
-/*
-		if "`stat'"!="er" & "`stat'"!="gr" {
-			di in red "stat(`stat') invalid."
-			di in red "unofactors() invalid."
-			exit 198
-		}		
-*/		
-		_rmcoll `vvars' if `touse0', nocons
-		local vvars "`r(varlist)'"
-		fvrevar `vvars' if `touse0'
-		local vvars "`r(varlist)'"
-		qui _rmcoll `vvars' if `touse0', nocons forcedrop
-		local V "`r(varlist)'"
-
-		if `type'==1 {
-			gettoken V1 rest: V
-			local V `V1'		// use only first var in vvars
-		}
-		
-		local Vtemp
-		local Vout = 0
-		foreach var of local V {
-			qui xtsum `var' if `touse0'
-			if r(sd_w)==0 local Vout = `Vout' + 1
-			else local Vtemp `Vtemp' `var'
-		}
-		
-		if `Vout'>0 {
-			di in red "Vlist (including y and X) must be time-varying."
-			di in red "`Vout' time-invariant variables are dropped."
-		}
-		local V `Vtemp'
-		
-		if "`wmat'" != "1" & "`wmat'" != "2" {
-			di in red "wmat(`wmat') invalid."
-			exit 198
-		}
-		
-	preserve
-		qui xtset
-		local timevar "`r(timevar)'"
-		local panelvar "`r(panelvar)'"
-
-*			- observed factors
-		_rmcoll `obsfactors' if `touse0', `nocons'
-		local obsfactors "`r(varlist)'"
-		fvrevar `obsfactors' if `touse0'
-		local obsfactors "`r(varlist)'"
-//		markout `touse' `obsfactors'
-		
-*			- wvars
-		tempvar w0 touse2
-		sort `panelvar' `timevar'
-		if "`wvar'"=="" {
-			qui by `panelvar': gen double `w0' = `depname'[1] if `touse0'
-		}
-		else {
-			local n_w : word count `wvar'
-			if `n_w' > 1 {
-				di in red "too many variables specified."
-				di in red "wvar(`wvar') invalid."
-				exit 198
-			}
-			else {
-				qui by `panelvar': gen double `w0' = `wvar'[1] if `touse0' 
-			}
-		}
-		local W `w0'
-		
-		qui gen byte `touse2' = `touse0'
-		markout `touse2' `V' `W' `obsfactors'
-
-//		V, W and obsfactors are conditional on [if] [in]
-		foreach var of varlist `V' `W' `obsfactors' {
-			qui replace `var' = `var'*`touse2'
-			qui replace `var' = 0 if `var'==.
-		}
-		
-		qui egen long `ivar' = group(`panelvar') if `touse'
-		sort `ivar' `timevar'
-		qui sum `ivar'	if `touse', mean
-		local N = r(max)
-
-qui		keep if `touse'
-		qui keep `panelvar' `ivar' `timevar' `tempvars' `zvars' ///
-					`V' `W' `obsfactors' `cluster'	`touse'
-
-
-// 		Treat unbalanced panel
-		local balance = 1
-		tempvar Ti
-		qui egen `Ti' = sum(`touse') /*if `touse'*/, by(`ivar')
-		qui sum `Ti' /*if `touse'*/, mean
-		local T_bar = r(mean)
-		local T_max = r(max)
-		local T_min = r(min)
-		
-		if r(min) != r(max) {
-			
-			local balance = 0		
-			
-			local N0 = _N
-			qui drop if `Ti' < 2
-			local n_drop = `N0' - _N
-			if `n_drop' >  0 {
-				di in red "`r(N_drop)' observations is dropped"
-				di in red "xtgmmfa requires at least 2 periods for each group"
-			}
-			
-			tempvar reg_miss ft_miss
-			qui egen byte `reg_miss' = rowmiss(`tempvars' `zvars') /*if `touse'*/
-			qui gen byte `reg_unb' = (`reg_miss'==0) /*if `touse'*/
-			
-			qui egen byte `ft_miss' = rowmiss(`V' `W' `obsfactors') /*if `touse'*/
-			qui gen byte `ft_unb' = (`ft_miss'==0) /*if `touse'*/	
-			
-			tempfile temp_data
-			sort `ivar' `timevar'
-
-			qui save `temp_data', replace
-			
-			qui sum `timevar' /*if `touse'*/
-			local Tmax = r(max)
-			local Tmin = r(min)
-
-			
-			clear
-			qui set obs `=`N'*(`Tmax' - `Tmin' + 1)'
-			
-			qui gen long `ivar' = ceil(_n/(`Tmax' - `Tmin' + 1))
-			qui gen long `timevar' = `Tmin' + mod(_n-1, (`Tmax' - `Tmin' + 1))
-			
-			qui merge 1:1 `ivar' `timevar' using `temp_data', nogen
-			
-			foreach var of varlist `tempvars' `zvars' `reg_unb' ///
-				`V' `W' `obsfactors' `ft_unb' `Ti' {
-					qui replace `var' = 0 if missing(`var') /*& `touse'*/
-				}
-			
-// 		Hadarmad control
-			foreach var of varlist `tempvars' `zvars' {
-					qui replace `var' = `var'*`reg_unb' /*if `touse'*/
-			}	
-			foreach var of varlist `V' `W' `obsfactors' {
-					qui replace `var' = `var'*`ft_unb' /*if `touse'*/
-			}
-		}
-		
-		sort `ivar' `timevar'
-		qui by `ivar': gen byte `tvar' = _n /*if `touse'*/
-		qui sum `tvar' /*if `touse'*/, mean
-		local T = r(max)
-		
-
-*			- N, T, maxlag, k, exp, seed, onestep, robust
-		
-		get_maxlag, varlist("`varlist0'")
-		local maxlag = r(maxlag)
-	
-		if `balance'==1 local obs = `T'*`N'
-		else {
-			qui sum `touse' /*if `touse'*/, mean
-			local obs = r(sum)
-		}
-
-		if `T'<2 {
-			di in red "xtgmmfa requires at least 2 periods for each group"
-			exit 459
-		}
-
-		local k1 : word count `tempvars'
-		local k = `k1' - 1
-		local pow_max = `T'-1
-		local l_max = `lmax'
-			
-		if `method_i'==1 {
-			if "`er'" != "" local stat_vl = 1
-			else {
-				if `T'<3 {
-					di in red "GR statistic requires at least 3 periods" _n ///
-						"use ER statistic (option {bf:er}) if you only have 2"
-					exit 459
-				} 
-				local stat_vl = 0
-			}
-		}
-		else local stat_vl = 2
-		
-		if "`onestep'" != "" local step = 1
-		else local step = 2
-		
-		if "`robust'"  != "" local rob = 1
-		else local rob = 0
-		
-		if `wmat' == 1 local iden = 1
-		else local iden = 0
-		
-*		- cluster var		
-		local n_cl : word count `cluster'
-		if `n_cl'>1 {
-			di in red "cluster(`cluster') invalid."
-			exit 198
-		}
-		else if `n_cl'==1 {
-			local clust = 1
-
-//			Check if clustervar time-variance
-			qui xtsum `cluster' /*if `touse'*/
-			if r(sd_w) > 0 {
-				di in red "cluster variable must be time-invariant within panel"
-				exit 198
-			}
-			
-//			Check if panelvar nested within clustervar
-*				(inspired by _xtreg_chk_cl2.ado)
-
-			tempname temp1 temp2
-			
-*				Mark the first obs in each group
-			sort `cluster'		
-			qui by `cluster': gen long `temp1' = (_n==1) /*if `touse'*/
-			
-*				Cummulative sum: g=1 --> temp1 = 1, g=2 --> temp1 = 2, ...		
-			qui replace `temp1' = sum(`temp1')
-			
-*				Sort id cluster		
-			sort `ivar' `touse' `cluster'
-			
-*				If panelvar nested within cluster var: first = last obs
-			qui by `ivar' `touse' : gen long `temp2' = `temp1'[_n] - `temp1'[1]
-			qui count if `temp2' != 0 //& `touse' //& `cluster' != .
-			if r(N) > 0 {
-				di in red "panels are not nested within clusters"
-				exit 198
-			}
-			qui replace `cluster' = 0 if `cluster'==. //& `touse'
-		
-		}	
-		else local clust = 0
-			
-
-*			- Selector matrix
-		selectorMatrix, t(`T') gmm(`zvars1') iv(`zvars2') m(`mlag') 
-		tempname S
-		mat `S'=r(S)
-		local zeta = rowsof(`S')		// Number of instruments
-
-
-/*=================================================================
-		1.2. Reshape data and import to mata
-=================================================================*/
-
-		qui keep if `touse'
-
-		qui keep `ivar' `tvar' `tempvars' `zvars' ///
-					`V' `W' `obsfactors' `cluster' `Ti'
-		qui ds `ivar' `tvar', not
-			
-		qui reshape wide `r(varlist)', ///
-			i(`ivar') j(`tvar')
-
-		
-/*=================================================================
-		1.3. Estimate
-=================================================================*/
-
-		mata: estimate(`small_vl',`balance',`T', `l_max', /*
-			*/		`pow_max', `power', `N', `seed', /*
-			*/		`stat_vl', `zeta', `iden', `rob', `step', /*
-			*/		`rho', `cons', `type', `method_i', `clust', "cluster", /*
-			*/		"tempvars", "zvars", "V", "W", "`S'", "obsfactors", /*
-			*/		"b", "Vb", "`theta'", "`Vtheta'", "`Fe_hat'", /*
-			*/		"`j'", "`df_m'", "`wald'", "`waldp'", "`bic'", /*
-			*/		"`j_df'", "`j_s'", "`j_p'", "`le'", "`d'", "`r_ga'", /*
-			*/		"`G'", "Ti")
-
-		restore
-// small adjustment
-		if "`small'" != "" {
-			local df = scalar(`df_m')
-			loc dof "dof(`df')"
-		}
-	
-//	Rename rows/columns matrix	
-		mat colname b = `indepnames'
-		mat colname Vb = `indepnames'
-		mat rowname Vb = `indepnames'
-
-		cap ereturn clear
-		ereturn post b Vb, esample(`touse') dep(`depname') `dof'
-
-// Store in e()
-		*		- 	Matrix
-		ereturn mat Fe_hat 	= `Fe_hat'		
-		ereturn mat S		= `S'
-		ereturn mat Vtheta 	= `Vtheta'
-		ereturn mat theta  	= `theta'
-
-		
-		*		- 	Scalar
-		ereturn scalar N		= `obs'	
-		ereturn scalar N_g		= `N'
-		ereturn scalar Tmax		= `T_max'
-		ereturn scalar Tmin		= `T_min'
-		ereturn scalar Tbar		= `T_bar'
-		ereturn scalar k		= `k'
-		ereturn scalar r_ga		= `r_ga'
-		ereturn scalar j		= `j'
-		ereturn scalar j_s		= `j_s'
-		ereturn scalar j_p		= `j_p'
-		ereturn scalar j_df		= `j_df'	
-		ereturn scalar df_m		= `df_m'
-		
-		if "`small'" == "" {
-			ereturn scalar chi2	= `wald'
-			ereturn scalar chi2p = `waldp'
-			local waldp_r "Prob > chi2"
-		}
-		else {
-			local df_r = `N' - `r_ga'
-			ereturn scalar df_r = `df_r'
-			ereturn scalar F	= `wald'
-			ereturn scalar F_p 	= `waldp'
-			ereturn local small "`small'"
-			local waldp_r "Prob > F"			
-		}
-	
-		ereturn scalar Le		= `le'
-		ereturn scalar d		= `d'
-		ereturn scalar bic		= `bic'
-		ereturn scalar type		= `type'
-		
-		*		-	Macros
-
-		if "`onestep'"=="" {
-			if "`robust'"!="" & "`cluster'"=="" {
-				ereturn local clustvar "`panelvar'"
-				ereturn scalar N_clust	= `N'
-				ereturn local vcetype "WC-Robust"
-			}
-			else if "`cluster'"!="" {
-				ereturn local clustvar "`cluster'"
-				ereturn scalar N_clust	= `G'
-				ereturn local vcetype "WC-Robust"
-			}
-			ereturn local gmmstep	"twostep"
-		}
-		else {
-			if "`cluster'"!="" {
-				ereturn local clustvar "`cluster'"
-				ereturn scalar N_clust	= `G'
-				ereturn local vcetype "Robust"
-			}
-			else {
-				ereturn local clustvar "`panelvar'"				
-				ereturn scalar N_clust	= `N'
-				ereturn local vcetype "Robust"
-			}
-			ereturn local gmmstep	"onestep"
-		}
-
-		if "`method'"=="regu" {
-			if "`er'" != "" ereturn local stat_note "Estimated Le (ER)"
-			else ereturn local stat_note "Estimated Le (GR)"
-			ereturn local method "Regularization"
-		}
-		else {
-			ereturn local stat_note "Selected Le (BIC)"
-			ereturn local method "Best-Subset Selection (BSS)"			
-		}
-		
-		if "`noconstant'"!="" ereturn local constant "noconstant"
-		else ereturn local constant "hasconstant"
-		
-		ereturn local tvar		"`timevar'"
-		ereturn local ivar		"`panelvar'"
-		ereturn local cmdline 	"`cmdline'"
-		ereturn local cmd 		"xtgmmfa"
-		
-	}	// end replay-block
-	
-/*=================================================================
-		1.4 Display
-=================================================================*/
-
-	if e(wald) > 999999 {
-		local cfmt `"%10.0g"'
-	}
-	else	local cfmt `"%10.3f"'	
-	
-	if "`robust'"!="" | "`cluster'"!="" | "`onestep'"=="" {
-		local overid "Hansen"
-	}
-	else local overid "Sargan"
-	
-	di
-	di in gr "Fixed-T Factor-Augmented Panel Data Regression" _n
-	di in gr "Estimator:"	_col(15) in ye "Asymptotically linear `e(gmmstep)' GMM"
-	di in gr "Method:"		_col(15) in ye "`e(method)'" 
-	di in gr "Reference:"	_col(15) in ye "Juodis & Sarafidis (2022)"	_n
-	
-	di in gr "Number of instruments"			///
-		_col(25) "= " in ye %10.0g e(j) 		///
-		_col(49) in gr "Number of obs" 			///
-		_col(67)  "= " in ye %10.0g e(N)
-
-	di in gr "Estimated coefficients"			///
-		_col(25) "= " in ye %10.0g e(r_ga)   	///
-		_col(49) in gr "Number of groups" 		///
-		_col(67)  "= " in ye %10.0g e(N_g)
-	di
-	di in gr "`e(stat_note)'"					///
-		_col(25) "= " in ye %10.0g e(Le)		///
-		_col(49) in gr "Time periods:" 		///
-		_col(63) "min" _col(67) "= " in ye %10.0g e(Tmin)
-
-	di in gr "`overid' chi2("					///
-				 in ye e(j_df)					///
-				 in gr ")"						///
-		_col(25) "= " in ye %10.4f e(j_s)		///		
-		_col(63) in gr "avg" _col(67) "=  " in ye %9.1f e(Tbar)
-
-	di in gr "Prob > chi2"						///
-		_col(25) "= " in ye %10.4f e(j_p) 		///		
-		_col(63) in gr "max" _col(67) "= " in ye %10.0g e(Tmax)
-	di
-	if "`small'" == "" {
-		di _col(49) in gr "Wald chi2(" 			///
-					 in ye e(df_m)				///
-					 in gr ")"					///
-			_col(67)  "= " in ye `cfmt' `wald'		
-	}
-	else {
-	di _col(49) in gr "F(" 						///
-				 in ye e(df_m)					///
-				 in gr ", "						///
-				 in ye e(df_r)					///
-				 in gr ")"						///
-		_col(67)  "= " in ye `cfmt' `wald'		
-	}
-		
-	di in gr "BIC"								///
-		_col(25) "= " in ye %10.4f e(bic) 		///
-		_col(49) in gr "`waldp_r'" 				///
-		_col(67)  "= " in ye %10.4f `waldp'		
-	di
-		
-	ereturn display, l(`level') noemptycells
-	
-end		// end program defines xtgmmfa
-
-
-/*==============================================================================
-						Program define get_maxlag
-==============================================================================*/
-
-cap program drop get_maxlag
-program define get_maxlag, rclass
-    syntax , VARLIST(string) [VAR(string)]
-
-    local maxlag = 0
-    local foundvar = 0
-
-    foreach token of local varlist {
-        local lag = 0
-        local vname ""
-
-        //  Use for l(1/3).x   l2.x   l.x   x
-        if regexm("`token'", "L\(([0-9]+)/([0-9]+)\)\.([A-Za-z0-9_]+)") {
-            local vname = regexs(3)
-            local lag = regexs(2)
+    if replay() {
+        if "`e(cmd)'" != "xtgmmfa" {
+            di in red "last estimates not found"
+            exit 301
         }
-        else if regexm("`token'", "L([0-9]+)\.([A-Za-z0-9_]+)") {
-            local vname = regexs(2)
-            local lag = regexs(1)
-        }
-        else if regexm("`token'", "L\.([A-Za-z0-9_]+)") {
-            local vname = regexs(1)
-            local lag = 1
-        }
-        else {
-            local vname = "`token'"
-            local lag = 0
-        }
-
-        // If var() is specified, return maxlag of var
-        if "`var'" != "" {
-            if "`vname'" == "`var'" {
-                if `lag' > `maxlag' local maxlag = `lag'
-                local foundvar = 1
-            }
-        }
-        // If not, return maxlag of varlist
-        else {
-            if `lag' > `maxlag' local maxlag = `lag'
-        }
+        syntax [, Level(cilevel)]
+        mhb_display, level(`level')
+        exit
     }
 
-    if "`var'" != "" & `foundvar' == 0 {
-        di as err "`var' is not in varlist."
+*-- 1. parse varlist, repeated gmmvars(), other options
+    syntax varlist(num fv ts) [fweight aweight pweight/] [if] [in] [, *]
+    local mhb_cmdline xtgmmfa `0'
+    local mhb_wtype "`weight'"
+    local mhb_wexp `"`exp'"'
+    local mhb_varlist `varlist'
+    marksample mhb_touse, novarlist
+
+    tempname mhb_tn_spec mhb_tn_opt mhb_tn_b mhb_tn_V mhb_tn_Fe mhb_tn_theta mhb_tn_Vtheta mhb_tn_wt
+    tempname mhb_ts_J mhb_ts_Jdf mhb_ts_rkD mhb_ts_sumw mhb_ts_ncand mhb_ts_bic mhb_ts_Le mhb_ts_N mhb_ts_G mhb_ts_T mhb_ts_zeta mhb_ts_d mhb_ts_rank mhb_ts_np mhb_ts_nobs mhb_ts_dfr mhb_ts_wa mhb_ts_wa_df mhb_ts_wb mhb_ts_wb_df mhb_ts_vbad mhb_ts_Tmin mhb_ts_Tavg mhb_ts_Tmax
+    local mhb_specmat_init 1
+    local mhb_zvars ""
+    local mhb_zexpr ""
+
+*_	clone from xtabond2.ado
+    local 0 `", `options'"'
+    syntax [, GMMvars(string asis) *]
+    local mhb_ng 0
+    while `"`gmmvars'"' != "" {
+        local ++mhb_ng
+        mhb_pgmm `gmmvars'
+        local mhb_lo   = r(lo)
+        local mhb_hi   = r(hi)
+        local mhb_col  = r(col)
+        local mhb_pres = r(pres)
+        local mhb_gv `r(vars)'
+        _rmcoll `mhb_gv' if `mhb_touse'
+        local mhb_gv `r(varlist)'
+        foreach mhb_tk in `mhb_gv' {
+            if substr("`mhb_tk'", 1, 2) == "o." {
+                continue
+            }
+            local mhb_ix 0
+            local mhb_c 0
+            foreach mhb_e of local mhb_zexpr {
+                local ++mhb_c
+                if "`mhb_e'" == "`mhb_tk'" {
+                    local mhb_ix `mhb_c'
+                }
+            }
+            if `mhb_ix' == 0 {
+                fvrevar `mhb_tk'
+                local mhb_zvars `mhb_zvars' `r(varlist)'
+                local mhb_zexpr `mhb_zexpr' `mhb_tk'
+                local mhb_ix : word count `mhb_zexpr'
+            }
+            if `mhb_specmat_init' {
+                matrix `mhb_tn_spec' = ///
+                    (`mhb_ix', `mhb_lo', `mhb_hi', `mhb_col', `mhb_pres')
+                local mhb_specmat_init 0
+            }
+            else {
+                matrix `mhb_tn_spec' = `mhb_tn_spec' \ ///
+                    (`mhb_ix', `mhb_lo', `mhb_hi', `mhb_col', `mhb_pres')
+            }
+        }
+        local 0 `", `options'"'
+        syntax [, GMMvars(string asis) *]
+    }
+    if `mhb_ng' == 0 {
+        di in red "at least one gmmvars() is required"
         exit 198
     }
 
-    return scalar maxlag = `maxlag'
-end
+    local 0 `", `options'"'
+    syntax [, UNOFactors(string asis) IVvars(varlist ts fv) Wmat(integer 2) Robust ///
+              CLuster(varname) Level(cilevel) NOCONStant OBSFactors(varlist ts fv) ///
+              rho(real 0.75) small]
+    if !inlist(`wmat', 1, 2) {
+        di in red "wmat(`wmat') invalid"
+        exit 198
+    }
+    if `rho' <= 0 {
+        di in red "rho must be positive"
+        exit 198
+    }
 
+*-- 2. parse unofactors(Vlist, options)
+    local 0 `"`unofactors'"'
+    syntax [anything(name=mhb_vlist)] [, Wvar(varname) BSS TYpe(integer 1) Lmax(integer 2) ///
+              SEEd(integer 120) Power(integer 0) ER NOREGressor LE(integer -1)]
+    local mhb_wvar `wvar'
+    local mhb_type `type'
+    local mhb_lmax `lmax'
+    local mhb_seed `seed'
+    local mhb_power `power'
+    local mhb_bss = ("`bss'" != "")
+    local mhb_er  = ("`er'" != "")
+    local mhb_le  = `le'
+    local mhb_noreg "`noregressor'"
+    if `mhb_le' == -1 {
+        local mhb_le .
+    }
+    if !inlist(`mhb_type', 1, 2, 3) {
+        di in red "type(`mhb_type') invalid"
+        exit 198
+    }
 
-/*==============================================================================
-							SELECTOR MATRIX GENERATOR
-==============================================================================*/
+*-- 3. panel setup, variables, sample
+    qui xtset
+    local mhb_pv "`r(panelvar)'"
+    local mhb_tv "`r(timevar)'"
+    local mhb_delta = `r(tdelta)'
+    if "`mhb_pv'" == "" {
+        di in red "data must be xtset"
+        exit 459
+    }
+    markout `mhb_touse' `mhb_pv' `mhb_tv'
+    if "`cluster'" != "" {
+        markout `mhb_touse' `cluster'
+    }
 
-cap program drop selectorMatrix
-program define selectorMatrix, rclass
-    version 11
-    
-    syntax, Tmax(integer) ///
-            GMMvars(varlist) [IVvars(varlist) Maxlag(integer -1)]
-
-	local k_gmm : word count `gmmvars'
-	local k_iv	: word count `ivvars'
-
-//	1. Create S_GMM
-	
-    // Set default maxlags if not specified
-    if `maxlag' == -1 local maxlag = `tmax'
-    
-    *   Step 1. Create S_var_t
-
-	foreach var in `gmmvars' {
-		if `maxlag' >= `tmax' {
-			forvalues t = 1/`tmax' {
-				tempname S_`var'_`t'             
-				mat `S_`var'_`t'' = J(`t', `tmax', 0)
-				forvalues i = 1/`t' {
-					mat `S_`var'_`t''[`i', `i'] = 1
-				}				
-			}
-		}
-		else {
-			local inst_num = `maxlag'
-			// While t <= inst_num
-			forvalues t = 1/`inst_num' {
-				tempname S_`var'_`t'            
-				mat `S_`var'_`t'' = J(`t', `tmax', 0)        
-				forvalues i = 1/`t' {
-					mat `S_`var'_`t''[`i', `i'] = 1
-				}
-			}
-			
-			// While t > inst_num (rolling window)
-			local t_start = `inst_num' + 1
-			forvalues t = `t_start'/`tmax' {
-				tempname S_`var'_`t'
-				mat `S_`var'_`t'' = J(`inst_num', `tmax', 0)
-				local col_start = `t' - `inst_num' + 1
-				forvalues i = 1/`inst_num' {
-					local col = `col_start' + `i' - 1
-					mat `S_`var'_`t''[`i', `col'] = 1
-				}
-			}
-		}
-	}
-	
-                        
-    *   Step 2. Create S_t = blockdiag(S_var_t)
-    
-    forvalues t = 1/`tmax' {
-        tempname S_`t'
-        
-        // First var = l.depvar
-        gettoken first_var rest_vars : gmmvars
-        
-        matr `S_`t'' = `S_`first_var'_`t''
-        
-        // Remain vars
-        foreach var in `rest_vars' {
-            mata: st_matrix("`S_`t''", /*
-                        */  blockdiag(st_matrix("`S_`t''"), /*
-                        */  st_matrix("`S_`var'_`t''")))
+*-- sampling weights (must be constant within panel)
+    local mhb_wcode 0
+    local mhb_swvar ""
+    if "`mhb_wtype'" != "" {
+        tempvar mhb_sw mhb_swmin mhb_swmax
+        qui gen double `mhb_sw' = `mhb_wexp' if `mhb_touse'
+        markout `mhb_touse' `mhb_sw'
+        qui count if `mhb_touse' & `mhb_sw' < 0
+        if r(N) > 0 {
+            di in red "negative weights not allowed"
+            exit 402
         }
-		
-		// Add columns to S_`t': number of columns = k_iv*tmax
-		if `k_iv'>0 {
-			mat `S_`t'' = `S_`t'', J(rowsof(`S_`t''), `k_iv'*`tmax', 0)
-		}
-    }
- 
-	*   Step 3. Create matrix S=blockdiag(S_t)
-	
-    tempname S_final
-    mat `S_final' = `S_1'
-  
-    forvalues t = 2/`tmax' {
-        mata: st_matrix("`S_final'", /*
-                    */  blockdiag(st_matrix("`S_final'"), /*
-                    */  st_matrix("`S_`t''")))
-    }
-
-//	2. Create S_IV
-	if `k_iv'>0 {
-		tempname S_iv S_iv_k
-		local c_S = colsof(`S_final')
-		mat `S_iv' = J(`k_iv', `c_S', 0)
-	
-		forvalues k=1/`k_iv' {			
-			forvalues t=1/`tmax' {				
-				mat `S_iv'[`k', `k_gmm'*`t'*`tmax'+(`t'-1)*`k_iv'*`tmax'+`t' + (`k'-1)*`tmax']=1
-			}
-		}
-
-		mat `S_final' = `S_final' \ `S_iv'
-	}
-    
-    // Return matrix S
-    return matrix S = `S_final'
-                    
-end
-
-/*==============================================================================
-						DEFINE MATA FUNCTIONS
-				1) blockdiag()
-==============================================================================*/
-
-mata:
-mata clear
-
-real matrix blockdiag(real matrix A, real matrix B)
-{
-    real matrix result
-    real scalar ra, ca, rb, cb
-    
-    ra = rows(A)
-    ca = cols(A)
-    rb = rows(B)
-    cb = cols(B)
-    
-    result = J(ra + rb, ca + cb, 0)
-    result[1..ra, 1..ca] = A
-    result[(ra+1)..(ra+rb), (ca+1)..(ca+cb)] = B
-    
-    return(result)
-}
-
-
-
-/*==============================================================================
-				2) data2MataMat()
-==============================================================================*/
-
-/*==============================================================================
-		2.1 data2MataMat()
-		Input:
-			rowvector 	:	include varnames stored in local macro
-			k			:	number of columns of rowvector
-			T         	: 	number of time period
-		Output:
-			MataMat		:	Tx(kN) data matrix
-==============================================================================*/
-
-real matrix function data2MataMat(string rowvector M_vars, real scalar k, real scalar T)
-{
-    // Create varlist in wide data
-    string rowvector allvars
-    allvars = J(1, k*T, "")
-    for (j=1; j<=k; j++) {
-        for (t=1; t<=T; t++) {
-            allvars[(j-1)*T + t] = M_vars[j] + strofreal(t)
-        }
-    }
-
-    // Read data from STATA
-    real matrix M_data
-    //st_view(M_data = ., ., allvars)
-	M_data = st_data(., allvars)
-    N = rows(M_data)
-
-    // Create empty MataMat: T x (k*N)
-    real matrix MataMat
-    MataMat = J(T, k*N, .)
-
-    // Fill data
-    for (i=1; i<=N; i++) {
-        Vi = J(T, k, .)
-        for (j=1; j<=k; j++) {
-            Vi[., j] = (M_data[i, (j-1)*T + 1 .. j*T])'
-        }
-        col1 = (i-1)*k + 1
-        col2 = i*k
-        MataMat[., col1..col2] = Vi
-    }
-	
-    return(MataMat)
-}
-
-/*==============================================================================
-		2.2 get_MataMat_i()
-			~ Take Mata matrix Txk for individual i, i=1,N
-==============================================================================*/
-real matrix function get_MataMat_i(real matrix MataMat, real scalar i, real scalar k)
-{
-    col1 = (i-1)*k + 1
-    col2 = i*k
-    return(MataMat[., col1..col2])
-}
-
-
-/*==============================================================================
-				3) Wmaker()
-==============================================================================*/
-
-real matrix Wmaker(string rowvector Wvars, /*
-	*/	real scalar pow_max,/*
-	*/	real scalar w_pow, /*
-	*/	real scalar type) {
-	
-	string rowvector Wvars1
-	Wvars1 = Wvars + "1"	// name + 1 = name1
-
-//  st_view(Wdata = ., ., W_t1vars)
-	data = st_data(., Wvars1)
-	N = rows(data)
-	if (type==2) {
-		W = data :^w_pow
-//		W[data :== 0] = 0
-	}	
-	else {
-		W = data :^ J(N, 1, 0..(pow_max-1))
-	}
-	return(W)	
-}
-
-
-/*==============================================================================
-				4) combs_maker
-==============================================================================*/
-
-function combs_maker(real scalar L, real scalar R)
-{
-    real matrix result
-    real scalar n_comb, i, j, k
-    real rowvector current
-    
-    n_comb = comb(R, L)
-    result = J(n_comb, L, .)
-    
-    // 1st combination: [1, 2, ..., L]
-    current = J(1, L, .)
-    for (j = 1; j <= L; j++) {
-        current[j] = j
-    }
-    result[1, .] = current
-    
-    // other combinations
-    k = 1
-    while (k < n_comb) {
-        // Finding from right to left
-        i = L
-        while (i >= 1 && current[i] == R - L + i) {
-            i--
-        }
-        
-        if (i >= 1) {
-            current[i] = current[i] + 1
-			
-            for (j = i + 1; j <= L; j++) {
-                current[j] = current[j-1] + 1
+        * zero weights are dropped
+        qui replace `mhb_touse' = 0 if `mhb_sw' == 0
+        if "`mhb_wtype'" == "fweight" {
+            qui count if `mhb_touse' & `mhb_sw' != int(`mhb_sw')
+            if r(N) > 0 {
+                di in red "frequency weights must be integers"
+                exit 401
             }
-            
-            k++
-            result[k, .] = current
+        }
+        qui egen double `mhb_swmin' = min(`mhb_sw') if `mhb_touse', by(`mhb_pv')
+        qui egen double `mhb_swmax' = max(`mhb_sw') if `mhb_touse', by(`mhb_pv')
+        qui count if `mhb_touse' & (`mhb_swmax' - `mhb_swmin') > 1e-9*abs(`mhb_swmax')
+        if r(N) > 0 {
+            di in red "weights must be constant within panel"
+            exit 101
+        }
+        if "`mhb_wtype'" == "fweight" {
+            local mhb_wcode 1
+        }
+        else if "`mhb_wtype'" == "aweight" {
+            local mhb_wcode 2
+        }
+        else {
+            local mhb_wcode 3
+        }
+        local mhb_swvar `mhb_sw'
+    }
+
+    local mhb_cons = ("`noconstant'" == "")
+    local mhb_nocons ""
+    if !`mhb_cons' {
+        local mhb_nocons nocons
+    }
+    * drop collinear regressors (omitted variables are flagged o.)
+    _rmcoll `mhb_varlist' if `mhb_touse', `mhb_nocons'
+    local mhb_rl "`r(varlist)'"
+    gettoken mhb_first : mhb_rl
+    if substr("`mhb_first'", 1, 2) == "o." {
+        di in red "dependent variable is omitted because of collinearity"
+        exit 198
+    }
+    local mhb_varlist ""
+    foreach mhb_tk of local mhb_rl {
+        if substr("`mhb_tk'", 1, 2) != "o." {
+            local mhb_varlist `mhb_varlist' `mhb_tk'
         }
     }
-    
-    return(result)
-}
+    fvexpand `mhb_varlist' if `mhb_touse'
+    local mhb_names "`r(varlist)'"
+    gettoken mhb_depname mhb_regnames : mhb_names
+    fvrevar `mhb_varlist' if `mhb_touse'
+	local mhb_varlist_fv `r(varlist)'
+    gettoken mhb_dep mhb_xvars : mhb_varlist_fv
+    local mhb_nreg : word count `mhb_xvars'
 
-
-/*==============================================================================
-				5) Fe_selector
-==============================================================================*/
-
-transmorphic function Fe_selector(real scalar L,  real matrix F_hat)
-{
-    real scalar R, n_comb, p
-    real matrix combs
-    transmorphic Fe_sel
-
-    R = cols(F_hat)
-    
-    n_comb = comb(R, L)
-    
-    // Store results in array
-    Fe_sel = asarray_create("real", 1)
-    combs = combs_maker(L, R)
-	
-    for (p = 1; p <= n_comb; p++) {
-		asarray(Fe_sel, p, F_hat[., combs[p, .]])
+    tempvar mhb_es mhb_i mhb_tp mhb_one
+    qui gen byte `mhb_es' = `mhb_touse'
+    markout `mhb_es' `mhb_dep' `mhb_xvars'
+    qui gen byte `mhb_one' = 1
+    if `mhb_cons' {
+        local mhb_xvars `mhb_xvars' `mhb_one'
+        local mhb_regnames `mhb_regnames' _cons
+        local mhb_zvars `mhb_zvars' `mhb_one'
+        local mhb_zexpr `mhb_zexpr' _cons
+        local mhb_ix : word count `mhb_zexpr'
+        matrix `mhb_tn_spec' = `mhb_tn_spec' \ (`mhb_ix', 0, 0, 1, 0)
     }
-    
-    return(Fe_sel)
-}
+    if "`ivvars'" != "" {
+        if `mhb_cons' {
+            _rmcoll `ivvars' `mhb_one' if `mhb_touse', noconstant
+        }
+        else {
+            _rmcoll `ivvars' if `mhb_touse'
+        }
+        local mhb_ivl `r(varlist)'
+        foreach mhb_tk in `mhb_ivl' {
+            if substr("`mhb_tk'", 1, 2) == "o." | "`mhb_tk'" == "`mhb_one'" {
+                continue
+            }
+            fvrevar `mhb_tk'
+            local mhb_zvars `mhb_zvars' `r(varlist)'
+            local mhb_zexpr `mhb_zexpr' `mhb_tk'
+            local mhb_ix : word count `mhb_zexpr'
+            matrix `mhb_tn_spec' = `mhb_tn_spec' \ (`mhb_ix', 0, 0, 1, 0)
+        }
+    }
+
+    * factor proxy variables: Vlist plus (Y, X) unless noregressor
+    local mhb_xnames = subinstr("`mhb_regnames'", "_cons", "", .)
+    if "`mhb_vlist'" == "" {
+        if "`mhb_noreg'" != "" {
+            di in red "noregressor cannot be specified with an empty Vlist."
+            di in red "unofactors(`unofactors') invalid."
+            exit 198
+        }
+        local mhb_vexpr `mhb_depname' `mhb_xnames'
+    }
+    else {
+        if "`mhb_noreg'" != "" {
+            local mhb_vexpr `mhb_vlist'
+        }
+        else {
+            local mhb_vexpr `mhb_vlist' `mhb_depname' `mhb_xnames'
+        }
+    }
+    fvrevar `mhb_vexpr' if `mhb_touse'
+    local mhb_vvars `r(varlist)'
+    qui _rmcoll `mhb_vvars' if `mhb_touse', nocons forcedrop
+    local mhb_vvars `r(varlist)'
+    if `mhb_type' == 1 {
+        gettoken mhb_v1 mhb_vrest : mhb_vvars
+        local mhb_vvars `mhb_v1'
+    }
+    local mhb_vtmp ""
+    local mhb_vout 0
+    foreach mhb_vi of local mhb_vvars {
+        qui xtsum `mhb_vi' if `mhb_touse'
+        if r(sd_w) == 0 {
+            local ++mhb_vout
+        }
+        else {
+            local mhb_vtmp `mhb_vtmp' `mhb_vi'
+        }
+    }
+    if `mhb_vout' > 0 {
+        di in red "Vlist (including y and X) must be time-varying."
+        di in red "`mhb_vout' time-invariant variables are dropped."
+    }
+    local mhb_vvars `mhb_vtmp'
+    if "`mhb_vvars'" == "" {
+        di in red "no time-varying variable available to construct factor proxies"
+        exit 198
+    }
+
+    local mhb_hvars ""
+    if "`obsfactors'" != "" {
+        _rmcoll `obsfactors' if `mhb_touse', `mhb_nocons'
+        local mhb_ol ""
+        foreach mhb_tk in `r(varlist)' {
+            if substr("`mhb_tk'", 1, 2) != "o." {
+                local mhb_ol `mhb_ol' `mhb_tk'
+            }
+        }
+        if "`mhb_ol'" != "" {
+            fvrevar `mhb_ol' if `mhb_touse'
+            local mhb_hvars `r(varlist)'
+        }
+    }
+    else {
+        local mhb_hvars ""
+    }
+
+    qui egen long `mhb_i' = group(`mhb_pv') if `mhb_touse'
+    qui sum `mhb_tv' if `mhb_touse', meanonly
+    qui gen long `mhb_tp' = round((`mhb_tv' - r(min)) / `mhb_delta') + 1 if `mhb_touse'
+
+    local mhb_clvar `cluster'
+    if "`mhb_clvar'" != "" {
+        qui xtsum `mhb_clvar' if `mhb_touse'
+        if r(sd_w) > 0 {
+            di in red "cluster variable must be time-invariant within panel"
+            exit 198
+        }
+    }
+
+*-- 4. option matrix for Mata (read by name)
+    local mhb_robust  = ("`robust'" != "")
+    local mhb_small   = ("`small'" != "")
+    matrix `mhb_tn_opt' = (`mhb_cons', `mhb_type', `mhb_power', `mhb_lmax', `mhb_bss', ///
+                         `mhb_er', `mhb_le', `wmat', `mhb_robust', ///
+                         `mhb_small', `rho', `mhb_seed', `mhb_wcode')
+
+    local mhb_idvar `mhb_i'
+    local mhb_tpvar `mhb_tp'
+
+*-- 5. estimate
+    preserve
+    qui keep if `mhb_touse'
+    qui keep `mhb_i' `mhb_tp' `mhb_dep' `mhb_xvars' `mhb_zvars' `mhb_vvars' `mhb_wvar' ///
+             `mhb_hvars' `mhb_clvar' `mhb_swvar' `mhb_touse'
+    mata: mhb_estimate()
+    restore
+
+*-- 6. post results (same names as the original xtgmmfa, plus new ones)
+    matrix colnames `mhb_tn_b' = `mhb_regnames'
+    matrix colnames `mhb_tn_V' = `mhb_regnames'
+    matrix rownames `mhb_tn_V' = `mhb_regnames'
+    local mhb_dof ""
+    if `mhb_small' {
+        local mhb_dof "dof(`=scalar(`mhb_ts_dfr')')"
+    }
+    ereturn post `mhb_tn_b' `mhb_tn_V', esample(`mhb_es') depname(`mhb_depname') ///
+        obs(`=scalar(`mhb_ts_nobs')') `mhb_dof'
+
+    ereturn matrix Fe_hat = `mhb_tn_Fe'
+    ereturn matrix theta  = `mhb_tn_theta'
+    ereturn matrix Vtheta = `mhb_tn_Vtheta'
+    ereturn matrix spec   = `mhb_tn_spec'
+
+    * unit weights actually used (stored only if they fit in a Stata matrix)
+    if "`mhb_wtype'" != "" {
+        cap confirm matrix `mhb_tn_wt'
+        if _rc == 0 {
+            ereturn matrix wt = `mhb_tn_wt'
+        }
+        else {
+            di in gr "(note: weights not stored in e(wt); number of units exceeds matsize)"
+        }
+    }
+
+    ereturn scalar N_g    = scalar(`mhb_ts_N')
+    ereturn scalar Tmax   = scalar(`mhb_ts_Tmax')
+    ereturn scalar Tmin   = scalar(`mhb_ts_Tmin')
+    ereturn scalar Tbar   = scalar(`mhb_ts_Tavg')
+    ereturn scalar Teq    = scalar(`mhb_ts_T')
+    ereturn scalar k      = `mhb_nreg' + `mhb_cons'
+    ereturn scalar r_ga   = scalar(`mhb_ts_rank')
+    ereturn scalar n_par  = scalar(`mhb_ts_np')
+    ereturn scalar j      = scalar(`mhb_ts_zeta')
+    ereturn scalar d      = scalar(`mhb_ts_d')
+    ereturn scalar j_s    = scalar(`mhb_ts_J')
+    ereturn scalar j_df   = scalar(`mhb_ts_Jdf')
+    ereturn scalar rank_D = scalar(`mhb_ts_rkD')
+    ereturn scalar sum_w  = scalar(`mhb_ts_sumw')
+    if `mhb_bss' {
+        ereturn scalar n_cand = scalar(`mhb_ts_ncand')
+    }
+    ereturn scalar j_p    = chi2tail(scalar(`mhb_ts_Jdf'), scalar(`mhb_ts_J'))
+    ereturn scalar Le     = scalar(`mhb_ts_Le')
+    ereturn scalar bic    = scalar(`mhb_ts_bic')
+    ereturn scalar type   = `mhb_type'
+    ereturn scalar G      = scalar(`mhb_ts_G')
+    ereturn scalar v_bad  = scalar(`mhb_ts_vbad')
+	
+    ereturn scalar df_m   = scalar(`mhb_ts_wa_df')
+	ereturn scalar df_b_m   = scalar(`mhb_ts_wb_df')
+	
+    if `mhb_small' {
+        ereturn scalar df_r     = scalar(`mhb_ts_dfr')
+        ereturn scalar F        = scalar(`mhb_ts_wa')/e(df_m)
+        ereturn scalar F_p      = Ftail(e(df_m), e(df_r), e(F))
+        ereturn scalar F_b      = scalar(`mhb_ts_wb')/e(df_b_m)
+        ereturn scalar F_b_p    = Ftail(e(df_b_m), e(df_r), e(F_b))		
+        ereturn local small "small"
+    }
+    else {
+        ereturn scalar chi2     = scalar(`mhb_ts_wa')
+        ereturn scalar chi2_p   = chi2tail(e(df_m), e(chi2))
+        ereturn scalar chi2_b   = scalar(`mhb_ts_wb')
+        ereturn scalar chi2_b_p = chi2tail(e(df_b_m), e(chi2_b))		
+    }
+
+    * two-step only
+    if "`mhb_clvar'" != "" {
+        ereturn local clustvar "`mhb_clvar'"
+        ereturn scalar N_clust = scalar(`mhb_ts_G')
+        ereturn local vcetype "WC-Robust"
+    }
+    else if `mhb_robust' {
+        ereturn local clustvar "`mhb_pv'"
+        ereturn scalar N_clust = scalar(`mhb_ts_N')
+        ereturn local vcetype "WC-Robust"
+    }
+    ereturn local gmmstep "twostep"
+    if "`mhb_wtype'" != "" {
+        ereturn local wtype "`mhb_wtype'"
+        ereturn local wexp "= `mhb_wexp'"
+    }
+    ereturn local overid "Hansen"
+    if `mhb_le' < . {
+        ereturn local stat_note "Specified Le"
+    }
+    else if `mhb_bss' {
+        ereturn local stat_note "Selected Le (BIC)"
+    }
+    else if `mhb_er' {
+        ereturn local stat_note "Estimated Le (ER)"
+    }
+    else {
+        ereturn local stat_note "Estimated Le (GR)"
+    }
+    if `mhb_bss' {
+        ereturn local method "Best-Subset Selection (BSS)"
+    }
+    else {
+        ereturn local method "Regularization"
+    }
+    if `mhb_cons' {
+        ereturn local constant "hasconstant"
+    }
+    else {
+        ereturn local constant "noconstant"
+    }
+    ereturn local tvar "`mhb_tv'"
+    ereturn local ivar "`mhb_pv'"
+    ereturn local cmdline "`mhb_cmdline'"
+    ereturn local cmd "xtgmmfa"
+
+
+    mhb_display, level(`level')
+end
+
+/*------------------------------------------------------------------------------
+    Parse one gmmvars(varlist [, lag(a b) mlag(#) collapse presample])
+------------------------------------------------------------------------------*/
+cap program drop mhb_pgmm
+program define mhb_pgmm, rclass
+    version 13
+    syntax varlist(ts fv) [, LAG(numlist missingokay min=2 max=2) MLAG(integer -1) ///
+                             COLlapse PREsample]
+    if "`lag'" == "" {
+        if `mlag' > 0 {
+            local mhb_lo 0
+            local mhb_hi = `mlag' - 1
+        }
+        else {
+            local mhb_lo 0
+            local mhb_hi .
+        }
+    }
+    else {
+        tokenize `lag'
+        local mhb_lo `1'
+        local mhb_hi `2'
+    }
+    if "`mhb_hi'" != "." {
+        if `mhb_lo' > `mhb_hi' {
+            di in red "lag() invalid: lower limit exceeds upper limit"
+            exit 198
+        }
+    }
+    return local vars `varlist'
+    return scalar lo   = `mhb_lo'
+    return scalar hi   = `mhb_hi'
+    return scalar col  = ("`collapse'" != "")
+    return scalar pres = ("`presample'" != "")
+end
+
+/*------------------------------------------------------------------------------
+    Display results
+------------------------------------------------------------------------------*/
+cap program drop mhb_display
+program define mhb_display
+    version 13
+    syntax [, Level(cilevel)]
+
+    if e(wald_a) > 999999 {
+        local mhb_cfmt `"%10.0g"'
+    }
+    else {
+        local mhb_cfmt `"%10.3f"'
+    }
+
+    di
+    di in gr "Fixed-T Factor-Augmented Panel Data Regression" _n
+    di in gr "Estimator:"   _col(15) in ye "Asymptotically linear `e(gmmstep)' GMM"
+    di in gr "Method:"      _col(15) in ye "`e(method)'"
+    di in gr "Reference:"   _col(15) in ye "Juodis & Sarafidis (2022)" _n
+
+    di in gr "Number of instruments"  ///
+        _col(25) "= " in ye %10.0g e(j)    ///
+        _col(49) in gr "Number of obs" ///
+        _col(67) "= " in ye %10.0g e(N)
+
+    di in gr "Total coefficients" ///
+        _col(25) "= " in ye %10.0g e(r_ga) ///
+        _col(49) in gr "Number of groups" ///
+        _col(67) "= " in ye %10.0g e(N_g)
+    di
+    di in gr "`e(stat_note)'" ///
+        _col(25) "= " in ye %10.0g e(Le) ///
+        _col(49) in gr "Time periods:" ///
+        _col(63) "min" _col(67) "= " in ye %10.0g e(Tmin)
+
+    di in gr "BIC" ///
+        _col(25) "= " in ye %10.4f e(bic) ///		
+        _col(63) in gr "avg" _col(67) "=  " in ye %9.1f e(Tbar)
+
+    di  ///
+        _col(63) in gr "max" _col(67) "= " in ye %10.0g e(Tmax)
+    di
+    if "`e(small)'" == "" {
+		di in gr "`e(overid)' chi2(" ///
+			in ye e(j_df) ///
+			in gr ")" ///
+			_col(25) "= " in ye %10.4f e(j_s) ///
+			_col(49) in gr "Wald chi2(" ///
+            in ye e(df_m) ///
+            in gr ")" ///
+            _col(67) "= " in ye `mhb_cfmt' e(chi2)
+        local mhb_wald_p = e(chi2_p)
+        local mhb_wald_l "Prob > chi2"
+    }
+    else {
+		di in gr "`e(overid)' chi2(" ///
+			in ye e(j_df) ///
+			in gr ")" ///
+			_col(25) "= " in ye %10.4f e(j_s) ///
+			_col(49) in gr "F(" ///
+            in ye e(df_m) ///
+            in gr ", " ///
+            in ye e(df_r) ///
+            in gr ")" ///
+            _col(67) "= " in ye `mhb_cfmt' e(F)
+        local mhb_wald_p = e(F_p)
+        local mhb_wald_l "Prob > F"
+    }
+		
+    di in gr "Prob > chi2" ///
+        _col(25) "= " in ye %10.4f e(j_p) ///		
+        _col(49) in gr "`mhb_wald_l'" ///
+        _col(67) "= " in ye %10.4f `mhb_wald_p'
+		
+    if "`e(small)'" == "" {
+		di  ///
+			_col(49) in gr "Wald chi2(" ///
+            in ye e(df_b_m) ///
+            in gr ")" ///
+            _col(67) "= " in ye `mhb_cfmt' e(chi2_b)
+        local mhb_wald_b_p = e(chi2_b_p)
+        local mhb_wald_b_l "Prob > chi2"
+    }
+    else {
+		di ///
+			_col(49) in gr "F(" ///
+            in ye e(df_b_m) ///
+            in gr ", " ///
+            in ye e(df_r) ///
+            in gr ")" ///
+            _col(67) "= " in ye `mhb_cfmt' e(F_b)
+        local mhb_wald_b_p = e(F_b_p)
+        local mhb_wald_b_l "Prob > F"
+    }
+	
+    di ///		
+        _col(49) in gr "`mhb_wald_b_l'" ///
+        _col(67) "= " in ye %10.4f `mhb_wald_b_p'	
+		
+    di
+    ereturn display, level(`level') noemptycells
+
+    if e(v_bad) == 1 {
+        di in red "Warning: non-positive or missing variance for some coefficient (ill-conditioned weighting matrix)."
+    }
+end
+
 
 
 /*==============================================================================
-				6) estimate()
+  VERSION HISTORY  (xtgmmfa)
+  
+  ver 1.0 - 31/12/2025
+          - First contribution
+  ver 2.0 - 29/10/2026
+          - Recode mata functions to upspeed --> require STATA 13 or newer.
+          - Repeatable gmmvars(); new sub-options lag(a b), collapse, presample.
+          - Two-step only (drop onestep option).
+          - [fweight aweight pweight] are allowed
+		  - Rank(Delta)-based J df
+		  - Stops if Delta is singular of Rank(Delta) < N.o. moments.
+		  - Correct dof and F statistic when small specified.
+		  - Correct moments in unbalanced panels (online appendix S1.1).
+		  - Reset initial weighting matrix C for every candidate in BSS.
+
 ==============================================================================*/
-
-real matrix estimate(
-/*	input						*/
-		real scalar small,
-		real scalar balance,
-		real scalar T,
-		real scalar l_max,
-		real scalar pow_max,
-		real scalar w_pow,
-		real scalar N,
-		real scalar seed,
-		real scalar stat_vl,
-		real scalar zeta,
-		real scalar iden,
-		real scalar rob,
-		real scalar step,
-		real scalar rho,
-		real scalar cons,
-		real scalar type,
-		real scalar method,			// regu = 1, bss = 2
-		real scalar clust,			// clust = 0 | 1
-		string scalar stata_clust,	
-		string scalar stata_vars,	// "local_name" , not "`local_name'"
-		string scalar stata_zvars,
-		string scalar stata_V,
-		string scalar stata_M_W,
-		string scalar stata_S,		// "`local_name'"
-		string scalar stata_H,
-/*	ouput						*/
-		string scalar stata_b,		// "`local_name'" 
-		string scalar stata_Vb,
-		string scalar stata_theta,
-		string scalar stata_Vtheta,
-		string scalar stata_Fe_hat,
-		string scalar stata_j,
-		string scalar stata_df_m,
-		string scalar stata_wald,
-		string scalar stata_waldp,
-		string scalar stata_bic,
-		string scalar stata_j_df,
-		string scalar stata_j_s,
-		string scalar stata_j_p,
-		string scalar stata_le,
-		string scalar stata_d,
-		string scalar stata_r_ga,
-		string scalar stata_G,
-		string scalar stata_Ti
-	)
-{
-	
-	//	--	M_vars = M_depvar, M_indepvars
-
-	vars = tokens(st_local(stata_vars))
-	k1 = length(vars)
-	k  = k1 - 1
-	M_vars = data2MataMat(vars, k1, T)
-			
-	// Truy xuất M_vars_i Tx(k+1) matrix for individual i
-	//M_vars_i = get_MataMat_i(M_vars, i, k1)
-	
-	
-	//	--	M_zvars, Z_i, z_i	-----------------------------------
-	
-	zvars = tokens(st_local(stata_zvars))
-	k_z = length(zvars)
-	M_zvars = data2MataMat(zvars, k_z, T)	
-	d=rows(vec(get_MataMat_i(M_zvars, 1, k_z)))
-	
-	S  		= st_matrix(stata_S)
-	I 		= I(T)
-	M_Z 	= asarray_create("real")
-			
-	for (i=1; i<=N; i++) {
-		M_zvarsi	= get_MataMat_i(M_zvars, i, k_z)	// T x k_z
-		zi 			= vec(M_zvarsi)
-		Zi 			= (S * (I # zi))'					// T x zeta
-		asarray(M_Z, i, Zi)
-	}
-	
-	
-	//	--	M_Zvars	-----------------------------------
-
-	M_Zvars	= J(zeta, k1, 0)
-
-	for (i=1; i<=N; i++) {
-		M_varsi 	= get_MataMat_i(M_vars, i, k1)		// T x k1
-		Zi 			= asarray(M_Z, i)					// T x zeta
-		M_Zvarsi	= Zi'*M_varsi						// zeta x k1
-		M_Zvars 	= M_Zvars + M_Zvarsi
-	}
-	
-//	M_Zvars = M_Zvars / N								// zeta x k1
-	M_Zvars = M_Zvars 								// zeta x k1
-	M_Zy 	= M_Zvars[,1]								// zeta x 1
-	M_ZX 	= M_Zvars[,2..k1]							// zeta x k
-
-	
-	//	--	cluster var	-----------------------------------
-	if (clust==1) {
-		clustvar = tokens(st_local(stata_clust))
-		clustvar = clustvar + "1"
-		g_panel	= st_data(., clustvar)
-		N_G 		= max(g_panel)
-	}
-	
-	//	--	Ti var	-----------------------------------
-	if (balance==0) {
-		Tivar = tokens(st_local(stata_Ti))
-		Tivar = Tivar + "1"
-		Ti	  = st_data(., Tivar)
-		obs   = sum(Ti)
-	}	
-
-	
-	//	--	initial GMM weigth -----------------------------------
-	B    	= I(zeta)
-	
-	if (iden==1) {
-		C  	= B
-	}
-	else {
-		C 	= J(zeta, zeta, 0)
-		for (i=1; i<=N; i++) {
-			Zi 		= asarray(M_Z, i)					// T x zeta
-			ZiZi	= Zi'*Zi							// zeta x zeta
-			C 		= C + ZiZi							// Z'Z
-		}
-//		C	= C / N
-		C = invsym((C+C')/2)							// (Z'Z)^-1
-	}
-	C_int = C
-	
-	//	--	M_V			-----------------------------------
-	
-	V = tokens(st_local(stata_V))
-	k_v = length(V)
-	M_V = data2MataMat(V, k_v, T)
-	
-	
-	//	--	Observed factors	---------------------------
-		
-	H = tokens(st_local(stata_H))
-	k_h = length(H)
-	if (k_h>0) {
-		M_H = get_MataMat_i(data2MataMat(H, k_h, T), 1, k_h) // optimal needed
-	}
-	else {
-		M_H=J(T,1,0)
-	}
-	
-	if (balance==1) {
-		M_H = M_H * N
-	}
-	else {
-		M_H = M_H * obs
-	}
-	
-	//	--	M_W			-----------------------------------
-	
-	Wvars = tokens(st_local(stata_M_W))
-
-	M_W = Wmaker(Wvars, pow_max, w_pow, type)	
-	r_w		= cols(M_W)
-	F_hat 	= J(T, k_v*r_w, 0)
-	
-	if (balance==1) {
-		for (i=1; i<=N; i++) {
-			M_Vi 	= get_MataMat_i(M_V, i, k_v)	// Txk_v
-			M_Wi 	= M_W[i,]
-			F_hat	= F_hat + M_Vi # M_Wi
-		}
-	}
-	else {
-		for (i=1; i<=N; i++) {
-			M_Vi 	= get_MataMat_i(M_V, i, k_v)				// Txk_v
-			M_Wi 	= M_W[i,]
-			F_hat	= F_hat + M_Vi # M_Wi * (Ti[i]/obs)			// Ti/obs
-		}
-	}
-		
-	
-	/*=================================================================	
-							2. Estimate facto proxies
-	=================================================================*/
-	
-	if (method==1) {
-		
-//		F_hat = F_hat/N
-			
-	//	rademach
-		rseed(seed)
-		rademach = (runiform(N, 1) :< 0.5)* -2 :+ 1
-		M_WT 	= M_W, rademach		// l_max + 1 = T
-		r_wT	= cols(M_WT)
-		F_hatT 	= J(T, k_v*r_wT, 0)
-		
-		if (balance==1) {
-			for (i=1; i<=N; i++) {
-				M_Vi 	= get_MataMat_i(M_V, i, k_v)	// Txk_v
-				M_WTi 	= M_WT[i,]
-				F_hatT	= F_hatT + M_Vi # M_WTi
-			}			
-		}
-		else {
-			for (i=1; i<=N; i++) {
-				M_Vi 	= get_MataMat_i(M_V, i, k_v)	// Txk_v
-				M_WTi 	= M_WT[i,]
-				F_hatT	= F_hatT + M_Vi # M_WTi *(Ti[i]/obs)
-			}
-		}
-		
-//		F_hatT 	= F_hatT/N
-		
-		A		= F_hat*F_hat'
-		A		= (A + A')/2
-		B 		= F_hatT*F_hatT'
-		B		= (B + B')/2
-
-		symeigensystem(A, eigenvector_A=., eigenvalue_A=.)
-		symeigensystem(B, eigenvector_ev=., eigenvalue_ev=.)
-
-		eigenvalue_ev = eigenvalue_ev'
-		eigenvalue_ev = sort(eigenvalue_ev, -1)
-		eigenvalue_ev = eigenvalue_ev'
-				
-		if (stat_vl==1) {
-			//	ER statistic
-				er 		= eigenvalue_ev[1..T-1] :/ eigenvalue_ev[2..T]
-				er_max 	= er[1]
-				le 		= 1
-				for (i = 2; i <= cols(er); i++) {
-					if (er[i] > er_max) {
-						er_max 	= er[i]
-						le 		= i
-					}
-				}
-		}
-		else {
-		//	GR statistic
-			G = J(1, T, .)
-				
-			for (r=0; r<=T-1; r++) {
-				G[r+1] = rowsum(eigenvalue_ev[1,(r+1)..T])
-			}
-				
-			gr = J(1, T-2, .)
-			for (r=1; r<=T-2; r++) {
-				gr[r] = (ln(G[r] / G[r+1])) / (ln(G[r+1] / G[r+2]))
-			}
-
-			gr_max 	= gr[1]
-			le 		= 1
-			n_gr	= cols(gr)
-			for (i = 2; i <= n_gr; i++) {
-				if (gr[i] > gr_max) {
-					gr_max 	= gr[i]
-					le 		= i
-				}
-			}
-		}
-		
-		if (balance==1) {
-			Fe_hat 	= -sqrt(T) * eigenvector_A[,1..le] * N
-		}
-		else {
-			Fe_hat 	= -sqrt(T) * eigenvector_A[,1..le] * obs
-		}
-
-	}
-	else {
-//	Best-Subset Selection: lowest BIC
-		R = cols(F_hat)
-		if (l_max>R) {
-//			printf("\n{text}Lmax must be less than or equal T-1")
-//			printf("\n{text}Let Lmax = %f", T-1)
-			l_max = R
-		}
-		
-		A_bic = asarray_create("real")
-		A_Fe = asarray_create("real")
-		
-		idx = 0
-		
-		for (L = 1; L <= l_max; L++) {
-			
-			n_comb = comb(R, L)
-			Fe_L = Fe_selector(L, F_hat)
-			
-			for (m = 1; m <= n_comb; m++) {
-				
-				idx = idx + 1
-				
-				Fe_L_m = asarray(Fe_L, m)
-				
-				if (k_h>0) {
-					XX = S*(Fe_L_m # I(d)), S*(M_H # I(d))
-				}
-				else {
-					XX = S*(Fe_L_m # I(d))
-				}
-
-				Zy   	= M_Zy
-				ZX	 	= M_ZX, XX
-						
-				ZXCZX	= ZX'*C*ZX
-				ZXCZX	= (ZXCZX + ZXCZX')/2
-//				Vtheta1 = invsym(ZXCZX)/N
-				Vtheta1 = invsym(ZXCZX)
-				Vtheta1 = (Vtheta1 + Vtheta1')/2
-//				theta1  = N*Vtheta1*ZX'*C*Zy
-				theta1  = Vtheta1*ZX'*C*Zy
-				n_c	 	= rows(theta1)
-				r_ga 	= rank(ZX)		
-					
-				if (zeta < r_ga) {
-					BIC = 10^9
-				}
-				else {
-					b1	 	= theta1[1..k,1]
-					g1 		= theta1[k1..n_c,1]
-						
-					df_j	= zeta - r_ga
-
-					Delta 	= J(zeta, zeta, 0)
-					
-					if (balance==1) {
-						XX1 = XX/N						
-						if (clust==1) {
-	/*	
-							i	g_panel
-							1	1		g_panel[1]=1 <-> g=1
-							2	2		g_panel[2]=2 <-> g=2
-							3	1		g_panel[3]=1 <-> g=1
-							4	2		g_panel[4]=2 <-> g=2
-							5	0		g_panel[5]=0 <-> missing
-	*/	
-							Mg 		= J(N_G, zeta, 0)							// G x zeta
-								
-							for (i=1; i<=N; i++) {
-								M_varsi 	= get_MataMat_i(M_vars, i, k1)
-								Zi 			= asarray(M_Z, i)				// T x zeta		
-											
-								M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-								M_Zyi 		= M_Zvarsi[, 1]
-								M_ZXi 		= M_Zvarsi[, 2..k1]
-											
-								Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1		// zeta x 1		
-									
-								gi 			= g_panel[i]
-								if (gi > 0) {
-									Mg[gi,] 	= Mg[gi,] + Zei'	// 1 x zeta
-								}
-									
-							}
-							
-							for (g=1; g<=N_G; g++) {
-								Delta = Delta + Mg[g,]'*Mg[g,]
-							}
-							
-	//						Delta = Delta/N_G						
-						}
-						else {
-							for (i=1; i<=N; i++) {
-								M_varsi 	= get_MataMat_i(M_vars, i, k1)
-								Zi 			= asarray(M_Z, i)	
-										
-								M_Zvarsi	= Zi'*M_varsi
-								M_Zyi 		= M_Zvarsi[, 1]
-								M_ZXi 		= M_Zvarsi[, 2..k1]
-										
-								Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1
-								Delta 		= Delta + Zei*Zei'
-							}
-							
-	//						Delta	= Delta / N
-						}						
-					}
-					else {
-						if (clust==1) {
-
-							Mg 		= J(N_G, zeta, 0)							// G x zeta
-								
-							for (i=1; i<=N; i++) {
-								M_varsi 	= get_MataMat_i(M_vars, i, k1)
-								Zi 			= asarray(M_Z, i)				// T x zeta		
-											
-								M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-								M_Zyi 		= M_Zvarsi[, 1]
-								M_ZXi 		= M_Zvarsi[, 2..k1]
-								
-								XX1			= XX *(Ti[i]/obs)		// Hadamard
-								Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1		// zeta x 1		
-									
-								gi 			= g_panel[i]
-								if (gi > 0) {
-									Mg[gi,] 	= Mg[gi,] + Zei'				// 1 x zeta									
-								}
-									
-							}
-							
-							for (g=1; g<=N_G; g++) {
-								Delta = Delta + Mg[g,]'*Mg[g,]
-							}
-							
-	//						Delta = Delta/N_G						
-						}
-						else {
-							for (i=1; i<=N; i++) {
-								M_varsi 	= get_MataMat_i(M_vars, i, k1)
-								Zi 			= asarray(M_Z, i)	
-										
-								M_Zvarsi	= Zi'*M_varsi
-								M_Zyi 		= M_Zvarsi[, 1]
-								M_ZXi 		= M_Zvarsi[, 2..k1]
-											
-								XX1			= XX * (Ti[i]/obs)
-//								XX1			= XX/N
-								Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1
-								
-								Delta 		= Delta + Zei*Zei'
-							}
-
-	//						Delta	= Delta / N
-						}
-					}
-					
-					Delta	= (Delta + Delta')/2
-
-					if (step==1) {
-						
-					//	===========		GMM 1 step		===========
-						
-						C		= invsym(Delta)
-						Ze1	 	= Zy-ZX*theta1
-						J_s 	= Ze1'*C*Ze1
-						BIC 	= J_s - (log(N)/T^0.3)*rho*df_j
-					}		
-					else {
-								
-					//	===========		GMM 2 step		===========
-
-						C 		= invsym(Delta)
-						XZCZX	= ZX'*C*ZX
-						XZCZX	= (XZCZX + XZCZX')/2
-						Vtheta2	= invsym(XZCZX)
-						Vtheta2	= (Vtheta2+ Vtheta2')/2
-						theta2	= Vtheta2*ZX'*C*Zy
-						n_c		= rows(theta2)
-						b	 	= theta2[1..k,1]
-						Ze2	 	= Zy-ZX*theta2
-						
-						J_s 	= Ze2'*C*Ze2
-						BIC 	= J_s - (log(N)/T^0.3)*rho*df_j
-					}
-				}
-				
-				// Store bic and Fe_sel
-				asarray(A_bic, idx, BIC)
-				asarray(A_Fe, idx, Fe_L_m)
-				
-			}
-		}
-		
-		// Find BIC min and Fe_hat
-		min_bic = asarray(A_bic, 1)
-		best_idx = 1
-		
-		n_models = 0
-		for (L = 1; L <= l_max; L++) {
-			n_models = n_models + comb(R, L)
-		}
-		
-		for (i = 2; i <= n_models; i++) {
-			if (asarray(A_bic, i) < min_bic) {
-				min_bic = asarray(A_bic, i)
-				best_idx = i
-			}
-		}
-		
-		Fe_hat = asarray(A_Fe, best_idx)
-		le = cols(Fe_hat)
-		
-//		balance==1: sum-F_hat's columns -> Fe_hat -> no need to divide by N		
-		if (balance==0) {
-			Fe_hat = Fe_hat*obs
-		}
-
-	}
-
-	/*=================================================================
-			3. Perform GMM
-	=================================================================*/
-	
-	C = C_int
-	
-	if (k_h>0) {
-		XX = S*(Fe_hat # I(d)), S*(M_H # I(d))
-	}
-	else {
-		XX 	 	= S*(Fe_hat # I(d))
-	}
-
-	Zy   	= M_Zy
-	ZX	 	= M_ZX, XX
-			
-	ZXCZX	= ZX'*C*ZX
-	ZXCZX	= (ZXCZX + ZXCZX')/2
-	Vtheta1 = invsym(ZXCZX)
-	Vtheta1 = (Vtheta1 + Vtheta1')/2
-	theta1  = Vtheta1*ZX'*C*Zy
-	n_c	 	= rows(theta1)
-	r_ga 	= rank(ZX)
-		
-	if (zeta < r_ga) {
-		printf("\n{err}Error: GMM under-identified!\n")
-		_error(3498, "Number of instruments (" + strofreal(zeta) + 
-						") < number of parameters (" + strofreal(r_ga) + ")")
-	}
-			
-	b1	 	= theta1[1::k,1]
-	g1 		= theta1[k1::n_c,1]
-		
-	df_j	= zeta - r_ga
-			
-//	Delta = Z'OmegaZ = Z'Block.diag(ei*ei')Z = sum_i (Ze_i*Ze_i')
-	Delta 	= J(zeta, zeta, 0)					// zeta x zeta = K x K
-	
-	if (balance==1) {
-		XX1 = XX/N
-		if (clust == 1) {
-	/*	
-			i	g_panel
-			1	1		g_panel[1]=1 <-> g=1
-			2	2		g_panel[2]=2 <-> g=2
-			3	1		g_panel[3]=1 <-> g=1
-			4	2		g_panel[4]=2 <-> g=2
-	*/	
-			Mg 		= J(N_G, zeta, 0)						// N_G x zeta
-				
-			for (i=1; i<=N; i++) {
-				M_varsi 	= get_MataMat_i(M_vars, i, k1)
-				Zi 			= asarray(M_Z, i)				// T x zeta		
-							
-				M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-				M_Zyi 		= M_Zvarsi[, 1]
-				M_ZXi 		= M_Zvarsi[, 2..k1]
-							
-				Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1		// zeta x 1		
-					
-				gi = g_panel[i]
-				if (gi > 0) {
-					Mg[gi,] = Mg[gi,] + Zei'					// 1 x zeta
-				}
-			}
-			
-			for (g=1; g<=N_G; g++) {
-				Delta = Delta + Mg[g,]'*Mg[g,]
-			}
-			
-		}	
-		else {
-			for (i=1; i<=N; i++) {
-				M_varsi 	= get_MataMat_i(M_vars, i, k1)
-				Zi 			= asarray(M_Z, i)				// T x zeta		
-						
-				M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-				M_Zyi 		= M_Zvarsi[, 1]
-				M_ZXi 		= M_Zvarsi[, 2..k1]
-						
-				Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1
-				Delta 		= Delta + Zei*Zei'		
-			}
-
-		}		
-	}
-	else {
-		if (clust == 1) {
-	
-			Mg 		= J(N_G, zeta, 0)						// N_G x zeta
-				
-			for (i=1; i<=N; i++) {
-				M_varsi 	= get_MataMat_i(M_vars, i, k1)
-				Zi 			= asarray(M_Z, i)				// T x zeta		
-							
-				M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-				M_Zyi 		= M_Zvarsi[, 1]
-				M_ZXi 		= M_Zvarsi[, 2..k1]
-				
-				XX1 		= XX * (Ti[i]/obs)				// hadamard
-				Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1		// zeta x 1		
-					
-				gi = g_panel[i]
-				if (gi > 0) {
-					Mg[gi,] = Mg[gi,] + Zei'				// 1 x zeta
-				}
-					
-			}
-			
-			for (g=1; g<=N_G; g++) {
-				Delta = Delta + Mg[g,]'*Mg[g,]
-			}
-			
-		}	
-		else {
-			for (i=1; i<=N; i++) {
-				M_varsi 	= get_MataMat_i(M_vars, i, k1)
-				Zi 			= asarray(M_Z, i)				// T x zeta		
-						
-				M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-				M_Zyi 		= M_Zvarsi[, 1]
-				M_ZXi 		= M_Zvarsi[, 2..k1]
-				
-				XX1 		= XX * (Ti[i]/obs)				// hadamard
-				Zei 		= M_Zyi - M_ZXi*b1 - XX1*g1
-				Delta 		= Delta + Zei*Zei'		
-			}
-	//		Delta	= Delta / N	
-		}		
-	}
-	
-	
-	Delta	= (Delta + Delta')/2
-
-//	GMM 1-step allaway using robust SE cause conventional SE can't be estimated
-	Vtheta1r	= Vtheta1*(ZX'*C*Delta*C*ZX)*Vtheta1
-	Vtheta1r	= (Vtheta1r + Vtheta1r')/2
-
-	if (step==1) {
-		
-	//	===========		GMM 1 step		============================
-					
-		if (rob==1 | clust==1) {
-			Vtheta	= Vtheta1r
-			V1		= Vtheta1r[1::k, 1::k]
-					
-			C		= invsym(Delta)
-		}
-		else {
-/*			
-			sigma2 	= mean(eit^2)/(NT-n_c)	// <- can not be estimated
-			Z'Z		= sum_(i=1..N) (Zi'*Zi)
-			Vtheta	= sigma2*Vtheta1*ZX'*C*Z'Z*C*ZX*Vtheta1
-			V1 		= Vtheta[1::k, 1::k]
-*/		
-			Vtheta	= Vtheta1r
-			V1		= Vtheta1r[1::k, 1::k]
-					
-			C		= invsym(Delta)			
-		}
-		
-		Ze1	 	= Zy-ZX*theta1			// e1 = Z'e
-		J_s 	= Ze1'*C*Ze1
-		J_p 	= 1 - chi2(df_j, J_s)
-					
-		BIC 	= J_s - (log(N)/T^0.3)*rho*df_j			
-				
-		b		= b1
-		V		= V1
-		theta	= theta1
-
-	}		
-	else {
-				
-	//	===========		GMM 2 step		============================
-
-		C 		= invsym(Delta)	// (Z'OmegaZ)^-1
-		XZCZX	= ZX'*C*ZX
-		XZCZX	= (XZCZX + XZCZX')/2
-		Vtheta2	= invsym(XZCZX)
-		Vtheta2	= (Vtheta2+ Vtheta2')/2
-		theta2	= Vtheta2*ZX'*C*Zy
-		n_c		= rows(theta2)
-		b	 	= theta2[1::k,1]
-		Ze2	 	= Zy-ZX*theta2
-	
-		if (rob==1 & clust==0) {
-/*
-			Windmeijer (2005) corection
-				
-			D 		= -(ZX'*C*ZX)^-1*ZX'*C*P*C*ZE
-					= -N*Vtheta2*ZX'*C*P*C*ZE
-			
-			C 		= (Z'e*e'Z)^-1 = (Ze*Ze')^-1
-			P*C*ZE 	= -sum (e1i'Zi*C*Ze2*ZXi + Zi'e1i*Ze2'*C*ZXi)
-					= -sum (Ze1i'*C*Ze2*ZXi + Ze1i*Ze2'*C*ZXi)
-					
-			V_W 	= Vtheta2 + D*Vtheta2 + Vtheta2*D' + D*Vtheta1r*D'
-*/
-			D		= J(n_c, n_c, 0)			
-			PCZE2	= J(zeta, n_c, 0)
-			H		= J(n_c, n_c, 0)
-			
-			if (balance==1) {
-				for (i=1; i<=N; i++) {
-					M_varsi = get_MataMat_i(M_vars, i, k1)
-					Zi 		= asarray(M_Z, i)	// T x zeta		
-							
-					M_Zvarsi= Zi'*M_varsi		// zeta x k1
-					M_Zyi 	= M_Zvarsi[, 1]
-					M_ZXi 	= M_Zvarsi[, 2..k1]
-							
-					Ze1i 	= M_Zyi - M_ZXi*b1 - XX1*g1
-							
-					M_ZXi	= M_ZXi, XX1
-					PCZE2	= PCZE2 + Ze1i'*C*Ze2*M_ZXi + Ze1i*Ze2'*C*M_ZXi
-					
-				}				
-			}
-			else {
-				for (i=1; i<=N; i++) {
-					M_varsi = get_MataMat_i(M_vars, i, k1)
-					Zi 		= asarray(M_Z, i)	// T x zeta		
-							
-					M_Zvarsi= Zi'*M_varsi		// zeta x k1
-					M_Zyi 	= M_Zvarsi[, 1]
-					M_ZXi 	= M_Zvarsi[, 2..k1]
-					
-					XX1		= XX * (Ti[i]/obs)			// Hadamard
-					Ze1i 	= M_Zyi - M_ZXi*b1 - XX1*g1
-							
-					M_ZXi	= M_ZXi, XX1
-					PCZE2	= PCZE2 + Ze1i'*C*Ze2*M_ZXi + Ze1i*Ze2'*C*M_ZXi
-					
-				}
-			}
-			
-			//	20x20x(20x40)x(40x40)x(40x20) = 20x20
-			D = Vtheta2*ZX'*C*PCZE2
-					
-			V_W 	  = Vtheta2 + D*Vtheta2 + Vtheta2*D' + D*Vtheta1r*D'
-			
-			V_W		  = (V_W + V_W')/2
-			V	  	  = V_W[1::k,1::k]
-			Vtheta	  = V_W			
-		}	
-		else if (clust==1) {
-
-			Ze1g 	= J(N_G, zeta, 0)
-			M_ZXg 	= J(1, N_G, NULL)
-			g = .
-			for (g=1; g<=N_G; g++) {
-				M_ZXg[g] = &(J(zeta, n_c, 0))
-			}
-			
-			D		= J(n_c, n_c, 0)
-			PCZE2	= J(zeta, n_c, 0)
-			
-			if (balance==1) {
-				for (i=1; i<=N; i++) {
-					M_varsi 	= get_MataMat_i(M_vars, i, k1)
-					Zi 			= asarray(M_Z, i)				// T x zeta		
-								
-					M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-					M_Zyi 		= M_Zvarsi[, 1]
-					M_ZXi 		= M_Zvarsi[, 2..k1]
-								
-					Ze1i 		= M_Zyi - M_ZXi*b1 - XX1*g1
-					
-					M_ZXi	= M_ZXi, XX1
-					gi 			= g_panel[i]
-					if (gi > 0) {
-// 						sum_(i in g) (e1i'*Zi) 1xzeta
-						Ze1g[gi,]	= Ze1g[gi,] + Ze1i'
-						
-// 						sum_(i in g) (Zi'*Xi) zetaxk
-						*M_ZXg[gi] 	= *M_ZXg[gi] + M_ZXi
-					}
-				}				
-			}
-			else {
-				for (i=1; i<=N; i++) {
-					M_varsi 	= get_MataMat_i(M_vars, i, k1)
-					Zi 			= asarray(M_Z, i)				// T x zeta		
-								
-					M_Zvarsi	= Zi'*M_varsi					// zeta x k1
-					M_Zyi 		= M_Zvarsi[, 1]
-					M_ZXi 		= M_Zvarsi[, 2..k1]
-					
-					XX1			= XX * (Ti[i]/obs)				// Hadamard
-					Ze1i 		= M_Zyi - M_ZXi*b1 - XX1*g1
-					
-					M_ZXi	= M_ZXi, XX1
-					gi 			= g_panel[i]
-					if (gi > 0) {
-						Ze1g[gi,]	= Ze1g[gi,] + Ze1i'
-						*M_ZXg[gi] 	= *M_ZXg[gi] + M_ZXi
-					}
-				}
-			}
-				
-			for (g=1; g<=N_G; g++) {
-				ZXg		= *M_ZXg[g]
-				PCZE2	= PCZE2 + Ze1g[g,]*C*Ze2*ZXg + Ze1g[g,]'*Ze2'*C*ZXg
-			}
-			
-			D = Vtheta2*ZX'*C*PCZE2
-			
-			V_W 	  = Vtheta2 + D*Vtheta2 + Vtheta2*D' + D*Vtheta1r*D'
-			V_W		  = (V_W + V_W')/2
-			V	  	  = V_W[1::k,1::k]
-			Vtheta	  = V_W		
-		}
-		else {
-			V		  = Vtheta2[1::k,1::k]
-			Vtheta	  = Vtheta2
-		}
-		
-		theta	  = theta2
-				
-//		J_s 	= N*Ze2'*C*Ze2
-		J_s 	= Ze2'*C*Ze2
-		J_p 	= 1 - chi2(df_j, J_s)
-
-		BIC 	= J_s - (log(N)/T^0.3)*rho*df_j
-	}
-
-//	Small sample adjustment
-	if (small == 1) {
-		if (clust==1) {
-			V 		= V * (N-1)/(N-r_ga) * (N_G/(N_G-1))
-			Vtheta 	= Vtheta * (N-1)/(N-r_ga) * (N_G/(N_G-1))
-		}
-		else {
-			V = V * (N-1)/(N-r_ga) * (N/(N-1))
-			Vtheta 	= Vtheta * (N-1)/(N-r_ga) * (N/(N-1))			
-		}
-	}
-	
-//	Wald test
-	if (cons==1) {
-		R = I(n_c)              // R = ma trận đơn vị
-		R[k, k]=0				// intercept
-		q = J(n_c, 1, 0)        // q = vector 0
-				
-		df_m = r_ga - 1
-		wald = (R*theta - q)' * pinv(R*Vtheta*R') * (R*theta - q)
-		if (small==1) {
-			df2 = N-r_ga
-			waldp = 1 - F(df_m,  df2, wald)
-		}
-		else {
-			waldp = 1 - chi2(df_m, wald)
-		}	
-	}
-	else {
-		R = I(n_c)              // R = ma trận đơn vị
-		q = J(n_c, 1, 0)        // q = vector 0
-
-		df_m = r_ga
-		wald = (R*theta - q)' * invsym(R*Vtheta*R') * (R*theta - q)
-		if (small==1) {
-			df2 = N-r_ga
-			waldp = 1 - F(df_m,  df2, wald)
-		}
-		else {
-			waldp = 1 - chi2(df_m, wald)
-		}
-	}
-	
-	
-	/*=================================================================
-		4. Post and store results
-	=================================================================*/
-
-	//	Export to STATA
-	b 		= b'
-	
-	if (balance==1) {
-		Fe_hat = Fe_hat/N
-	}
-	else {
-		Fe_hat = Fe_hat/obs
-	}
-	
-	st_matrix(stata_b, b)
-	st_matrix(stata_Vb, V)
-	st_matrix(stata_theta, 	theta)
-	st_matrix(stata_Vtheta, 	Vtheta)
-	st_matrix(stata_Fe_hat,	Fe_hat)
-			
-	st_numscalar(stata_j, 	zeta)
-	st_numscalar(stata_df_m, 	df_m)
-	st_numscalar(stata_wald, 	wald)
-	st_numscalar(stata_waldp, waldp)
-
-	st_numscalar(stata_bic, 	BIC)
-	st_numscalar(stata_j_df,  df_j)
-	st_numscalar(stata_j_s, 	J_s)
-	st_numscalar(stata_j_p, 	J_p)
-	st_numscalar(stata_le,   	le)
-	st_numscalar(stata_d, 	d)
-	st_numscalar(stata_r_ga, 	r_ga)
-	st_numscalar(stata_G, 	N_G)
-
-}
-
-end

@@ -1,10 +1,10 @@
-*! version 0.2 2026-03-26 Niels Henrik Bruun	
+*! version 0.21 2026-03-26 Niels Henrik Bruun	
 *! Support: Niels Henrik Bruun, niels.henrik.bruun@gmail.com
+*! 2026-10-28 v0.21 Bugfix in bapm
 *! 2026-03-26 v0.2 created
-
-cls
-capture program drop bapm
 program define bapm, rclass
+	version 15.1
+	
 	syntax varlist(min=3 max=6 numeric) [if], /*
 	*/[ /*
 		*/Graph /*
@@ -45,28 +45,33 @@ program define bapm, rclass
 					* text must be centered according to neighbor graphs xycommon
 					twoway (function y = 0, range(-1 1) lcolor(white)) , ///
 					text(0 0 "`: var l ``r'''", size(`size')) xla(none) yla(none) yti("") xti("") ///
-					name(g`r'`s', replace)
+					name(_g`r'`s'_, replace)
 				}
 				else {
 					qui bap ``r'' ``s'' `if', ///
-						legend(off) ytitle("") name(g`r'vs`s', replace) ///
+						legend(off) ytitle("") name(_g`r'vs`s'_, replace) ///
 						`formatgraph' `text' `scatterstyle' `meanlinestyle' ///
 						`meancistyle' `loalinestyle' `loacistyle' `lowess' ///
 						`cimean' `ciloa'						
-					qui graph copy g`r'vs`s' g`s'vs`r', replace
+					qui graph copy _g`r'vs`s'_ _g`s'vs`r'_, replace
 				}
 			}	
 		}
 		local grlst
 		forvalues r = 1/`nvar' {
 			forvalues s = 1/`nvar' {
-				if `r' == `s' local grlst `grlst' g`r'`s'
-				else if `r' < `s' local grlst `grlst' g`r'vs`s'
-				else local grlst `grlst' g`s'vs`r'
+				if `r' == `s' local grlst `grlst' _g`r'`s'_
+				else if `r' < `s' local grlst `grlst' _g`r'vs`s'_
+				else local grlst `grlst' _g`s'vs`r'_
 			}
 		}
 		graph combine `grlst', /*xcommon ycommon*/ `name'
 		set graphics on
-		graph display
+		qui graph dir _g*_
+		graph drop `r(list)'
+		qui graph dir
+		foreach gn in `r(list)' {
+			graph display `gn'
+		}
 	}
 end

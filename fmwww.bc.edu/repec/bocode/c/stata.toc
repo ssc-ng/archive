@@ -209,6 +209,7 @@ p coefconv module to compute comprehensive marginal effects from regression slop
 p coefout module to keeps the beta-coefficients for specified variables and labelnames from a regression.
 p coefplot module to plot regression coefficients and other results
 p cohend module to compute Cohen's d
+p cointpart module to implement Cointegration by Parts -- FIEG, BIEG and GIEG subsample tests
 p cointsmall module to test for cointegration with structural changes in very small sample
 p cointvol module to evaluate Cointegration under volatility and heteroskedasticity
 p coldiag module to perform BWK regression collinearity diagnostics

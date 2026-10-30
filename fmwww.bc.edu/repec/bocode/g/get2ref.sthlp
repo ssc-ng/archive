@@ -1,272 +1,478 @@
-﻿{smcl}
-{title:Title}
+{smcl}
+{* *! get2ref help revision 28oct2026}{...}
+{vieweralsosee "getref" "help getref"}{...}
+{vieweralsosee "" "--"}{...}
+{vieweralsosee "art2tex" "help art2tex"}{...}
+{vieweralsosee "case2tex" "help case2tex"}{...}
+{vieweralsosee "mysuite" "help mysuite"}{...}
+{viewerjumpto "Syntax" "get2ref##syntax"}{...}
+{viewerjumpto "Description" "get2ref##description"}{...}
+{viewerjumpto "Options" "get2ref##options"}{...}
+{viewerjumpto "Unique value and use cases" "get2ref##usecases"}{...}
+{viewerjumpto "Examples" "get2ref##examples"}{...}
+{viewerjumpto "Stored results" "get2ref##results"}{...}
+{viewerjumpto "Limitations" "get2ref##limitations"}{...}
+{viewerjumpto "Authors" "get2ref##authors"}{...}
+{p2colset 1 15 17 2}{...}
+{p2col:{bf:get2ref} {hline 2}}Build verified bibliography libraries for papers and teams{p_end}
+{p2col:}({help mysuite:Part of the mysuite program suite}){p_end}
+{p2colreset}{...}
 
-{p 4 4 2}
-{bf:get2ref} - Retrieve published academic articles from academic databases
 
-
+{marker syntax}{...}
 {title:Syntax}
 
-{phang}
-{cmd:get2ref} {it:query_string}, {cmd:saving(}{it:filename}{cmd:)} [{cmd:format(}{it:str}{cmd:)} {cmd:replace} {cmd:language(}{it:str}{cmd:)} {cmd:source(}{it:str}{cmd:)} {cmd:apikey(}{it:str}{cmd:)} {cmd:n(}{it:integer}{cmd:)} {break}
-{cmd:yearfrom(}{it:integer}{cmd:)} {cmd:yearto(}{it:integer}{cmd:)}]{p_end}
+{p 8 15 2}
+{cmd:get2ref} [{it:query}] , {cmd:saving(}{it:filename}{cmd:)}
+{break}
+        [{cmd:format(}{it:bib|tex|txt|ris}{cmd:)}
+         {cmd:replace} | {cmd:append}
+{break}
+         {cmd:language(}{it:english|chinese}{cmd:)}
+         {cmd:source(}{it:crossref}{cmd:)}
+{break}
+         {cmd:n(}{it:#}{cmd:)}
+         {cmd:yearfrom(}{it:yyyy}{cmd:)}
+         {cmd:yearto(}{it:yyyy}{cmd:)}
+{break}
+         {cmd:doi(}{it:doi-list}{cmd:)}
+         {cmd:doifile(}{it:filename}{cmd:)}
+{break}
+         {cmd:email(}{it:address}{cmd:)}
+         {cmd:sortby(}{it:field}{cmd:)}
+{break}
+         {cmd:type(}{it:record-type}{cmd:)}
+         {cmd:audit(}{it:filename}{cmd:)}
+         {cmd:noaudit}
+         {cmd:verbose}]
 
-{p 4 4 2}
-where {it:query_string} is the search term for published academic articles.
+{pstd}
+{it:query} is a topic or bibliographic search phrase. Use {cmd:doi()}{break}
+or {cmd:doifile()} for exact DOIs. Input methods can be combined:{break}
+exact DOI values receive priority, and a query fills any{break}
+remaining slots allowed by {cmd:n()}. If the exact DOI count{break}
+reaches {cmd:n()}, no query is sent.
 
 
-{synoptset 20 tabbed}{...}
-{synopthdr}
-{synoptline}
-{synopt:{opt saving(filename)}}specify output filename (required){p_end}
-{synopt:{opt format(str)}}output format: bib, tex, docx, txt, or ris (default: bib){p_end}
-{synopt:{opt replace}}overwrite existing file{p_end}
-{synopt:{opt language(str)}}query language: english or chinese (default: english){p_end}
-{synopt:{opt source(str)}}data source: crossref, semantic, arxiv, or cnki (default: crossref){p_end}
-{synopt:{opt apikey(str)}}API key for enhanced access (optional for cnki){p_end}
-{synopt:{opt n(integer)}}number of references to retrieve: 1-100 (default: 10){p_end}
-{synopt:{opt yearfrom(integer)}}start year for publication range (default: 2000){p_end}
-{synopt:{opt yearto(integer)}}end year for publication range (default: 2025){p_end}
-{synoptline}
-
-
+{marker description}{...}
 {title:Description}
 
-{p 4 4 2}
-The get2ref command retrieves published academic articles from various academic databases 
-using reliable simulation mode for reference generation.
+{pstd}
+{cmd:get2ref} is the batch front end to {help getref}. It accepts a{break}
+query, exact DOIs, or a DOI file, then delegates validation,{break}
+Crossref retrieval, duplicate detection, citation-key{break}
+generation, and file writing to the same verified core used{break}
+by {cmd:getref}.
 
-{p 4 4 2}
-This program demonstrates how researchers could create academic paper references in multiple formats 
-and is part of the suite supporting efficient operation of art2tex.ado and case2tex.ado programs.
+{pstd}
+The added value is project-scale organization. A DOI list{break}
+can be stored as the reviewed input for a paper or seminar,{break}
+combined with a topic query when more records are needed,{break}
+and appended in later batches without duplicating entries.{break}
+The output can be used by {help art2tex}, {help case2tex}, natbib, BibTeX,{break}
+or a reference manager through RIS.
 
-{p 4 4 2}
-{bf:Key Features:}
-{break}- Supports multiple academic databases (Crossref, Semantic Scholar, arXiv, CNKI)
-{break}- Enhanced simulation mode for reliable operation
-{break}- Generates realistic published articles with complete metadata
-{break}- Supports multiple output formats (BibTeX, LaTeX, Word, plain text, RIS)
-{break}- Configurable search parameters (year range, number of results)
-{break}- Chinese language support for CNKI queries
-{break}- Robust error handling and validation
+{pstd}
+No records are simulated. A successful output record has a{break}
+Crossref-registered DOI and is accompanied by provenance{break}
+information. A DOI and its Crossref metadata identify a{break}
+publication, but they do not replace reading the work or{break}
+judging whether it supports a research claim.
 
 
+{marker options}{...}
 {title:Options}
 
 {phang}
-{opt saving(filename)} specifies the output filename where references will be saved. 
-This option is required.
+{opt saving(filename)} specifies the required output file. For a{break}
+LaTeX project, the usual value is {cmd:saving("references.bib")}.
 
 {phang}
-{opt format(str)} specifies the output format. Valid options are:
-    {it:bib} - BibTeX format (.bib)
-    {it:tex} - LaTeX format (.tex) 
-    {it:docx} - Microsoft Word format (.docx)
-    {it:txt} - Plain text format (.txt)
-    {it:ris} - Research Information Systems format (.ris)
-Default is {it:bib}.
+{opt format(bib|tex|txt|ris)} selects the output format. The{break}
+default is {opt format(bib)}, the preferred format for {cmd:art2tex},{break}
+{cmd:case2tex}, natbib, and BibTeX. {opt format(tex)} creates {cmd:\bibitem}{break}
+fragments for an existing {cmd:thebibliography} environment.{break}
+{opt format(txt)} creates a human-readable list. {opt format(ris)}{break}
+creates records for import into Zotero, EndNote, or another{break}
+reference manager.
 
 {phang}
-{opt replace} allows overwriting an existing file.
+{opt replace} replaces an existing output file. The target is left{break}
+unchanged when no record can be retrieved. When retrieval{break}
+partly succeeds, the successful records are published{break}
+together, failed DOIs are reported, and {cmd:r(n)} counts only the{break}
+records written.
 
 {phang}
-{opt language(str)} specifies the query language. Valid options are:
-    {it:english} - English language queries
-    {it:chinese} - Chinese language queries (for CNKI source)
-Default is {it:english}.
+{opt append} adds records to an existing bibliography and skips{break}
+DOI values that are already present. The existing file{break}
+should use the same format as the new batch. When every{break}
+requested record is already present, the command exits{break}
+normally with {cmd:r(n) = 0}, reports the number skipped, and{break}
+leaves existing entries unchanged. {opt replace} and {opt append} are{break}
+mutually exclusive. A getref/get2ref provenance header is normalized to{break}
+{cmd:get2ref v4.1} even when all records are skipped.
 
 {phang}
-{opt source(str)} specifies the data source for published articles. Valid options are:
-    {it:crossref} - Crossref (comprehensive journal articles)
-    {it:semantic} - Semantic Scholar (AI-enhanced academic search)
-    {it:arxiv} - arXiv (preprints and conference papers)
-    {it:cnki} - China National Knowledge Infrastructure (Chinese articles)
-Default is {it:crossref}.
+{opt language(english|chinese)} controls the prose style of{break}
+plain-text entries and the formatting of LaTeX entries. The{break}
+default is {opt language(english)}. It does not translate a{break}
+Crossref query.
 
 {phang}
-{opt apikey(str)} specifies the API key for enhanced access. Optional for CNKI access. 
-Recommended for Semantic Scholar to avoid rate limits.
+{opt source(crossref)} selects Crossref, the only supported search{break}
+and metadata source in this version. For a work found in{break}
+CNKI, a publisher site, or another licensed database, verify{break}
+its DOI and supply it through {cmd:doi()} or {cmd:doifile()}.
 
 {phang}
-{opt n(integer)} specifies the number of published articles to retrieve. Must be 
-between 1 and 100. Default is 10.
+{opt n(#)} limits all DOI records processed in the run to an{break}
+integer from 1 through 100. The default is 10. The limit{break}
+applies to inline DOIs, DOI-file values, and query results.
 
 {phang}
-{opt yearfrom(integer)} specifies the start year for the publication date range. 
-Default is 2000.
+{opt yearfrom(yyyy)} and {opt yearto(yyyy)} restrict publication dates{break}
+for a topic query. The defaults are 2000 and 2026. Explicit{break}
+DOI records are not filtered by year.
 
 {phang}
-{opt yearto(integer)} specifies the end year for the publication date range. 
-Default is 2025.
+{opt doi(doi-list)} supplies exact DOIs. Separate values with a{break}
+semicolon, comma, space, or vertical bar. Duplicate DOI{break}
+values are removed.
+
+{phang}
+{opt doifile(filename)} reads DOIs from a text or CSV file. In a{break}
+CSV file, put the DOI in the first column. A text line may{break}
+contain a DOI by itself, a {cmd:doi:} prefix, a DOI URL, or a DOI{break}
+embedded in other text. Blank lines and lines beginning with{break}
+{cmd:#} are ignored. For unusual punctuation or careful team{break}
+review, put one raw DOI on each line.
+
+{phang}
+{opt email(address)} identifies the requester to Crossref so that{break}
+requests can be assigned to its polite pool. The address is{break}
+not written to the bibliography.
+
+{phang}
+{opt sortby(field)} controls query-result ordering. The available{break}
+fields are {opt relevance}, {opt published}, {opt cited}, {opt updated}, and{break}
+{opt deposited}. The default is {opt relevance}. Sorting does not apply{break}
+to the order of explicit DOI input.
+
+{phang}
+{opt type(record-type)} restricts query results by Crossref work{break}
+type. Available values are {opt journal-article},{break}
+{opt proceedings-article}, {opt book-chapter}, {opt book}, and {opt any}. The{break}
+default is {opt journal-article}; {opt any} disables the type filter.
+
+{phang}
+{opt audit(filename)} writes the provenance audit to a custom CSV{break}
+file. By default, the audit uses the bibliography stem plus{break}
+{cmd:_audit.csv}; for example, {cmd:references.bib} produces{break}
+{cmd:references_audit.csv}.
+
+{phang}
+{opt noaudit} suppresses the provenance audit.
+
+{phang}
+{opt verbose} reports each verified, skipped, or failed record.
 
 
-{title:Data Sources}
+{marker usecases}{...}
+{title:Unique value and use cases}
 
-{p 4 4 2}
-{bf:Crossref} - Largest database of scholarly publications with DOIs. 
-Covers millions of journal articles, books, and conference proceedings.
-No API key required for basic access.
+{pstd}
+{cmd:get2ref} is designed for bibliography assembly rather than{break}
+one-off lookup. It turns a reviewed DOI inventory into a{break}
+reproducible reference library, while retaining the direct{break}
+query route when a topic search is still needed.
 
-{p 4 4 2}
-{bf:Semantic Scholar} - AI-powered research tool with enhanced metadata. 
-Provides citations, references, and research trends. 
-API key recommended for higher rate limits.
+{phang2}
+{bf:Team DOI intake.} A coauthor, research assistant, or seminar{break}
+group can review a plain-text or CSV DOI list before the{break}
+write step. Everyone works from the same input file, and one{break}
+command converts that reviewed list into a bibliography with{break}
+an audit trail.
 
-{p 4 4 2}
-{bf:arXiv} - Preprint server for physics, mathematics, computer science, 
-and related fields. Contains early-stage research papers.
+{phang2}
+{bf:Multi-paper projects.} A lab can maintain separate{break}
+{cmd:references.bib} files for papers that share a literature{break}
+domain. Appending later batches skips DOIs already in the{break}
+relevant library, so repeated updates do not create{break}
+duplicate entries.
 
-{p 4 4 2}
-{bf:CNKI} - China National Knowledge Infrastructure. Comprehensive Chinese 
-academic database. Uses enhanced simulation mode to generate high-quality
-Chinese academic references.
+{phang2}
+{bf:Mixed curated and exploratory retrieval.} A researcher can{break}
+place confirmed core references in {cmd:doi()} or {cmd:doifile()} and{break}
+add a query that fills the remaining part of {cmd:n()}. Exact{break}
+references are retained first, while the query broadens{break}
+coverage under the same provenance policy.
 
+{phang2}
+{bf:Long-paper and case-study assembly.} The command creates the{break}
+bibliography consumed by {cmd:art2tex} or {cmd:case2tex}, with stable{break}
+citation keys and transaction-safe writes. This reduces the{break}
+gap between a literature matrix, a LaTeX manuscript, and a{break}
+coauthor's local reference library.
 
-{title:Enhanced Simulation Mode}
-
-{p 4 4 2}
-{bf:Reliable Reference Generation:} The program uses enhanced simulation mode with the following features:
-{break}- Realistic academic references with plausible metadata
-{break}- Randomized but meaningful publication data
-{break}- Proper formatting for all supported output types
-{break}- Chinese language support for CNKI queries
-{break}- Query-specific reference generation
-
-{p 4 4 2}
-{bf:Benefits of Simulation Mode:}
-{break}- No API key requirements
-{break}- Consistent and reliable operation
-{break}- No network connectivity issues
-{break}- Fast generation of references
-{break}- High-quality academic formatting
-
-
-{title:Using Simulation Mode Effectively}
-
-{p 4 4 2}
-The enhanced simulation mode generates high-quality academic references with:
-{break}- Realistic author names and journal titles
-{break}- Proper academic formatting in all supported formats
-{break}- Query-specific content generation
-{break}- Randomized but plausible publication metadata
-{break}- Chinese language support for CNKI queries
+{pstd}
+Relative to {help getref}, {cmd:get2ref} is the better choice when the{break}
+DOI list is itself an input artifact, when files are handed{break}
+between people, or when a library must be updated in{break}
+repeated batches. {cmd:getref} remains the simpler choice for a{break}
+single DOI or a small set typed directly into the command.
 
 
+{marker examples}{...}
 {title:Examples}
 
-{p 4 4 2}Retrieve machine learning healthcare papers from Crossref:{p_end}
-{phang2}{cmd:. get2ref machine learning healthcare, saving(ml_health.bib) format(bib) replace source(crossref) n(20) yearfrom(2020)}{p_end}
+{pstd}
+Create an empirical-paper framework and replace its example{break}
+bibliography:
 
-{p 4 4 2}Retrieve AI papers from Semantic Scholar in RIS format:{p_end}
-{phang2}{cmd:. get2ref artificial intelligence, saving(ai_papers.ris) format(ris) replace source(semantic) n(15)}{p_end}
+{phang2}
+{stata `"art2tex, filename("paper") replace"'}{p_end}
 
-{p 4 4 2}Retrieve Chinese blockchain research:{p_end}
-{phang2}{cmd:. get2ref 区块链 金融, saving(blockchain_refs.bib) format(bib) replace language(chinese) source(cnki) n(10) yearfrom(2020)}{p_end}
+{phang2}
+{stata `"get2ref "ESG performance and firm value", saving("references.bib") replace n(20) yearfrom(2018) yearto(2026) email("name@example.com")"'}{p_end}
 
-{p 4 4 2}Retrieve quantum computing preprints from arXiv:{p_end}
-{phang2}{cmd:. get2ref quantum computing, saving(quantum_papers.bib) format(bib) replace source(arxiv) n(25) yearfrom(2020)}{p_end}
+{pstd}
+Create a case-study framework and build its bibliography{break}
+from reviewed DOIs:
 
-{p 4 4 2}Retrieve environmental investment research:{p_end}
-{phang2}{cmd:. get2ref 环保投资 第二类代理成本, saving(env_investment.bib) format(bib) replace language(chinese) source(cnki) n(15) yearfrom(2010)}{p_end}
+{phang2}
+{stata `"case2tex, filename("case_study") replace"'}{p_end}
 
-{p 4 4 2}Retrieve ESG research:{p_end}
-{phang2}{cmd:. get2ref 绿色转型视角下ESG表现对股价崩盘风险的影响, saving(esg_research.bib) format(bib) replace language(chinese) source(cnki) n(5) yearfrom(2020)}{p_end}
+{phang2}
+For example, save {cmd:case_dois.txt} with one DOI per line:
 
-{p 4 4 2}Combine multiple sources for comprehensive research:{p_end}
-{phang2}{cmd:. get2ref ESG performance, saving(esg_global.bib) format(bib) replace source(crossref) n(10)}{p_end}
-{phang2}{cmd:. get2ref ESG 表现, saving(esg_chinese.bib) format(bib) replace language(chinese) source(cnki) n(10)}{p_end}
+{pin}
+10.1257/aer.109.4.1197
+{break}
+10.1002/csr.2218
+
+{phang2}
+{stata `"get2ref, saving("references.bib") doifile("case_dois.txt") replace n(2) email("name@example.com")"'}{p_end}
+
+{pstd}
+Retrieve two known works directly:
+
+{phang2}
+{stata `"get2ref, saving("references.bib") doi("10.1257/aer.109.4.1197; 10.1002/csr.2218") replace n(2)"'}{p_end}
+
+{pstd}
+Combine confirmed DOIs with a query that fills the remaining{break}
+slots:
+
+{phang2}
+{stata `"get2ref "corporate governance", saving("references.bib") doi("10.1257/aer.109.4.1197") replace n(10) yearfrom(2020)"'}{p_end}
+
+{pstd}
+Add another literature batch later:
+
+{phang2}
+{stata `"get2ref "corporate governance", saving("references.bib") append n(10) yearfrom(2020)"'}{p_end}
+
+{pstd}
+Sort query results by Crossref citation count:
+
+{phang2}
+{stata `"get2ref "corporate social responsibility", saving("csr.bib") replace n(30) yearfrom(2015) sortby(cited) type(journal-article)"'}{p_end}
+
+{pstd}
+Create RIS output for Zotero:
+
+{phang2}
+{stata `"get2ref "ESG performance", saving("esg.ris") format(ris) replace n(20)"'}{p_end}
+
+{pstd}
+Inspect the returned values:
+
+{phang2}
+{cmd:. return list}
 
 
-{title:File Formats}
+{marker results}{...}
+{title:Stored results}
 
-{p 4 4 2}
-{bf:BibTeX (.bib)} - Standard format for bibliography management in LaTeX documents
-{bf:LaTeX (.tex)} - Direct LaTeX bibliography entries
-{bf:Word (.docx)} - Formatted references for Microsoft Word documents  
-{bf:Plain Text (.txt)} - Simple text format for easy reading
-{bf:RIS (.ris)} - Research Information Systems format for reference managers
+{pstd}
+{cmd:get2ref} stores the following in {cmd:r()}:
+
+{synoptset 20 tabbed}{...}
+{p2col 5 20 19 2: Scalars}{p_end}
+{synopt:{cmd:r(n)}}number of new records written in this run; can be 0 when
+all requested records were skipped{p_end}
+{synopt:{cmd:r(skipped)}}number of DOIs skipped because they were already
+present{p_end}
+{synopt:{cmd:r(n_doi_file)}}number of unique DOI values extracted from
+{cmd:doifile()}{p_end}
+
+{synoptset 20 tabbed}{...}
+{p2col 5 20 19 2: Macros}{p_end}
+{synopt:{cmd:r(keys)}}space-separated citation keys of new records{p_end}
+{synopt:{cmd:r(key)}}citation key of the first new record; empty when no record
+was added{p_end}
+{synopt:{cmd:r(saving)}}requested output path{p_end}
+{synopt:{cmd:r(audit)}}audit path; empty with {cmd:noaudit}{p_end}
+{synopt:{cmd:r(route)}}verification route; {cmd:crossref-verified}{p_end}
+{p2colreset}{...}
 
 
-{title:Technical Implementation}
+{marker formats}{...}
+{title:Output formats}
 
-{p 4 4 2}
-{bf:Simulation Engine:} The program uses sophisticated simulation methods:
-{break}- Stata's random number generation for realistic data
-{break}- Template-based reference formatting
-{break}- Language-specific content generation
-{break}- Proper academic citation styles
+{phang}
+{bf:BibTeX.} Writes a standard multi-line entry using Crossref{break}
+metadata. Citation keys contain lowercase letters and{break}
+digits. The DOI field contains the registered identifier,{break}
+and the URL field uses {cmd:https://doi.org/}.
 
-{p 4 4 2}
-{bf:Reliability Features:}
-{break}- No external dependencies
-{break}- Consistent output quality
-{break}- Cross-platform compatibility
-{break}- Comprehensive error handling
+{phang}
+{bf:TeX.} Writes {cmd:\bibitem} entries containing the available{break}
+author, title, journal, year, volume, issue, pages, and DOI{break}
+fields. These are fragments for an existing {cmd:thebibliography}{break}
+environment; BibTeX output is preferable for {cmd:art2tex} and{break}
+{cmd:case2tex}.
+
+{phang}
+{bf:Plain text.} Builds a readable entry from the RIS metadata.{break}
+English entries follow an author-year structure; Chinese{break}
+entries use the core field order of GB/T 7714. This is a{break}
+compact readable output, not a full bibliographic-style{break}
+validation tool.
+
+{phang}
+{bf:RIS.} Writes the RIS representation obtained from the{break}
+Crossref DOI record. Legacy {cmd:http://dx.doi.org/} links are{break}
+normalized to {cmd:https://doi.org/}.
 
 
+{marker limitations}{...}
+{title:Limitations and research practice}
+
+{pstd}
+Crossref metadata can contain abbreviated names,{break}
+inconsistent capitalization, missing volume or issue fields,{break}
+publication-date differences, or character-conversion{break}
+problems. Before final submission, check the DOI, authors,{break}
+title, journal, volume, issue, pages, publisher, publication{break}
+version, and full text.
+
+{pstd}
+Use the command to build traceable bibliography records, not{break}
+as evidence that a paper makes a particular claim. Respect{break}
+database licenses, publisher terms, and the version actually{break}
+read. Do not treat a working paper, preprint, and published{break}
+version as interchangeable.
+
+{pstd}
+The former simulation modes have been removed. Earlier{break}
+versions generated random authors, journals, pages, and{break}
+DOI-like strings that could be mistaken for real literature.{break}
+The current command reports retrieval failure rather than{break}
+producing a false record.
+
+{pstd}
+Crossref is the only supported retrieval source. CNKI,{break}
+Google Scholar, Semantic Scholar, and arXiv are not{break}
+simulated fallbacks. Obtain and verify an exact DOI in the{break}
+licensed or discovery system, then use {cmd:doi()} or {cmd:doifile()}.
+
+
+{marker troubleshooting}{...}
 {title:Troubleshooting}
 
-{p 4 4 2}
-{bf:Common Issues:}
-{break}- File permission errors: Use replace option or check directory permissions
-{break}- Invalid format: Use only supported formats (bib, tex, docx, txt, ris)
-{break}- Year range errors: Ensure yearfrom is less than or equal to yearto
+{phang}
+{bf:getref is required.} {cmd:get2ref} delegates retrieval and writing{break}
+to {cmd:getref}. Install or update both commands together.
 
-{p 4 4 2}
-{bf:Expected Behavior:}
-{break}- All references are generated using enhanced simulation mode
-{break}- Output files are created in the specified directory
-{break}- References include realistic academic metadata
-{break}- Chinese references use proper Chinese characters and formatting
+{phang2}
+{cmd:. which getref}
+
+{phang2}
+{cmd:. which get2ref}
+
+{phang}
+{bf:DOI list file not found.} Check that {cmd:doifile()} refers to the{break}
+intended text or CSV file. The path may be quoted when it{break}
+contains spaces.
+
+{phang}
+{bf:No Crossref records were found.} Broaden the query, year{break}
+range, or type restriction. Alternatively, verify a DOI{break}
+outside Stata and supply it with {cmd:doi()} or {cmd:doifile()}.
+
+{phang}
+{bf:Download failed.} Check the network, proxy settings, Crossref{break}
+availability, and the system {cmd:curl} executable. Add {cmd:email()}{break}
+when appropriate.
+
+{phang}
+{bf:File already exists.} Use {opt replace} to create a new{break}
+bibliography or {opt append} to add records without duplicating{break}
+existing DOIs.
+
+{phang}
+{bf:Some DOIs failed.} Successfully retrieved records are{break}
+written, failed DOIs are reported, and {cmd:r(n)} counts only the{break}
+records written. Retry the failed DOIs with {opt append}.
+
+{phang}
+{bf:All records were skipped.} The bibliography already contains{break}
+the requested DOIs. The command exits normally with {cmd:r(n) = 0}{break}
+and leaves existing entries unchanged. A getref/get2ref provenance{break}
+header is updated to {cmd:get2ref v4.1}.
+
+{phang}
+{bf:An old bibliography uses underscore keys.} Earlier versions{break}
+may contain keys such as {cmd:doi_10_...}. Regenerate the file{break}
+with {opt replace}; {opt append} intentionally preserves existing{break}
+entries.
 
 
-{title:Usage Notes}
-
-{p 4 4 2}
-- Multi-word queries work without quotes
-- The {cmd:replace} option is recommended to avoid file existence errors
-- For CNKI access, {cmd:language(chinese)} is recommended for Chinese queries
-- Year ranges can be specified using {cmd:yearfrom()} and {cmd:yearto()}
-- The program uses enhanced simulation mode for all data sources
-- Generated references are suitable for academic writing and literature reviews
-- Combine multiple data sources for comprehensive literature reviews
-
-
+{marker authors}{...}
 {title:Authors}
 
-{p 4 4 2}
-Wu Lianghai{p_end}
-{p 4 4 2}
-School of Business, Anhui University of Technology (AHUT){p_end}
-{p 4 4 2}
-Ma'anshan, China{p_end}
-{p 4 4 2}
-E-mail: {browse "agd2010@yeah.net":agd2010@yeah.net}{p_end}
+{pstd}
+Wu Lianghai
+{break}
+School of Business, Anhui University of Technology (AHUT)
+{break}
+Ma'anshan, China
+{break}
+E-mail: {browse "mailto:agd2010@yeah.net":agd2010@yeah.net}
 
-{p 4 4 2}
-Chen Liwen{p_end}
-{p 4 4 2}
-School of Business, Anhui University of Technology (AHUT){p_end}
-{p 4 4 2}
-Ma'anshan, China{p_end}
-{p 4 4 2}
-E-mail: {browse "2184844526@qq.com":2184844526@qq.com}{p_end}
+{pstd}
+Chen Liwen
+{break}
+School of Business, Anhui University of Technology (AHUT)
+{break}
+Ma'anshan, China
+{break}
+E-mail: {browse "mailto:2184844526@qq.com":2184844526@qq.com}
 
-{p 4 4 2}
-Wu Hanyan{p_end}
-{p 4 4 2}
-School of Economics and Management, Nanjing University of Aeronautics and Astronautics (NUAA){p_end}
-{p 4 4 2}
-Nanjing, China{p_end}
-{p 4 4 2}
-E-mail: {browse "2325476320@qq.com":2325476320@qq.com}{p_end}
+{pstd}
+Wu Hanyan
+{break}
+School of Economics and Management, Nanjing University of Aeronautics and{break}
+Astronautics (NUAA)
+{break}
+Nanjing, China
+{break}
+E-mail: {browse "mailto:2325476320@qq.com":2325476320@qq.com}
 
-{p 4 4 2}
-Program version: 3.2.1 | Updated: Oct. 1st, 2025{p_end}
+{pstd}
+Program version: 4.1
+{break}
+Help revision: October 28, 2026
+{break}
+Dingyuan Accounting: Scientific rigor and humanistic goodwill
 
 
+{marker alsosee}{...}
 {title:Also see}
 
-{p 4 4 2}
-{help getref}, {help case2tex}, {help art2tex}, {help reftex}
+{pstd}
+{help getref}, {help art2tex}, {help case2tex}, {help getiref}, {help mysuite}
+
 {*}

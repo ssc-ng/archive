@@ -58,7 +58,7 @@ p findsj module to search and cite Stata Journal articles with interactive butto
 p findsysmis module to find system missing values in a list of variables
 p findunique module to display combinations of unique identifiers in a dataset.
 p findval module to find a specific value
-p finegray module for fast Fine-Gray competing risks regression
+p finegray module for fast Fine-Gray competing risks regression with delayed-entry weighting
 p finn module to compute Finn's coefficient of reliability
 p firstdigit module to analyse first digits of numeric variables 
 p firthfit module to compute model fit for Firth's logit models
@@ -149,6 +149,7 @@ p funnelinst module to generate funnel plots for comparing institutional perform
 p funnelperform module to produce funnel plot for institutional comparison
 p fuzzydid module to estimate Fuzzy Difference-in-Difference Designs
 p fvfix module to compute the future value of a series of equal payments (cash flows)
+p fvgen module to flatten factor-variable interactions into labeled main-effect and product variables
 p fview module to find and view a file
 p fvprevar module to extend fvrevar generating permanent result variables
 p fvregen module to regenerate factor variables in a parmest output dataset

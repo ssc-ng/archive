@@ -1,0 +1,22 @@
+d 'POLYPML': module to perform Joint estimation of polychoric correlations and thresholds with missing data: pairwise maximum likelihood or full-information maximum likelihood
+d
+d     polycorr estimates each correlation by the two-step method.
+d Thresholds come from the margins and each correlation from its
+d own	 pair, using listwise or pairwise deletion. polypml instead
+d estimates all thresholds and correlations jointly, using every   
+d observed value. 
+d
+d KW: polychoric correlations
+d KW: full-information maximum likelihood
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261030
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f polypml.ado
+f polypml.sthlp
+f polypml_examples.do
+f polypml_cert.do

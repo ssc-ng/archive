@@ -1,4 +1,4 @@
-*! _finegray_resolve_baseline Version 1.3.2  2026/09/08
+*! _finegray_resolve_baseline Version 1.3.8  2026/10/07
 *! Resolve the baseline cumulative subhazard for post-estimation
 *! Author: Timothy P Copeland, Karolinska Institutet
 *! Program class: internal (fills a caller-named H0 variable)
@@ -55,7 +55,7 @@ program define _finegray_resolve_baseline
         * types these.
         syntax , tvar(name) h0(name) touse(name) hasbh(integer) ///
             [t0var(string) bsvar(string) tsplit(string) cutmat(string) ///
-            tvcpos(string)]
+            tvcpos(string) piecevars(string)]
 
         * PIECEWISE beta(t).  Two things change under tvc(), and both have to
         * travel down whichever of the three paths is taken:
@@ -74,34 +74,76 @@ program define _finegray_resolve_baseline
             exit 198
         }
 
+        * A posted cumulative total cannot recover an interval mass lost to
+        * rounding.  Older estimates without the separate payload may still
+        * use their keyed cache or the verified estimation-data rebuild.
+        if `"`piecevars'"' != "" & `hasbh' {
+            capture confirm matrix e(basehaz_tvc)
+            if _rc local hasbh = 0
+        }
+
         * 1. the posted matrix
         if `hasbh' {
             mata: _finegray_step_lookup("e(basehaz)", "`tvar'", "`h0'", ///
-                "`touse'", "`bsvar'", "`tsplit'", "`cutmat'")
+                "`touse'", "`bsvar'", "`tsplit'", "`cutmat'", "`piecevars'")
         }
         else {
             * 2. the Mata cache, but only if it belongs to THIS fit
             local _key `"`e(bh_key)'"'
             local _have = 0
             if `"`_key'"' != "" {
-                mata: _finegray_bh_have("`_key'", "_have")
+                mata: _finegray_bh_have("`_key'", "_have", (`"`piecevars'"' != ""))
             }
 
             if `_have' {
                 mata: _finegray_step_lookup_cached("`_key'", "`tvar'", "`h0'", ///
-                    "`touse'", "`bsvar'", "`tsplit'", "`cutmat'")
+                    "`touse'", "`bsvar'", "`tsplit'", "`cutmat'", "`piecevars'")
             }
             else {
                 * 3. rebuild from the estimation data -- if they are still here
                 local _rebuildable = 1
+                local _esempty = 0
                 capture confirm variable _t
                 if _rc local _rebuildable = 0
                 if `_rebuildable' {
                     quietly count if e(sample)
-                    if r(N) == 0 local _rebuildable = 0
+                    if r(N) == 0 {
+                        local _rebuildable = 0
+                        local _esempty = (_N > 0)
+                    }
                 }
 
                 if !`_rebuildable' {
+                    if `"`piecevars'"' != "" {
+                        display as error "separate tvc() interval baseline masses are not available"
+                        display as error "this saved fit has no retained interval payload and the estimation data"
+                        display as error "are no longer in memory; restore those data or re-fit finegray with basehaz"
+                        exit 459
+                    }
+                    * A fit saved before e(rowsig) cannot be rebuilt from the
+                    * data in any state: name that, as every recomputing route
+                    * does (_finegray_check_data), rather than the generic loss.
+                    if `"`e(rowsig)'"' == "" | missing(e(rowsig_n)) {
+                        display as error "this fit predates joint-row estimation-data identity checks"
+                        display as error "re-run finegray, or refit with {bf:basehaz} so the baseline is posted in {bf:e(basehaz)}"
+                        exit 301
+                    }
+                    * Data with _t are in memory but no row is marked: what
+                    * `estimates use' leaves behind, since a saved estimation
+                    * set does not carry e(sample).  "No longer in memory"
+                    * would be false when these ARE the estimation data, and
+                    * the repair is the one _finegray_check_data names for
+                    * the same state.  Guarded by test_finegray_estimates_use.do.
+                    if `_esempty' {
+                        display as error "baseline cumulative subhazard not available"
+                        display as error "the finegray estimation sample is empty, e(basehaz) is not posted and"
+                        display as error "the cached baseline is gone, so it must be rebuilt from the estimation data"
+                        display as error "if the data in memory are those data, restored after {bf:estimates use},"
+                        display as error "re-declare the sample with {bf:estimates esample:} over the variables in"
+                        display as error "{bf:e(datasignaturevars)}; otherwise restore them, or refit {bf:finegray}"
+                        display as error "with {bf:basehaz} so the baseline is posted in {bf:e(basehaz)}"
+                        exit 459
+                    }
                     display as error "baseline cumulative subhazard not available"
                     display as error "the estimation data are no longer in memory and the cached"
                     display as error "baseline was cleared (by {bf:discard} or {bf:mata clear})"
@@ -249,7 +291,7 @@ program define _finegray_resolve_baseline
                     "`_byg_mata'", "`_tg_mata'", "`_es'", "`t0var'", ///
                     "`tvar'", "`h0'", "`touse'", "`_bs_est'", ///
                     "`tvcpos'", "`tsplit'", "`cutmat'", ///
-                    "`_fg_wmata'", `_fg_wtype')
+                    "`_fg_wmata'", `_fg_wtype', "`piecevars'")
             }
         }
     }

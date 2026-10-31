@@ -1,0 +1,368 @@
+{smcl}
+{viewerjumpto "Syntax" "survtab##syntax"}{...}
+{viewerjumpto "Description" "survtab##description"}{...}
+{viewerjumpto "Options" "survtab##options"}{...}
+{viewerjumpto "Examples" "survtab##examples"}{...}
+{viewerjumpto "Stored results" "survtab##stored"}{...}
+{viewerjumpto "Also see" "survtab##alsosee"}{...}
+{viewerjumpto "Author" "survtab##author"}{...}
+{vieweralsosee "tabtools" "help tabtools"}{...}
+{vieweralsosee "stratetab" "help stratetab"}{...}
+{vieweralsosee "effecttab" "help effecttab"}{...}
+{vieweralsosee "sts" "help sts"}{...}
+{vieweralsosee "stci" "help stci"}{...}
+{title:survtab}
+
+{pstd}Survival summary table with Kaplan-Meier estimates, median survival,
+and restricted mean survival time.{p_end}
+
+{marker syntax}{title:Syntax}
+
+{p 4 8 2}{cmd:survtab}, {opt times(numlist)} [{opt by(varname)} {opt rmst(#)}
+{opt med:ian} {opt risk:set} {opt timeu:nit(string)} {opt rev:erse} {opt diff:erence}
+{opt ev:ents} {opt l:evel(#)} {opt dig:its(#)}
+{opt xlsx(filename)} {opt excel(filename)} {opt sheet(string)} {opt title(string)}
+{opt foot:note(string)} {opt font(string)} {opt fontsize(#)} {opt border:style(string)}
+{opt headers:hade} {opt headerc:olor(string)} {opt bold:p(#)} {opt zebra}
+{opt zebrac:olor(string)} {opt high:light(#)} {opt pdp(#)} {opt highpdp(#)}
+{opt csv(filename)} {opt mark:down(filename)} {opt mdapp:end} {opt fra:me(name)} {opt open}
+{opt addr:ow(string asis)}]{p_end}
+
+{pstd}Data must be {helpb stset} before running {cmd:survtab}. Frequency weights
+declared in {cmd:stset} are honored with replication semantics for the
+Kaplan-Meier estimates, event and risk-set counts, and Greenwood RMST
+variance. Probability and importance weights in {cmd:stset} are not supported
+and are rejected before output is produced.{p_end}
+
+{marker description}{title:Description}
+
+{pstd}{cmd:survtab} generates a publication-ready survival summary table from
+{helpb stset} data. It computes Kaplan-Meier survival probabilities (or
+cumulative incidence when {opt reverse} is specified) at user-specified
+timepoints and, optionally, median survival with a confidence interval, the number at risk
+at each timepoint, restricted mean survival time (RMST), and between-group
+comparisons via the log-rank test.{p_end}
+
+{pstd}With {opt by()}, when the analysis sample contains no failures there is nothing
+for the log-rank test to compare: {cmd:survtab} still produces the grouped table,
+omits the test, adds a note row saying why, and stores {cmd:r(logrank_p)} and
+{cmd:r(logrank_chi2)} as missing. Any other failure of the test is an error.{p_end}
+
+{pstd}A typical use case is constructing a Table 2 for a manuscript: two or
+more treatment arms, survival at clinically meaningful timepoints, and a
+log-rank p-value. Adding {opt median}, {opt riskset}, and {opt difference}
+extends the table to the full set of survival summary measures often
+requested by reviewers.{p_end}
+
+{pstd}Output can be exported to a professionally formatted Excel workbook, displayed
+automatically in the Results window, saved as CSV, or stored in a Stata {helpb frames:frame}
+for programmatic access. All tabtools formatting options — fonts, borders,
+zebra striping, bold p-values, and custom colors — are supported.{p_end}
+
+{marker options}{title:Options}
+
+{synoptset 27 tabbed}{...}
+{synoptline}
+{syntab:Required}
+{synopt:{opt times(numlist)}}Kaplan-Meier analysis timepoints{p_end}
+
+{syntab:Analysis}
+{synopt:{opt by(varname)}}between-group comparison variable{p_end}
+{synopt:{opt rmst(#)}}compute RMST through time #{p_end}
+{synopt:{opt med:ian}}include median survival with CI{p_end}
+{synopt:{opt risk:set}}add number-at-risk rows at each timepoint{p_end}
+{synopt:{opt timeu:nit(string)}}time-unit label; default {cmd:years}{p_end}
+{synopt:{opt rev:erse}}report 1 minus survival{p_end}
+{synopt:{opt diff:erence}}add between-group difference column{p_end}
+{synopt:{opt ev:ents}}add aggregate Events / N row per group{p_end}
+{synopt:{opt level(#)}}confidence level; default {cmd:c(level)}{p_end}
+
+{syntab:Output}
+{synopt:{opt xlsx(filename)}}Excel workbook{p_end}
+{synopt:{opt sheet(string)}}Excel sheet name; default is {cmd:"Survival"}{p_end}
+{synopt:{opt title(string)}}table title in row 1{p_end}
+{synopt:{opt foot:note(string)}}footnote below the table{p_end}
+{synopt:{opt csv(filename)}}export a CSV file{p_end}
+{synopt:{opt markdown(filename)}}export as GitHub-Flavored Markdown{p_end}
+{synopt:{opt mdappend}}append to an existing Markdown file{p_end}
+{synopt:{opt fra:me(name)}}store output in a named Stata frame{p_end}
+{synopt:{opt open}}open the Excel file after export{p_end}
+
+{syntab:Formatting}
+{synopt:{opt font(string)}}set the Excel font family{p_end}
+{synopt:{opt fontsize(#)}}set the Excel font size in points{p_end}
+{synopt:{opt border:style(string)}}Excel border style; see Options{p_end}
+{synopt:{opt bold:p(#)}}bold log-rank results below a p threshold{p_end}
+{synopt:{opt headers:hade}}shade header row background{p_end}
+{synopt:{opt headerc:olor(string)}}set the header fill color{p_end}
+{synopt:{opt zebra}}alternating row shading{p_end}
+{synopt:{opt zebrac:olor(string)}}set alternating-row fill color{p_end}
+{synopt:{opt high:light(#)}}highlight log-rank row below p threshold{p_end}
+{synopt:{opt dig:its(#)}}set decimals for survival estimates and CIs{p_end}
+{synopt:{opt pdp(#)}}decimal places for p < 0.10{p_end}
+{synopt:{opt highpdp(#)}}decimal places for p >= 0.10{p_end}
+{synopt:{opt addr:ow(string asis)}}append custom rows below table body{p_end}
+{synoptline}
+
+{pstd}When {opt rmst()} is used, interpret RMST summaries relative to the requested
+truncation time. The estimate is restricted to the observed follow-up window
+up to that horizon and should not be read as a lifetime mean survival measure.{p_end}
+
+{pstd}With {opt rmst()}, {opt difference}, and a {opt by()} of exactly two
+groups, the between-group RMST difference is reported with a confidence
+interval and a two-sided Wald p-value.{p_end}
+
+{pstd}{bf:Direction of the contrast.} The difference is
+{bf:group 1 minus group 2}, where group 1 and group 2 are the first and second
+{opt by()} groups as displayed. Numeric groups are ordered by the ascending
+numeric value of the {opt by()} variable, not by value-label text; string
+groups are ordered lexically by their string values. The column header names
+the two groups explicitly (for example {cmd:Difference (Placebo - Active)}),
+the same direction is stated in {cmd:r(methods)}, and the original {opt by()}
+variable name is returned in {cmd:r(by_var)}, with original group values and
+display labels in {cmd:r(group_}{it:#}{cmd:_value)} and
+{cmd:r(group_}{it:#}{cmd:_label)}, so
+every per-group scalar can be mapped back to the group it came from. A positive
+difference therefore means group 1 has the larger restricted mean survival. To
+reverse the reported direction, recode the {opt by()} variable.{p_end}
+
+{pstd}Because the two groups are disjoint, the
+variance of the difference is the sum of the group-specific Greenwood RMST
+variances; the CI and p-value are returned as {cmd:r(rmst_diff_se)},
+{cmd:r(rmst_diff_lb)}, {cmd:r(rmst_diff_ub)}, and {cmd:r(rmst_diff_p)}. The RMST
+difference (and its CI) is the interpretable, proportional-hazards-free
+between-group contrast (Royston and Parmar 2013), in the same time units as {opt rmst()}.{p_end}
+
+{phang}
+{opt level(#)} sets the confidence level used for median survival, RMST, and
+between-group RMST-difference intervals. The default is {cmd:c(level)}; the
+resolved level is returned in {cmd:r(ci_level)} and stored on a requested
+frame.{p_end}
+
+
+{pstd}
+{it:Detailed option contracts}{p_end}
+
+{phang}
+{opt addr:ow(string asis)} append custom rows below table body{p_end}
+
+{phang}
+{opt bold:p(#)} bold log-rank p-value and summary row when p < threshold{p_end}
+
+{phang}
+{opt border:style(string)} border style: {cmd:default}, {cmd:thin}, {cmd:medium}, or {cmd:academic}{p_end}
+
+{phang}
+{opt csv(filename)} export a CSV file. {it:filename} must end in
+{cmd:.csv}. The CSV mirrors the workbook with
+{opt title()} written as the first row and {opt footnote()} as the last row,
+both in the first column and the table body between them. {opt xlsx()},
+{opt csv()}, and {opt markdown()} must name different files; a collision is
+refused before anything is written.{p_end}
+
+{phang}
+{opt dig:its(#)} decimal places for survival estimates and CIs (default 1,
+range 0-6). A survival (or {opt reverse}) percentage above 0 and below 100
+never prints as 0 or 100: where the format would round it there, it gains one
+decimal at a time, up to two or the format's own decimals if more ({cmd:0.3},
+{cmd:0.04}, {cmd:99.6}), and if it still reads 0 or 100 prints {cmd:<0.01} or
+{cmd:>99.99} at that precision. A true 0 or 100 prints as before.{p_end}
+
+{phang}
+{opt ev:ents} add aggregate Events / N row per group{p_end}
+
+{phang}
+{opt foot:note(string)} footnote below the table{p_end}
+
+{phang}
+{opt fra:me(name)} store output in a named Stata frame; specify {cmd:frame(name, replace)} to
+replace{p_end}
+
+{phang}
+{opt headerc:olor(string)} custom header background color as {it:R G B} (e.g., {cmd:"219 229 241"}){p_end}
+
+{phang}
+{opt headers:hade} shade header row background{p_end}
+
+{phang}
+{opt high:light(#)} highlight log-rank summary row when p < threshold{p_end}
+
+{phang}
+{opt highpdp(#)} max decimal places for large p-values (p >= 0.10); default 2{p_end}
+
+{phang}
+{opt markdown(filename)} export the rendered table as GitHub-Flavored Markdown; may be combined with
+Excel, CSV, and frame exports{p_end}
+
+{phang}
+{opt mdappend} append the Markdown table to an existing file; requires {opt markdown()}{p_end}
+
+{phang}
+{opt med:ian} include median survival with a confidence interval at the
+requested level. A median, or a confidence limit, that the survivor function
+never reaches prints as {cmd:NR} (not reached), so a finite lower limit is
+kept: {cmd:(22.0, NR)}.{p_end}
+
+{phang}
+{opt open} open the Excel file after export{p_end}
+
+{phang}
+{opt pdp(#)} max decimal places for small p-values (p < 0.10); default 3{p_end}
+
+{phang}
+{opt rev:erse} report cumulative incidence as 1 minus survival; valid only without competing risks
+(see {help survtab##cirisk:Competing risks}){p_end}
+
+{phang}
+{opt risk:set} add number-at-risk rows at each timepoint{p_end}
+
+{phang}
+{opt sheet(string)} Excel sheet name; default is {cmd:"Survival"}{p_end}
+
+{phang}
+{opt font(string)} sets the Excel font family. The default is Arial unless a
+session default was set with {cmd:tabtools set font}.{p_end}
+
+{phang}
+{opt fontsize(#)} sets the Excel font size in points. The default is 10 unless
+a session default was set with {cmd:tabtools set fontsize}.{p_end}
+
+{phang}
+{opt times(numlist)} analysis timepoints for Kaplan-Meier estimates. A
+time after a group's last observed follow-up time ({cmd:_t}) reports the final
+Kaplan-Meier estimate carried forward, the usual flat extension of the
+product-limit curve. The data do not support that value, so {cmd:survtab}
+prints a note after the table naming each such group and time, with the
+group's last follow-up, appends the same caveat to the {opt footnote()} of
+the Excel, CSV, and Markdown output, and returns the text in
+{cmd:r(beyond_support)} as "{it:label}: {it:times} (last follow-up {it:#})",
+groups separated by "; " (set only when some time is beyond support). A
+time equal to the last follow-up is within
+support. Estimates are not changed. {opt rmst()}, by contrast, is refused
+beyond any group's support.{p_end}
+
+{phang}
+{opt timeu:nit(string)} time unit label: {cmd:years} (default), {cmd:months}, {cmd:days},
+{cmd:weeks}. The label does not rescale analysis time. When it is left at the
+default and the {cmd:stset} time variable has a date format with no
+{cmd:scale()}, so that analysis time is in days, {cmd:survtab} prints a note
+saying so. Otherwise, unless {cmd:stset} used {cmd:scale(365.25)} or
+{cmd:scale(365)}, a one-line note says that the years label is the default and
+was not inferred from the data.{p_end}
+
+{phang}
+{opt title(string)} table title in row 1{p_end}
+
+{phang}
+{opt xlsx(filename)} Excel workbook; filename must end in {cmd:.xlsx}; {opt excel()} is a synonym{p_end}
+
+{phang}
+{opt zebra} alternating row shading{p_end}
+
+{phang}
+{opt zebrac:olor(string)} custom zebra stripe color as {it:R G B} (e.g., {cmd:"237 242 249"}){p_end}
+
+{marker cirisk}{...}
+{pstd}{bf:Competing risks.} {opt reverse} reports 1 minus the Kaplan-Meier
+survival estimate. This equals the cumulative incidence {it:only} when there is a
+single event type. When failures include competing events, 1 minus KM
+{it:overestimates} the absolute risk of the event of interest, because it treats
+subjects who fail from a competing cause as if they remained at risk. In that
+setting use a competing-risks estimator — the Aalen-Johansen cumulative
+incidence function via {helpb stcompet}, {helpb stcrreg} (with {cmd:predict, basecif}),
+or the {cmd:finegray} package — rather than {opt reverse}.{p_end}
+
+{marker examples}{title:Examples}
+
+{pstd}{bf:Example 1: Basic survival table}{p_end}
+{phang2}{cmd:. webuse drugtr, clear}{p_end}
+{phang2}{cmd:. stset studytime, failure(died)}{p_end}
+{phang2}{cmd:. survtab, times(10 20 30) by(drug) ///}{p_end}
+{phang3}{cmd:xlsx(survival.xlsx) sheet("KM") ///}{p_end}
+{phang3}{cmd:title("Survival by Treatment Group") ///}{p_end}
+{phang3}{cmd:riskset difference zebra}{p_end}
+
+{pstd}{bf:Example 2: Cumulative incidence with RMST}{p_end}
+{phang2}{cmd:. survtab, times(10 20 30) by(drug) reverse rmst(20) ///}{p_end}
+{phang3}{cmd:xlsx(survival.xlsx) sheet("CI") ///}{p_end}
+{phang3}{cmd:title("Cumulative Incidence") timeunit(months)}{p_end}
+
+{pstd}{bf:Example 3: Median survival only}{p_end}
+{phang2}{cmd:. survtab, times(10 20 30) by(drug) median events ///}{p_end}
+{phang3}{cmd:xlsx(survival.xlsx) sheet("Median") ///}{p_end}
+{phang3}{cmd:title("Median Survival by Treatment Group") ///}{p_end}
+{phang3}{cmd:footnote("P-value from log-rank test.") boldp(0.05)}{p_end}
+
+{pstd}{bf:Example 4: Console preview}{p_end}
+{phang2}{cmd:. survtab, times(10 20 30) by(drug)}{p_end}
+
+{marker stored}{title:Stored results}
+
+{pstd}{cmd:survtab} stores the following in {cmd:r()}:{p_end}
+
+{synoptset 18 tabbed}{...}
+{p2col 5 18 22 2: Scalars}{p_end}
+{synopt:{cmd:r(N_rows)}}number of rows in output table{p_end}
+{synopt:{cmd:r(ci_level)}}confidence level used for survival intervals{p_end}
+{synopt:{cmd:r(logrank_p)}}log-rank test p-value (when {cmd:by()} specified){p_end}
+{synopt:{cmd:r(logrank_chi2)}}log-rank test chi-squared statistic{p_end}
+{synopt:{cmd:r(n_groups)}}number of {opt by()} groups (when {opt by()}){p_end}
+{synopt:{cmd:r(median_{it:#})}}median survival for group {it:#} (when {cmd:median}){p_end}
+{synopt:{cmd:r(events_{it:#})}}event count for group {it:#} (when {cmd:events}){p_end}
+{synopt:{cmd:r(atrisk_{it:#})}}group denominator for group {it:#} (when {cmd:events}){p_end}
+{synopt:{cmd:r(rmst_diff)}}two-group RMST difference, group 1 minus group 2{p_end}
+{synopt:{cmd:r(rmst_diff_se)}}standard error of the RMST difference{p_end}
+{synopt:{cmd:r(rmst_diff_lb)}}lower CI bound of the RMST difference{p_end}
+{synopt:{cmd:r(rmst_diff_ub)}}upper CI bound of the RMST difference{p_end}
+{synopt:{cmd:r(rmst_diff_p)}}two-sided Wald p-value for the RMST difference{p_end}
+{synopt:{cmd:r(rmst_{it:#})}}restricted mean survival time for group {it:#}{p_end}
+{synopt:{cmd:r(rmst_se_{it:#})}}standard error of RMST for group {it:#}{p_end}
+{synopt:{cmd:r(rmst_lb_{it:#})}}lower CI bound of RMST for group {it:#}{p_end}
+{synopt:{cmd:r(rmst_ub_{it:#})}}upper CI bound of RMST for group {it:#}{p_end}
+{synopt:{cmd:r(markdown_rows)}}body rows written to Markdown{p_end}
+{synopt:{cmd:r(markdown_cols)}}columns written to Markdown{p_end}
+
+{pstd}{cmd:r(logrank_p)} and {cmd:r(logrank_chi2)} are missing when the analysis
+sample contains no failures, because the log-rank test is then not possible.{p_end}
+
+{p2col 5 18 22 2: Macros}{p_end}
+{synopt:{cmd:r(by_var)}}name of the {opt by()} variable (when {opt by()}){p_end}
+{synopt:{cmd:r(group_)}}dynamic group-identity return family{p_end}
+{synopt:{cmd:r(group_{it:#}_value)}}value of the {opt by()} variable for group {it:#}{p_end}
+{synopt:{cmd:r(group_{it:#}_label)}}value label for group {it:#}{p_end}
+{synopt:{cmd:r(xlsx)}}Excel filename (if exported){p_end}
+{synopt:{cmd:r(sheet)}}sheet name (if exported){p_end}
+{synopt:{cmd:r(markdown)}}Markdown filename (if exported){p_end}
+{synopt:{cmd:r(csv)}}CSV path, when exported{p_end}
+{synopt:{cmd:r(methods)}}methods paragraph for manuscript text{p_end}
+{synopt:{cmd:r(beyond_support)}}times past each group's follow-up{p_end}
+{synopt:{cmd:r(frame)}}frame name (when {cmd:frame()} specified){p_end}
+
+{pstd}The dynamic {cmd:r(group_)} family is instantiated as
+{cmd:r(group_}{it:#}{cmd:_value)} and {cmd:r(group_}{it:#}{cmd:_label)} for
+each returned group.{p_end}
+
+{p2col 5 18 22 2: Matrices}{p_end}
+{synopt:{cmd:r(table)}}survival estimates at each timepoint by group{p_end}
+
+{marker references}{...}
+{title:References}
+
+{phang}
+Royston P, Parmar MKB. 2013. Restricted mean survival time: an alternative to the
+hazard ratio for the design and analysis of randomized trials with a time-to-event
+outcome. {it:BMC Medical Research Methodology}
+13: 152. doi:10.1186/1471-2288-13-152.{p_end}
+
+{marker alsosee}{title:Also see}
+
+{psee}
+{helpb tabtools}, {helpb stratetab}, {helpb effecttab},
+{helpb tabtools_tips}, {helpb sts}, {helpb stci}
+{p_end}
+
+{marker author}{title:Author}
+
+{pstd}Timothy P Copeland, Karolinska Institutet{p_end}
+
+{hline}

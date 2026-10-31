@@ -1,0 +1,504 @@
+{smcl}
+{viewerjumpto "Syntax" "comptab##syntax"}{...}
+{viewerjumpto "Description" "comptab##description"}{...}
+{viewerjumpto "Options" "comptab##options"}{...}
+{viewerjumpto "Examples" "comptab##examples"}{...}
+{viewerjumpto "Stored results" "comptab##stored"}{...}
+{viewerjumpto "Also see" "comptab##alsosee"}{...}
+{viewerjumpto "Author" "comptab##author"}{...}
+{vieweralsosee "regtab" "help regtab"}{...}
+{vieweralsosee "effecttab" "help effecttab"}{...}
+{vieweralsosee "tabtools" "help tabtools"}{...}
+{title:Title}
+
+{phang}
+{bf:comptab} {hline 2} Compose publication tables from regtab/effecttab output frames
+
+
+{marker syntax}{...}
+{title:Syntax}
+
+{p 8 17 2}
+{cmd:comptab}
+{it:framelist}
+{cmd:,}
+{cmd:rows(}{it:string}{cmd:)}
+[{it:options}]
+
+{p 8 17 2}
+{cmd:comptab}
+{it:modelframes}
+{cmd:,}
+{opt ratef:rame(rateframe)}
+{cmd:rows(}{it:string}{cmd:)}
+[{opt eff:ect(string)}]
+[{opt refl:abel(string)}]
+[{opt outcomem:ap(string)}]
+[{it:options}]
+
+{p 8 17 2}
+{cmd:comptab}
+{cmd:,}
+{opt ratef:rame(rateframe)}
+{opt modelf:rames(framelist)}
+{opt rown:ames(string)}
+[{it:options}]
+
+{p 8 17 2}
+{cmd:comptab}
+{it:framelist}
+{cmd:,}
+{opt rown:ames(string)}
+[{it:options}]
+
+
+{synoptset 30 tabbed}{...}
+{synopthdr}
+{synoptline}
+{syntab:Required}
+{synopt:{opt rows(string)}}row selections, one per source frame{p_end}
+{synopt:{opt rown:ames(string)}}select rows by displayed-label pattern{p_end}
+{synopt:{opt ratef:rame(name)}}rate scaffold frame ({cmd:stratetab}/{cmd:ratetab}){p_end}
+{synopt:{opt modelf:rames(framelist)}}model frames for rate-scaffold mode{p_end}
+{synopt:{opt outcomem:ap(string)}}map rate outcomes to model identities{p_end}
+{synopt:{opt allm:odels}}rate mode: one column per model{p_end}
+{synopt:{opt key:ed}}rate mode: place rows by key{p_end}
+{synopt:{opt modelo:nly}}rate mode: append unmatched model rows{p_end}
+
+{syntab:Output}
+{synopt:{opt xlsx(filename)}}Excel workbook; must end in {cmd:.xlsx}{p_end}
+{synopt:{opt excel(filename)}}synonym for {opt xlsx()}{p_end}
+{synopt:{opt sheet(string)}}Excel sheet name (default: "Composite"){p_end}
+{synopt:{opt csv(filename)}}export the composite table to a CSV file{p_end}
+{synopt:{opt mark:down(filename)}}export GitHub-Flavored Markdown{p_end}
+{synopt:{opt mdapp:end}}append to an existing Markdown file{p_end}
+{synopt:{opt fra:me(name[, replace flat])}}save composite to a named Stata frame{p_end}
+{synopt:{opt eplotf:rame(name[, replace])}}save a graph-ready composite frame{p_end}
+{synopt:{opt forest}}draw an eplot forest plot{p_end}
+{synopt:{opt eploto:ptions(string asis)}}pass options to eplot{p_end}
+{synopt:{opt open}}open Excel file after export{p_end}
+
+{syntab:Content}
+{synopt:{opt title(string)}}table title for cell A1{p_end}
+{synopt:{opt foot:note(string)}}footnote text below the table{p_end}
+{synopt:{opt comp:act}}combine estimate and CI per model{p_end}
+{synopt:{opt cf:ormat(%fmt)}}format of estimates and limits{p_end}
+{synopt:{opt cis:ep(string)}}separator between interval limits{p_end}
+{synopt:{opt sec:tion(string)}}section labels, one per source frame{p_end}
+{synopt:{opt rela:bel(string)}}rename selected composite rows{p_end}
+{synopt:{opt sep:arator(numlist)}}add borders above selected data rows{p_end}
+{synopt:{opt eff:ect(string)}}rate-mode effect header; default {cmd:aHR}{p_end}
+{synopt:{opt refl:abel(string)}}reference-row label; default {cmd:Reference}{p_end}
+
+{syntab:Formatting}
+{synopt:{opt font(string)}}set the Excel font family{p_end}
+{synopt:{opt fontsize(#)}}set the Excel font size in points{p_end}
+{synopt:{opt border:style(string)}}Excel border style; see Options{p_end}
+{synopt:{opt labelw:idth(#)}}cap the label-column width{p_end}
+{synopt:{opt zebra}}alternating row shading{p_end}
+{synopt:{opt bold:p(#)}}bold p-values below threshold{p_end}
+{synopt:{opt high:light(#)}}highlight rows where p < threshold{p_end}
+{synopt:{opt headers:hade}}apply background fill to the header row{p_end}
+{synopt:{opt headerc:olor(string)}}set the header fill color{p_end}
+{synopt:{opt zebrac:olor(string)}}set alternating-row fill color{p_end}
+{synoptline}
+
+
+{marker description}{...}
+{title:Description}
+
+{pstd}
+{cmd:comptab} assembles composite publication tables by selecting rows from
+multiple {helpb regtab} or {helpb effecttab} output frames and combining them
+into a single formatted Excel table. This eliminates the manual
+import/export/format workflow for composite tables that combine results from
+different analyses.
+
+{pstd}
+With {opt rateframe()}, {cmd:comptab} instead uses a {helpb stratetab} frame as
+the row scaffold and interlocks selected {helpb regtab} model rows into each
+outcome block as events, person-time, rate, effect, and p-value columns. {helpb hrcomptab} is a compatibility
+wrapper for this mode.
+
+{pstd}
+Common use cases:
+
+{p 8 12 2}
+{bf:1.} Binary + dose-response exposure in one table{break}
+{bf:2.} Multiple sensitivity analyses side by side{break}
+{bf:3.} Primary + secondary outcomes summary table{break}
+{bf:4.} Cherry-picked rows from supplementary tables into a main table
+
+{pstd}
+Source frames are created by running {cmd:regtab}, {cmd:effecttab}, or an
+earlier vertical {cmd:comptab} with {opt frame()}. All source frames must have the same column structure
+(same layout and number of model blocks). Standard frames
+({it:estimate} | {it:CI} | {it:p}) and compact frames
+({it:estimate+CI} | {it:p}) are both supported, but all source frames in one
+call must use the same layout.
+
+{pstd}
+Source frames also carry machine-readable model IDs, outcome IDs, effect
+scales, confidence levels, and statistic order. {cmd:comptab} aligns model
+blocks by unique outcome ID when available, otherwise by unique model ID, and
+rejects sources whose identities, scales, confidence levels, or statistic
+layouts cannot be matched exactly. Display labels alone are not used as
+analytical identities. All sources are snapshotted and every destination is
+built under a temporary name, so rejected aliases or construction failures do
+not alter source frames or existing requested outputs.{p_end}
+
+{pstd}
+For plot-ready composites, create each source table with both {opt frame()} and
+{opt eplotframe()}. {cmd:comptab, eplotframe()} then carries forward the
+selected estimate/CI rows into one graph-ready frame. {cmd:comptab, forest}
+uses that frame with {helpb eplot} and leaves the active graph scheme in effect
+unless you pass a {opt scheme()} option through {opt eplotoptions()}.
+{p_end}
+
+{pstd}
+Create the display and numeric companion in the same command call. Their
+pair identity must agree; a later fit with the same command is a different
+pair. Missing pair metadata, incompatible provenance, and missing or
+duplicated analytical companion rows are refused with error 459. Recreate
+older saved source pairs with the current {cmd:regtab}, {cmd:effecttab}, or {cmd:comptab}
+before requesting a plot-ready composite.{p_end}
+
+{pstd}
+In vertical composite companions, {cmd:source_row} retains the selected row
+number in the input frame. The additional {cmd:table_row} identifies its row
+in the composite table body and lets a later composition match it exactly. Section rows
+count toward {cmd:table_row}.{p_end}
+
+
+{marker options}{...}
+{title:Options}
+
+{dlgtab:Required}
+
+{phang}
+{opt rows(string)} specifies which data rows to extract from each source
+frame. Specifications are separated by backslashes ({cmd:\}), one per frame in
+{it:framelist}. Each specification is a {help numlist} of row numbers where row 1 is the
+first data row after the column headers.
+
+{pmore}
+Example with 3 frames: {cmd:rows(1 2 \ 1 3/5 \ 1)} extracts rows 1-2 from the first
+frame, rows 1 and 3 through 5 from the second, and row 1 from the third.
+
+{phang}
+{opt rown:ames(string)} is an alternative to {opt rows()} that selects rows by rendered
+row-label pattern instead of row number. Specifications are separated by
+backslashes, one per frame. Each specification is a space-separated list of
+case-insensitive substrings matched against the first column ({cmd:A}) in the source
+frame. This matches the displayed row labels, not the original source variable
+names.
+
+{pmore}
+Example: {cmd:rownames(origin weight \ origin length)} extracts rows whose displayed
+labels contain those substrings. Only one of {opt rows()} or {opt rownames()} may
+be specified.
+
+{dlgtab:Content}
+
+{phang}
+{opt ratef:rame(name)} activates rate-scaffold mode. Put the model frames
+before the comma, or supply them with {opt modelframes()}. In this mode,
+{opt section()}, {opt separator()}, {opt relabel()}, and {opt compact} are not
+allowed. Without {opt rateframe()}, the rate-only options {opt effect()},
+{opt reflabel()}, and {opt outcomemap()} are not allowed.
+
+{phang}
+{opt modelf:rames(framelist)} supplies the model frames when no framelist
+precedes the comma. It is also accepted with one positional rate frame for
+compatibility with {cmd:hrcomptab}.
+
+{phang}
+{opt eff:ect(string)}, {opt refl:abel(string)}, and
+{opt outcomem:ap(string)} have the same rate-mode contracts documented in
+{helpb hrcomptab}. In rate mode, {opt rows()} and {opt rownames()} selections
+are placed on the scaffold by category label, as described there.
+
+{phang}
+{opt cformat(%fmt)} re-renders every selected estimate and both interval
+limits from the sources' numeric companion frames with a full Stata numeric
+display format, for example {cmd:%12.0fc} for thousands separators. Create
+each source with {cmd:regtab} or {cmd:effecttab} using both {opt frame()} and
+{opt eplotframe()}; a source without a companion is refused (error 459). Rows
+the companion does not hold (headings, model statistics, custom rows) and
+reference rows keep their text; significance stars stay on the estimate. p-values
+are unaffected. String and date formats are refused. In rate mode it
+applies to the model columns; format rates in {helpb stratetab} or
+{helpb ratetab}.
+
+{phang}
+{opt cisep(string)} sets the separator between the interval limits, for
+example {cmd:cisep(" to ")}, in every output (console, Excel, CSV, Markdown,
+and frames), printed as typed; see {help tabtools##sep:interval separators}. With {opt cformat()}
+the intervals are rebuilt from the numbers and take {opt cisep()}, or
+{cmd:", "} without it, whatever separator the source frames hold; without
+{opt cformat()} the "(a, b)" text is rewritten exactly, and an interval in
+any other form is an error. (The name is {opt cisep()} because
+{opt separator()} already draws row borders.)
+
+{phang}
+{opt allmodels}, {opt keyed}, and {opt modelonly} extend rate mode to several
+models per outcome, keyed placement, and model rows without a rate row; see
+{helpb hrcomptab}.
+
+{phang}
+{opt compact} merges the estimate and CI into a single column per model,
+changing the layout from ({it:Est} | {it:CI} | {it:p}) to
+({it:Est (CI)} | {it:p}). This produces a more compact table, common in
+publication composite tables. When source frames are already compact, the output
+stays compact and {opt compact} is redundant.
+
+{phang}
+{opt section(string)} inserts bold section header rows before each frame's data
+block. Labels are separated by backslashes, one per frame. Borders are
+automatically drawn above each section header.
+
+{pmore}
+Example: {cmd:section("Binary HRT" \ "Dose Categories" \ "Duration")}
+
+{phang}
+{opt relabel(string)} renames rows in the composite table. Specified as pairs
+of {it:row_number} {it:"new label"}. Row numbers are 1-based from the first
+data row (after headers), including any section header rows.
+
+{pmore}
+Example: {cmd:relabel(4 "Low dose (vs. none)" 6 "High dose")}
+
+{phang}
+{opt separator(numlist)} adds thin horizontal borders above the specified
+composite data row numbers. Use this for visual grouping when sections are
+not needed.
+
+{dlgtab:Formatting}
+
+{phang}
+{opt font(string)} sets the Excel font family. The default is Arial unless a
+session default was set with {cmd:tabtools set font}.{p_end}
+
+{phang}
+{opt fontsize(#)} sets the Excel font size in points. The default is 10 unless
+a session default was set with {cmd:tabtools set fontsize}.{p_end}
+
+{phang}
+{opt boldp(#)} bolds p-values smaller than the specified
+threshold. Example: {cmd:boldp(0.05)}
+
+{phang}
+{opt highlight(#)} applies yellow background to rows where any p-value is
+smaller than the specified threshold.
+
+
+
+{pstd}
+{it:Detailed option contracts}{p_end}
+
+{phang}
+{opt border:style(string)} border style: {cmd:default}, {cmd:thin}, {cmd:medium}, or {cmd:academic}{p_end}
+
+{phang}
+{opt csv(filename)} export the composite table to a CSV file. {it:filename} must end in {cmd:.csv} and differ from the
+Excel and Markdown targets. The CSV mirrors
+the workbook with {opt title()} written as the first row and {opt footnote()}
+as the last row, both in the first column and the table body between them.{p_end}
+
+{phang}
+{opt eplotf:rame(name[, replace])} save a graph-ready composite companion frame for {helpb eplot}; source
+frames must have been created with matching {opt frame()} and {opt eplotframe()} outputs{p_end}
+
+{phang}
+{opt eploto:ptions(string asis)} pass additional options to {cmd:eplot} when {opt forest} is
+specified, for example {cmd:eplotoptions(name(myplot, replace) scheme(plotplainblind))}{p_end}
+
+{phang}
+{opt excel(filename)} synonym for {opt xlsx()}{p_end}
+
+{phang}
+{opt foot:note(string)} footnote text below the table{p_end}
+
+{phang}
+{opt forest} draw an {helpb eplot} forest plot from the composite companion frame; requires the
+separate {cmd:eplot} package{p_end}
+
+{phang}
+{opt headerc:olor(string)} supported Stata color name or RGB triplet for header rows{p_end}
+
+{phang}
+{opt headers:hade} apply background fill to the header row{p_end}
+
+{phang}
+{opt labelw:idth(#)} maximum width (characters) of the label (first) column (default 45); labels
+longer than the cap wrap onto extra lines{p_end}
+
+{phang}
+{opt markdown(filename)} export the rendered table as GitHub-Flavored Markdown; may be combined with
+Excel, CSV, and frame exports{p_end}
+
+{phang}
+{opt mdappend} append the Markdown table to an existing file; requires {opt markdown()}{p_end}
+
+{phang}
+{opt open} open Excel file after export; requires {opt xlsx()} or {opt excel()}{p_end}
+
+{phang}
+{opt sheet(string)} Excel sheet name (default: "Composite"){p_end}
+
+{phang}
+{opt title(string)} table title for cell A1{p_end}
+
+{phang}
+{opt xlsx(filename)} Excel workbook; filename must end in {cmd:.xlsx}{p_end}
+
+{phang}
+{opt zebra} alternating row shading{p_end}
+
+{phang}
+{opt zebrac:olor(string)} supported Stata color name or RGB triplet for zebra shading{p_end}
+
+
+{phang}
+{opt fra:me(name[, replace flat])} save composite to a named Stata frame; specify
+{cmd:frame(name, replace)} to replace an existing frame. With {cmd:flat} the
+frame holds one row per body line (section rows included): a string variable
+{cmd:rowlabel}, then one string variable per printed column whose variable
+label is its printed header, "{it:model label}, {it:statistic}" (for example
+"Model 1, HR"), with no title, header, or helper rows, so
+{cmd:puttab rowlabel c*, varlabels} reproduces the table without any
+{cmd:drop}. A header longer than 80 characters is truncated in the variable label and kept in full
+in {cmd:char c}{it:#}{cmd:[tabtools_header]}. A flat frame
+cannot be used as a {cmd:comptab} source.{p_end}
+
+{marker examples}{...}
+{title:Examples}
+
+{pstd}
+{bf:Setup: Create source frames from separate analyses}
+
+{phang2}{cmd:. sysuse auto, clear}{p_end}
+
+{phang2}{cmd:. * Model 1: binary foreign}{p_end}
+{phang2}{cmd:. collect clear}{p_end}
+{phang2}{cmd:. collect: regress price foreign mpg weight}{p_end}
+{phang2}{cmd:. regtab, xlsx(composite_demo.xlsx) sheet("Full 1") frame(f1) noint}{p_end}
+
+{phang2}{cmd:. * Model 2: with interaction}{p_end}
+{phang2}{cmd:. collect clear}{p_end}
+{phang2}{cmd:. collect: regress price i.foreign##c.mpg weight}{p_end}
+{phang2}{cmd:. regtab, xlsx(composite_demo.xlsx) sheet("Full 2") frame(f2) noint}{p_end}
+
+{pstd}
+{bf:Example 1: Basic composite}
+
+{phang2}{cmd:. comptab f1 f2, rows(1 \ 1 2) xlsx(composite_demo.xlsx) sheet("Table 3") title("Table 3. Selected Results")}{p_end}
+
+{pstd}
+{bf:Example 2: With sections and footnote}
+
+{phang2}{cmd:. comptab f1 f2, rows(1 \ 1 2) xlsx(composite_demo.xlsx) sheet("Table 4") section("Main Effect" \ "Interaction") title("Table 4. Summary") footnote("Note: All models adjusted for weight.")}{p_end}
+
+{pstd}
+{bf:Example 3: Compact mode}
+
+{phang2}{cmd:. comptab f1 f2, rows(1 \ 1 2) compact xlsx(composite_demo.xlsx) sheet("Table 5") title("Table 5. Compact")}{p_end}
+
+{pstd}
+{bf:Example 4: Console preview only}
+
+{phang2}{cmd:. comptab f1 f2, rows(1 \ 1 2)}{p_end}
+
+{pstd}
+{bf:Example 5: Typical epidemiology workflow (HRT example)}
+
+{pstd}This example is a workflow sketch: it assumes Cox-model frames {cmd:s1}, {cmd:s2}, and {cmd:s3}
+have already been created by {helpb regtab} (see the {cmd:f1}/{cmd:f2} setup above for the
+pattern). Substitute your own model frames. For a runnable public-data
+workflow, see {help tabtools_tips:tabtools_tips}.{p_end}
+
+{phang2}{cmd:. * Each regtab call creates a frame with Cox model results}{p_end}
+{phang2}{cmd:. * Frame s1: binary HRT (any vs none)}{p_end}
+{phang2}{cmd:. * Frame s2: HRT dose categories (low/medium/high vs none)}{p_end}
+{phang2}{cmd:. * Frame s3: HRT duration (per year)}{p_end}
+{phang2}{cmd:. comptab s1 s2 s3, rows(1 \ 1 3/5 \ 1) compact ///}{p_end}
+{phang2}{cmd:    xlsx(manuscript.xlsx) sheet("Table 3") ///}{p_end}
+{phang2}{cmd:    section("Binary Exposure" \ "Dose Categories" \ "Duration") ///}{p_end}
+{phang2}{cmd:    relabel(3 "Low dose (vs. none)") ///}{p_end}
+{phang2}{cmd:    title("Table 3. HRT and MS Outcomes") ///}{p_end}
+{phang2}{cmd:    footnote("aHR, adjusted hazard ratio; CI, confidence interval.") ///}{p_end}
+{phang2}{cmd:    font(Arial) fontsize(9) borderstyle(academic)}{p_end}
+
+{pstd}
+{bf:Example 6: Rate + hazard-ratio composition}
+
+{pstd}
+After creating {cmd:rates} with {cmd:stratetab, frame(rates)} and compatible
+model frames {cmd:m1} and {cmd:m2} with {cmd:regtab, frame()}, compose the
+Table 2 layout directly. Here {cmd:m1} holds a binary exposure indicator
+(row 1) and {cmd:m2} a three-level factor whose non-reference levels are rows
+3 and 4:
+
+{phang2}{cmd:. comptab m1 m2, rateframe(rates) rows(1 \ 3/4) ///}{p_end}
+{phang2}{cmd:    effect("aHR") reflabel("1.00 (Ref)") ///}{p_end}
+{phang2}{cmd:    xlsx("table2.xlsx") sheet("Table 2")}{p_end}
+
+
+{pstd}
+{bf:Example 7: Thousands separators, a "to" separator, and a flat frame for puttab}
+
+{phang2}{cmd:. sysuse auto, clear}{p_end}
+{phang2}{cmd:. collect clear}{p_end}
+{phang2}{cmd:. collect: regress price mpg weight}{p_end}
+{phang2}{cmd:. regtab, frame(p1, replace) eplotframe(p1e, replace) noint}{p_end}
+{phang2}{cmd:. comptab p1, rows(1 2) cformat(%9.1fc) cisep(" to ") frame(flat1, replace flat)}{p_end}
+{phang2}{cmd:. puttab rowlabel c*, frame(flat1) varlabels markdown(composite_demo.md)}{p_end}
+
+
+{marker stored}{...}
+{title:Stored results}
+
+{pstd}
+{cmd:comptab} stores the following in {cmd:r()}:
+
+{synoptset 20 tabbed}{...}
+{p2col 5 20 24 2: Scalars}{p_end}
+{synopt:{cmd:r(N_rows)}}number of rows in output{p_end}
+{synopt:{cmd:r(N_cols)}}number of columns in output{p_end}
+{synopt:{cmd:r(N_models)}}number of models (from source frames){p_end}
+{synopt:{cmd:r(N_frames)}}number of source frames{p_end}
+{synopt:{cmd:r(ci_level)}}confidence level shared by all source frames{p_end}
+{synopt:{cmd:r(markdown_rows)}}body rows written to Markdown{p_end}
+{synopt:{cmd:r(markdown_cols)}}columns written to Markdown{p_end}
+
+{p2col 5 20 24 2: Macros}{p_end}
+{synopt:{cmd:r(xlsx)}}Excel file path (if exported){p_end}
+{synopt:{cmd:r(sheet)}}Excel sheet name (if exported){p_end}
+{synopt:{cmd:r(frame)}}frame name (if saved){p_end}
+{synopt:{cmd:r(eplotframe)}}graph-ready companion frame name{p_end}
+{synopt:{cmd:r(markdown)}}Markdown filename (if exported){p_end}
+{synopt:{cmd:r(methods)}}methods paragraph{p_end}
+
+{pstd}
+In rate-scaffold mode, {cmd:comptab} instead stores the {cmd:hrcomptab}
+contract: {cmd:r(N_rows)}, {cmd:r(N_outcomes)}, {cmd:r(N_sections)},
+{cmd:r(N_modelrows)}, {cmd:r(N_modelframes)}, {cmd:r(N_models_per_outcome)},
+{cmd:r(N_modelonly)}, {cmd:r(ci_level)},
+{cmd:r(rateframe)}, {cmd:r(modelframes)}, {cmd:r(effect)}, and any requested
+output-path or frame results.
+
+
+{marker author}{...}
+{title:Author}
+
+{pstd}Timothy P Copeland, Karolinska Institutet{p_end}
+
+
+{marker alsosee}{...}
+{title:Also see}
+
+{psee}
+{helpb regtab}, {helpb effecttab}, {helpb tabtools}, {helpb tabtools_tips}
+{p_end}
+
+{hline}

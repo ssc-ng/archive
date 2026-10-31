@@ -1,0 +1,40 @@
+d 'PKGTRANSFER': module to rebuild an installed package setup on another machine, online or offline
+d
+d  pkgtransfer transfers the user-written packages installed in one
+d Stata installation to another. It reads stata.trk in the current
+d PLUS directory to identify installed packages and their sources,
+d including SSC, personal websites, and GitHub, and writes a
+d do-file of the ssc install, net install, and github install
+d commands needed to reinstall them online on a new machine.
+d Alternatively, download(online) downloads every package file from
+d its source, or download(local) copies it from the local PLUS
+d directory, and builds a local installation script and a ZIP
+d archive for offline installation, and the restore option restores
+d the online source URLs in stata.trk after an offline install.
+d Options restrict or exclude packages, choose the target operating
+d system for plugin filtering, name the generated do-file and ZIP
+d archive, and allow existing output to be overwritten. The output
+d records package sources, not a snapshot of package versions.
+d Results returned in r() include the number and list of packages
+d processed, the download mode, the target operating system, and
+d the names of the generated do-file and ZIP archive. 
+d
+d KW: package management
+d KW: installation
+d KW: reinstall
+d KW: migration
+d KW: offline installation
+d KW: stata.trk
+d KW: SSC
+d KW: GitHub
+d KW: net install
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261030
+d
+d Author: Timothy P Copeland, Karolinska Institutet
+d Support: email timothy.copeland@@ki.se
+d
+f pkgtransfer.ado
+f pkgtransfer.sthlp

@@ -1,0 +1,154 @@
+*! _tabtools_xlsx_write Version 1.0.0  2026/10/20
+*! Write the current dataset to an Excel sheet through Mata xl()
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass
+
+program define _tabtools_xlsx_write, rclass
+    version 17.0
+    local _orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+        syntax using/ , SHEET(string) [BOOK(name)]
+
+        if "`book'" == "" tempname book
+
+        * A fresh export never inherits cell-style rules queued by an earlier
+        * export that stopped before _tabtools_xlsx_compact_styles ran.
+        mata: (void) rmexternal("_tt_xp_rules")
+        mata: (void) rmexternal("_tt_xp_meta")
+
+        * A closed xl() object left in Mata under this name is not reset by
+        * assigning a fresh one over it: the next create_book() on that name
+        * fails with r(16111). Public callers supply process-unique tempnames,
+        * so this cleanup can never target a caller-owned Mata object.
+        capture mata: mata drop `book'
+
+        quietly ds
+        local _vars `r(varlist)'
+        if "`_vars'" == "" {
+            noisily display as error "No variables available for Excel export"
+            exit 111
+        }
+        quietly count
+        if r(N) == 0 {
+            noisily display as error "No observations available for Excel export"
+            exit 2000
+        }
+
+        * tabtools set workbook: the first write to the session workbook,
+        * from any command and however the path was given, starts it over.
+        _tabtools_set_sinks xlsxstart, path(`"`using'"')
+
+        local _tt_sheet_used `"`macval(sheet)'"'
+        mata: `book' = _tt_xlsx_write_mata(`"`using'"', `"`macval(sheet)'"', `"`_vars'"')
+
+        return scalar n_rows = _N
+        return scalar n_cols = `: word count `_vars''
+        return local book "`book'"
+        * Excel matches an existing sheet case-insensitively; report the
+        * spelling actually written so callers can style and echo it.
+        return local sheet `"`macval(_tt_sheet_used)'"'
+        return local xlsx `"`using'"'
+    }
+    local rc = _rc
+    set varabbrev `_orig_varabbrev'
+    if `rc' {
+        * stata-dev-ignore: capture-rc — error-path cleanup after local rc = _rc; a failed close must not mask the export error, which exit rc raises below
+        capture mata: `book'.close_book()
+        capture mata: mata drop `book'
+        if inlist(`rc', 603, 608, 610, 16106) {
+            capture noisily _tabtools_export_hint `"`using'"'
+        }
+        exit `rc'
+    }
+end
+
+version 17.0
+capture mata: mata drop _tt_xlsx_write_mata()
+capture mata: mata drop _tt_cur_strmat()
+
+* matastrict is a session setting: save the caller's value here and
+* restore it after the block, so loading this file never leaks it.
+local _tt_ms0 = c(matastrict)
+mata:
+mata set matastrict on
+
+class xl scalar _tt_xlsx_write_mata(
+    string scalar filepath,
+    string scalar sheet,
+    string scalar varlist)
+{
+    class xl scalar b
+    string rowvector sheets
+    string matrix table
+    real scalar i, found
+
+    b = xl()
+
+    if (!fileexists(filepath)) {
+        b.create_book(filepath, sheet, "xlsx")
+    }
+    else {
+        b.load_book(filepath)
+        sheets = b.get_sheets()
+        found = 0
+        for (i = 1; i <= length(sheets); i++) {
+            if (strlower(sheets[i]) == strlower(sheet)) {
+                sheet = sheets[i]
+                found = 1
+                break
+            }
+        }
+        if (found) {
+            b.clear_sheet(sheet)
+        }
+        else {
+            b.add_sheet(sheet)
+        }
+        b.set_sheet(sheet)
+    }
+    st_local("_tt_sheet_used", sheet)
+
+    b.set_mode("open")
+    table = _tt_cur_strmat(varlist)
+    b.put_string(1, 1, table)
+
+    return(b)
+}
+
+string matrix _tt_cur_strmat(string scalar varlist)
+{
+    string rowvector vars
+    string matrix out
+    string colvector scol
+    real colvector ncol
+    string scalar fmt
+    real scalar i, j, N, K
+
+    vars = tokens(varlist)
+    N = st_nobs()
+    K = cols(vars)
+    out = J(N, K, "")
+
+    for (j = 1; j <= K; j++) {
+        if (st_isstrvar(vars[j])) {
+            out[, j] = st_sdata(., vars[j])
+        }
+        else {
+            ncol = st_data(., vars[j])
+            scol = J(N, 1, "")
+            fmt = st_varformat(vars[j])
+            for (i = 1; i <= N; i++) {
+                if (ncol[i] < .) {
+                    scol[i] = strtrim(ustrregexra(strofreal(ncol[i], fmt), "-(?=[0.,]+\z)", ""))
+                }
+            }
+            out[, j] = scol
+        }
+    }
+
+    return(out)
+}
+
+end
+mata: mata set matastrict `_tt_ms0'

@@ -1,0 +1,816 @@
+{smcl}
+{viewerjumpto "Syntax" "table1_tc##syntax"}{...}
+{viewerjumpto "Options" "table1_tc##options"}{...}
+{viewerjumpto "Description" "table1_tc##description"}{...}
+{viewerjumpto "Examples" "table1_tc##examples"}{...}
+{viewerjumpto "Stored results" "table1_tc##stored"}{...}
+{viewerjumpto "Technical notes" "table1_tc##technical"}{...}
+{viewerjumpto "Author" "table1_tc##author"}{...}
+{vieweralsosee "tabtools" "help tabtools"}{...}
+{vieweralsosee "regtab" "help regtab"}{...}
+{hline}
+help for {cmd:table1_tc}
+{hline}
+
+{title:Title}
+
+{p2colset 5 15 21 2}{...}
+{p2col: {bf:table1_tc}}{hline 2} Create "Table 1" of baseline characteristics for a manuscript
+
+{marker syntax}{...}
+{title:Syntax}
+
+{pstd}{bf:Quick start (recommended):}{p_end}
+
+{p 8 18 2}
+{cmd:table1_tc} [{it:varlist}] {ifin} {cmd:[fweight=}{it:exp}{cmd:]} [{cmd:,} {opt by(varname)} {it:options}]
+
+{pstd}When a {it:varlist} is provided without {opt vars()}, each variable's type is
+automatically detected using the command's built-in type-classification
+heuristics. This is the simplest way to use {cmd:table1_tc}.{p_end}
+
+{pstd}{bf:Advanced (explicit types):}{p_end}
+
+{p 8 18 2}
+{cmd:table1_tc} {ifin} {cmd:[fweight=}{it:exp}{cmd:]}, {opt vars(var_spec)} [{it:options}]
+
+{phang}{it:var_spec} = {it: varname vartype} [{it:{help fmt:%fmt1}}
+[{it:{help fmt:%fmt2}}]] [ \ {it:varname vartype} [{it:{help fmt:%fmt1}} [{it:{help fmt:%fmt2}}]] \ ...]
+
+{phang}where {it: vartype} is one of:{p_end}
+{p2colset 8 16 18 2}{...}
+{p2col:{cmd:auto}}automatic type detection (default when vartype omitted){p_end}
+{p2col:{cmd:contn}}continuous, normally distributed (mean and SD will be reported){p_end}
+{p2col:{cmd:contln}}continuous, log normally distributed (geometric mean and GSD reported){p_end}
+{p2col:{cmd:conts}}continuous, neither log normally nor normally distributed (median, Q1 and Q3 reported){p_end}
+{p2col:{cmd:cat}}categorical, groups compared using Pearson's chi-square test{p_end}
+{p2col:{cmd:cate}}categorical, groups compared using Fisher's exact test{p_end}
+{p2col:{cmd:bin}}binary (0/1), groups compared using Pearson's chi-square test{p_end}
+{p2col:{cmd:bine}}binary (0/1), groups compared using Fisher's exact test{p_end}
+{p2colreset}{...}
+
+{phang}{cmd:[fweight=}{it:exp}{cmd:]} supplies frequency weights using standard
+Stata weight syntax; see {help weight}.{p_end}
+
+
+{marker options}{...}
+{title:Options}
+
+{synoptset 26 tabbed}{...}
+{synopthdr}
+{synoptline}
+{syntab:Weighting}
+{synopt:{opt wt(varname)}}apply probability/IP weights{p_end}
+
+{syntab:Columns/Rows}
+{synopt:{opt by(varname)}}group observations by {it:varname}{p_end}
+{synopt:{opt total(before|after)}}add total before or after group columns{p_end}
+{synopt:{opt mis:sing}}treat missing values as a category{p_end}
+{synopt:{opt test}}show the significance-test column{p_end}
+{synopt:{opt stat:istic}}show the test statistic{p_end}
+{synopt:{opt headerp:erc}}add percentage of total to sample size row{p_end}
+{synopt:{opt smd}}show standardized mean differences{p_end}
+{synopt:{opt smdtype(type)}}SMD statistic: {cmd:pair}, {cmd:population}, or {cmd:maxpair}{p_end}
+{synopt:{opt smdpair(g1 g2)}}the two {opt by()} groups a {cmd:pair} SMD compares{p_end}
+{synopt:{opt nop:value}}suppress p-value and test columns{p_end}
+
+{syntab:Contents of Cells}
+{synopt:{opt f:ormat(%fmt)}}default continuous-variable format{p_end}
+{synopt:{opt percf:ormat(%fmt)}}default display format for percentages{p_end}
+{synopt:{opt nf:ormat(%fmt)}}count format; default {cmd:%12.0fc}{p_end}
+{synopt:{opt varlabplus}}append data type to variable labels{p_end}
+{synopt:{opt iqrmiddle("string")}}symbol between Q1 and Q3; default is ", "{p_end}
+{synopt:{opt sdleft("string")}}symbol before SD; default is "±"{p_end}
+{synopt:{opt sdright("string")}}symbol after SD; default is "" (none){p_end}
+{synopt:{opt gsdleft("string")}}symbol before GSD; default is " (×/"{p_end}
+{synopt:{opt gsdright("string")}}symbol after GSD; default is ")"{p_end}
+{synopt:{opt percsign("string")}}percent sign; default is "" (none){p_end}
+{synopt:{opt space:lowpercent}}report ( 3%) instead of (3%){p_end}
+{synopt:{opt extraspace}}improve non-monospaced DOCX alignment{p_end}
+{synopt:{opt percent}}show categorical percentages only{p_end}
+{synopt:{opt percent_n}}report % (n) rather than n (%){p_end}
+{synopt:{opt slashN}}report n/N instead of n{p_end}
+{synopt:{opt catrowperc}}report row % for categorical vars{p_end}
+{synopt:{opt pdp(#)}}max decimal places for p < 0.10; default is 3{p_end}
+{synopt:{opt highpdp(#)}}decimal places for p >= 0.10; default 2{p_end}
+
+{syntab:Excel Output}
+{synopt:{opt xlsx("filename")}}save table to Excel file{p_end}
+{synopt:{opt sheet("string")}}Excel sheet name{p_end}
+{synopt:{opt title("string")}}title for the Excel table{p_end}
+{synopt:{opt border:style(string)}}Excel border style; see Options{p_end}
+{synopt:{opt font(string)}}Excel font family; default Arial{p_end}
+{synopt:{opt fontsize(#)}}Excel font size in points; default 10{p_end}
+{synopt:{opt bold:p(#)}}bold p-value cells below threshold{p_end}
+{synopt:{opt foot:note(string)}}add footnote row below table{p_end}
+{synopt:{opt open}}open Excel output after export{p_end}
+{synopt:{opt zebra}}alternating row shading{p_end}
+{synopt:{opt headers:hade}}apply shading to header rows{p_end}
+{synopt:{opt high:light(#)}}highlight rows where p < threshold{p_end}
+{synopt:{opt smdt:hreshold(#)}}SMD highlighting threshold in Excel{p_end}
+{synopt:{opt nosmdh:ighlight}}no SMD highlighting in Excel{p_end}
+{synopt:{opt headerc:olor(string)}}custom header background color{p_end}
+{synopt:{opt zebrac:olor(string)}}custom zebra stripe color{p_end}
+{synopt:{opt csv("filename")}}also export as CSV file{p_end}
+{synopt:{opt markdown(filename)}}export as GitHub-Flavored Markdown{p_end}
+{synopt:{opt mdappend}}append the Markdown table to an existing file{p_end}
+
+{syntab:Frame & Pipeline}
+{synopt:{opt fra:me(name[, replace])}}store output in a named Stata frame{p_end}
+
+{syntab:Other}
+{synopt:{opt clear}}replace dataset in memory with the table{p_end}
+{synopt:{opt dots}}show progress dots while processing variables{p_end}
+{synopt:{opt missings:ummary}}add missing data summary row per variable{p_end}
+{synopt:{opt smallc:ells(#[, primary])}}suppress small counts and reconstruction{p_end}
+{synopt:{opt nosmallc:ells}}ignore the session smallcells default{p_end}
+{synopt:{opt cellr:eplace(spec)}}overwrite named body cells with text{p_end}
+{synopt:{opt wtc:ompare}}show weighted and unweighted statistics{p_end}
+{synopt:{opt wtn}}show weighted effective counts{p_end}
+{synoptline}
+
+
+
+{pstd}
+{it:Detailed option contracts}{p_end}
+
+{phang}
+{opt bold:p(#)} bold p-value cells below threshold{p_end}
+
+{phang}
+{opt border:style(string)} border style: {cmd:default}, {cmd:thin}, {cmd:medium}, or {cmd:academic}; default
+is {cmd:thin}{p_end}
+
+{phang}
+{opt font(string)} sets the Excel font family, and {opt fontsize(#)} sets its
+point size from 1 through 72. The defaults are {cmd:Arial} and {cmd:10}.{p_end}
+
+{phang}
+{opt by(varname)} group observations by {it:varname}{p_end}
+
+{phang}
+{opt catrowperc} report row % for categorical vars{p_end}
+
+{phang}
+{opt clear} replace dataset in memory with the table. The table is
+header-shaped: observation 1 repeats each column's variable label, so a bare
+{cmd:list} reads as a table, and the descriptor and sample-size row follows
+it. Observation 1 is a header, not data. {helpb puttab} consumes it
+automatically with {cmd:varlabels}; drop it yourself if you consume the table
+any other way.{p_end}
+
+{phang}
+{opt csv("filename")} also export as CSV file. {it:filename} must end in {cmd:.csv} and differ from the
+Excel and Markdown targets. The CSV mirrors the workbook
+with {opt title()} written as the first row and {opt footnote()} as the last
+row, both in the first column and the table body between them.{p_end}
+
+{phang}
+{opt dots} show progress dots while processing variables{p_end}
+
+{phang}
+{opt extraspace} helps alignment in .docx with non-monospaced fonts{p_end}
+
+{phang}
+{opt foot:note(string)} add footnote row below table. The literal token {cmd:\},
+with a space on each side, separates paragraphs: each paragraph gets its own
+wrapped row in the workbook and CSV and its own italic paragraph in Markdown.{p_end}
+
+{phang}
+{opt f:ormat(%fmt)} default display format for continuous variables; default is %2.0f. The
+geometric SD of a {cmd:contln} row uses {it:%fmt2} when given, otherwise an
+explicit {it:%fmt1} or {opt format()}; with none of these it is shown with two
+decimals ({cmd:%4.2f}), because a multiplicative GSD near 1 would otherwise
+print as "×/1".{p_end}
+
+{phang}
+{opt fra:me(name[, replace])} store output in a named Stata frame. The frame holds the same
+header-shaped table as {opt clear}: observation 1 repeats each column's variable label.{p_end}
+
+{phang}
+{opt gsdleft("string")} symbol before GSD; default is " (×/"{p_end}
+
+{phang}
+{opt gsdright("string")} symbol after GSD; default is ")"{p_end}
+
+{phang}
+{opt headerc:olor(string)} custom header background color; supported Stata color name or RGB triplet
+such as {cmd:"200 220 240"}{p_end}
+
+{phang}
+{opt headerp:erc} add percentage of total to sample size row{p_end}
+
+{phang}
+{opt headers:hade} apply shading to header rows{p_end}
+
+{phang}
+{opt high:light(#)} highlight rows where p < threshold{p_end}
+
+{phang}
+{opt highpdp(#)} max decimal places for p >= 0.10; default is 2{p_end}
+
+{phang}
+{opt iqrmiddle("string")} symbol between Q1 and Q3; default is ", "{p_end}
+
+{phang}
+{opt markdown(filename)} export the rendered table as GitHub-Flavored Markdown; may be combined with
+Excel, CSV, and frame exports. Categorical level rows keep their indentation: each leading
+space of a row label is written as {cmd:&nbsp;}, which survives Markdown cell trimming{p_end}
+
+{phang}
+{opt mdappend} append the Markdown table to an existing file; requires {opt markdown()}{p_end}
+
+{phang}
+{opt mis:sing} treat missing values as another category for categorical variables. All
+missing codes ({cmd:.} and {cmd:.a}-{cmd:.z}) form the one Missing category shown, and the
+chi-square or Fisher test uses that same coding{p_end}
+
+{phang}
+{opt missings:ummary} add missing data summary row per variable{p_end}
+
+{phang}
+{opt smallc:ells(#[, primary])} suppresses every positive count below {it:#} and adds
+complementary suppression where released cells or margins would otherwise
+reveal an exact protected count. {it:#} must be an integer of at least 3. Primary
+cells are shown as {cmd:<#}; complementary cells are shown as {cmd:≥#}. Zeros
+remain visible. After safety is certified, individually redundant complementary
+markers are removed in a deterministic pass. See
+{help table1_tc##technical:Technical notes} for the disclosure-control contract
+and limits.{p_end}
+
+{pmore}
+{cmd:smallcells(}{it:#}{cmd:, primary)} protects printed counts only: every printed
+count from 1 to {it:#}-1 (a level or binary count, a printed missing count, a group,
+total or {opt slashN} denominator) is shown as {cmd:<#} without its percentage. No
+complementary {cmd:≥#} cells are added, other cells keep their percentages, and the
+ordinary variable statistics, p-values and SMDs are shown as computed. One derived
+cell is still withheld: a weighted effective sample size ({opt wt()} with
+{opt wtn}) whose published group N is masked is shown as {cmd:Suppressed}
+(suppression code 3) and is counted in {cmd:r(N_derived_suppressed)}, which is
+otherwise 0 in primary mode. A count that can
+be derived from printed cells (for example a missing count as N minus the printed
+levels) is not protected. The footnote says that this mode ran and that it protects
+printed counts only, and {cmd:r(smallcells_mode)} is {cmd:primary}. Use it when the
+publication rule is "no printed count from 1 to {it:#}-1"; keep the default when
+reconstruction by subtraction must also be prevented.{p_end}
+
+{pmore}
+After {cmd:tabtools set smallcells} {it:#} [{cmd:primary}], every call without
+{opt smallcells()} uses that threshold and mode and says so in the log
+({cmd:(tabtools: using session smallcells(5))}). An explicit {opt smallcells()} wins.{p_end}
+
+{phang}
+{opt nosmallc:ells} ignores a session {cmd:tabtools set smallcells} default for this
+call, so the table is shown without masking (an internal version of a table, say). It
+may not be combined with {opt smallcells()}.{p_end}
+
+{phang}
+{opt cellr:eplace(spec)} overwrites body cells that are structurally not reportable,
+such as a level that is reported inside another category in one
+group. {it:spec} is {cmd:"}{it:rowlabel}{cmd:"} {it:column} {cmd:"}{it:text}{cmd:"} [{cmd:\}
+...]. {it:rowlabel} must match exactly one row label, ignoring leading
+spaces; {it:column} is either an unquoted number, counting the columns after the row-label
+column (1 = the first group or Total column as printed), or the column's header text
+in quotes, exactly as printed (for example {cmd:"Total"}, a group label such as
+{cmd:"2004"}, or {cmd:"p-value"}). A
+row label that matches no row or more than one row, a header that matches no
+column or more than one, a column number outside the table (r(125)), and an entry
+without all three parts are errors; nothing is guessed. The replacement is made
+before the table is listed, so the console, Excel, CSV, Markdown, {opt frame()}, and
+{opt clear} all show
+it. Example: {cmd:cellreplace("Natalizumab" "2004-2008" "In Other")}.{p_end}
+
+{phang}
+{opt nf:ormat(%fmt)} display format for n and N; default is %12.0fc{p_end}
+
+{phang}
+{opt nop:value} suppress the p-value column (and associated test/statistic columns){p_end}
+
+{phang}
+{opt open} open the exported workbook; requires {opt xlsx()} or {opt excel()}{p_end}
+
+{phang}
+{opt pdp(#)} max decimal places for p < 0.10; default is 3{p_end}
+
+{phang}
+{opt percent} report % only (no N) for categorical/binary vars{p_end}
+
+{phang}
+{opt percent_n} report % (n) rather than n (%){p_end}
+
+{phang}
+{opt percf:ormat(%fmt)} default display format for percentages; default is
+%5.0f. A percentage above 0 and below 100 never prints as 0 or 100: where the
+format would round it there, it gains one decimal at a time, up to two or the
+format's own decimals if more ({cmd:0.3}, {cmd:0.04}, {cmd:99.6}), and if it
+still reads 0 or 100 prints {cmd:<0.01} or {cmd:>99.99} at that precision. A
+true 0 or 100 prints as before. The rule applies to a per-variable format too,
+and to the {opt missing}, {opt missingsummary} and {opt headerperc}
+percentages.{p_end}
+
+{phang}
+{opt percsign("string")} percent sign; default is "" (none){p_end}
+
+{phang}
+{opt sdleft("string")} symbol before SD; default is "±"{p_end}
+
+{phang}
+{opt sdright("string")} symbol after SD; default is "" (none){p_end}
+
+{phang}
+{opt sheet("string")} Excel sheet name; default is "Table 1"; available only with {opt xlsx()}/
+{opt excel()}. After {cmd:tabtools set workbook} (and {cmd:tabtools set markdown}), a call
+that gives {opt sheet()} but no {opt xlsx()}/{opt excel()} (or no {opt markdown()}) writes to the
+session workbook (and Markdown file) and says so in the log; a call without {opt sheet()}
+never uses them, so a console-, {opt frame()}- or {opt clear}-only table is not written. The
+first write to a session target replaces it and later writes add sheets or append; see
+{helpb puttab} and {helpb tabtools}.{p_end}
+
+{phang}
+{opt slashN} report n/N instead of n{p_end}
+
+{phang}
+{opt smd} add standardized mean differences column (requires {opt by()}){p_end}
+
+{phang}
+{opt smdtype(type)} chooses what the {opt smd} column reports when {opt by()}
+has two or more groups. It requires {opt smd} and is typed in full
+({opt smdt} abbreviates {opt smdthreshold()}). See {help table1_tc##multismd:Multi-group SMD}.{p_end}
+{p 8 12 2}{cmd:pair}, the default, is the two-group SMD of Yang and Dalton (2012). With
+more than two groups it compares the first two {opt by()} groups (or the
+{opt smdpair()} groups) only; the column header becomes {cmd:SMD (}{it:A} {cmd:vs} {it:B}{cmd:)}
+and a footnote names the pair.{p_end}
+{p 8 12 2}{cmd:population} is the population standardized bias (McCaffrey et al. 2013): the
+largest |group mean - overall mean| / overall SD over all groups. Header {cmd:Pop. SB}.{p_end}
+{p 8 12 2}{cmd:maxpair} is the largest absolute pairwise SMD over all pairs of
+groups (Lopez and Gutman 2017), every pair divided by one shared SD. Header {cmd:Max SMD}.{p_end}
+
+{phang}
+{opt smdpair(g1 g2 [, values|labels])} names the two {opt by()} groups that a
+{cmd:pair} SMD compares, for example a treatment and its control in a three-arm
+table. Each of {it:g1} and {it:g2} is a {opt by()} value (a number, numeric
+{opt by()} only) or a group label (the string value of a string {opt by()}, or
+the value-label text of a numeric {opt by()}); quote a label that contains
+spaces. Quotes only group words: {cmd:"3"} and {cmd:3} are read the same
+way. Each must name exactly one group. When a number is the value of one group and
+the label of another (value labels that are themselves numbers, such as
+1 {cmd:"3"}, 2 {cmd:"1"}, 3 {cmd:"2"}), it is ambiguous and is refused
+(r(198)); add {cmd:values} to read every token as a value or {cmd:labels} to
+read every token as label text, for example {cmd:smdpair(3 2, values)}. A label
+equal to its own group's value is not ambiguous. Requires {opt smd} and
+{cmd:smdtype(pair)}.{p_end}
+
+{phang}
+{opt smdt:hreshold(#)} SMD threshold for orange highlighting in Excel; default is 0.1; use
+{opt nosmdhighlight} (or -1) to disable{p_end}
+
+{phang}
+{opt nosmdh:ighlight} leaves every SMD cell unhighlighted in Excel; the SMD
+values themselves are unchanged. It is the same as {cmd:smdthreshold(-1)} and
+may not be combined with {opt smdthreshold()}.{p_end}
+
+{phang}
+{opt space:lowpercent} report ( 3%) instead of (3%); no-space alignment is the default{p_end}
+
+{phang}
+{opt stat:istic} include column describing the value of the test statistic{p_end}
+
+{phang}
+{opt test} include column describing the significance test used{p_end}
+
+{phang}
+
+{phang}
+{opt title("string")} title for the Excel table{p_end}
+
+{phang}
+{opt total(before|after)} include a total column before/after group columns{p_end}
+
+{phang}
+{opt varlabplus} add data type description after variable labels{p_end}
+
+{phang}
+{opt vars(var_spec)} explicitly defines table rows as backslash-separated
+{it:varname vartype} entries. Each entry may also supply one or two Stata
+display formats; supported row types are listed under Syntax. When omitted,
+types are inferred for the supplied varlist.{p_end}
+
+{phang}
+{opt wt(varname)} probability/IP weight (e.g. IPTW); weighted columns are % only (see {opt wtn},
+Technical notes){p_end}
+
+{phang}
+{opt wtc:ompare} show unweighted statistics alongside weighted (requires {opt wt()}){p_end}
+
+{phang}
+{opt wtn} show weighted (effective) counts as {it:n (%)} in weighted columns (requires {opt wt()}){p_end}
+
+{phang}
+{opt xlsx("filename")} save table to Excel file; {opt excel()} is a synonym; target must end in
+{cmd:.xlsx}{p_end}
+
+{phang}
+{opt zebra} alternating row shading{p_end}
+
+{phang}
+{opt zebrac:olor(string)} custom zebra stripe color; supported Stata color name or RGB triplet such
+as {cmd:"240 245 250"}{p_end}
+
+{marker description}{...}
+{title:Description}
+
+{pstd}
+{cmd:table1_tc} generates a "Table 1" of characteristics for a manuscript. Such a
+table generally includes a collection of baseline characteristics which may be
+either continuous or categorical. The observations are often grouped, with a
+"p-value" column on the right comparing the characteristics between groups.{p_end}
+
+{pstd}{bf:Auto-type detection:} When you provide a varlist without {opt vars()}, or use the {cmd:auto}
+type keyword, each variable's type is automatically classified:{p_end}
+
+{p 8 8 2}1. String variables are classified as {cmd:cat}{p_end}
+{p 8 8 2}2. Numeric variables whose observed analysis-sample values are exactly
+0 and 1 are classified as {cmd:bin}{p_end}
+{p 8 8 2}3. Other variables with ≤7 unique analysis-sample values, including
+1/2-coded dichotomies, are classified as {cmd:cat}{p_end}
+{p 8 8 2}4. Variables with >7 unique values → distributional classification
+via the shared helper:{p_end}
+{p 12 12 2}p ≥ 0.05 → {cmd:contn} (normal){p_end}
+{p 12 12 2}p < 0.05 → {cmd:conts} (skewed){p_end}
+
+{pstd}This command is a fork of {cmd:table1_mc} version 3.5 by Mark Chatfield, with
+enhancements including Excel and Markdown export, explicit formatting, auto-type
+detection, IPTW weighting, SMD, and a methods paragraph generator.{p_end}
+
+{pstd}{bf:Frame output:} The {opt frame()} option stores the results table in a Stata frame
+for programmatic access without replacing data in memory.{p_end}
+
+{pstd}{bf:Pipeline:} After running {cmd:table1_tc}, use {cmd:r(varlist)} to pass the variable list
+directly to a regression model:{p_end}
+{p 8 8 2}{cmd:table1_tc age sex bmi, by(treated)}{p_end}
+{p 8 8 2}{cmd:local myvars `r(varlist)'}{p_end}
+
+
+{marker examples}{...}
+{title:Examples}
+
+{pstd}{bf:Quick start — auto-detect all variable types:}{p_end}
+
+{phang2}{cmd:. sysuse auto, clear}{p_end}
+{phang2}{cmd:. table1_tc rep78 foreign, by(foreign)}{p_end}
+
+{pstd}{bf:Protect small counts in every output sink:}{p_end}
+
+{phang2}{cmd:. table1_tc rep78, by(foreign) vars(rep78 cat) ///}{p_end}
+{phang3}{cmd:total(after) smallcells(5) frame(table1_safe, replace)}{p_end}
+
+{pstd}{bf:Mask printed counts 1-4 only (no complementary cells):}{p_end}
+
+{phang2}{cmd:. table1_tc rep78, by(foreign) vars(rep78 cat) smallcells(5, primary)}{p_end}
+
+{pstd}{bf:Overwrite one structurally non-reportable cell:}{p_end}
+
+{phang2}{cmd:. table1_tc rep78, by(foreign) vars(rep78 cat) cellreplace("2" "Foreign" "In 3")}{p_end}
+
+{pstd}{bf:Hand the table to puttab; its embedded header row is consumed, no {cmd:drop in 1}:}{p_end}
+
+{phang2}{cmd:. table1_tc rep78 mpg, by(foreign) vars(rep78 cat \ mpg contn) frame(t1, replace)}{p_end}
+{phang2}{cmd:. puttab using table1.xlsx, frame(t1) varlabels sheet("Table 1")}{p_end}
+
+{pstd}{bf:With Excel and Markdown export and formatting:}{p_end}
+
+{phang2}{cmd:. table1_tc price mpg weight rep78, by(foreign) ///}{p_end}
+{phang3}{cmd:xlsx("table1.xlsx") title("Table 1") smd borderstyle(academic)}{p_end}
+
+{pstd}{bf:Explicit variable types (advanced):}{p_end}
+
+{phang2}{cmd:. table1_tc, by(foreign) ///}{p_end}
+{phang3}{cmd:vars(price contn %8.0fc \ mpg contn %5.1f \ weight contn \ ///}{p_end}
+{phang3}{cmd:     rep78 cat \ headroom conts) ///}{p_end}
+{phang3}{cmd:xlsx("table1_detail.xlsx") sheet("Baseline") ///}{p_end}
+{phang3}{cmd:title("Table 1. Baseline Characteristics") smd zebra}{p_end}
+
+{pstd}The weighted-cohort examples below are workflow sketches: they assume a cohort
+in memory carrying an IPTW weight ({cmd:iptw}) and the covariates {cmd:age},
+{cmd:female}, {cmd:education}, and {cmd:bmi}. Substitute your own analysis
+variables and weight.{p_end}
+
+{pstd}{bf:IPTW-weighted Table 1:} (weighted columns show % + SMD; add
+{opt wtn} for weighted counts){p_end}
+
+{phang2}{cmd:. table1_tc, by(treated) wt(iptw) smd ///}{p_end}
+{phang3}{cmd:vars(age contn \ female bin \ education cat \ bmi contn)}{p_end}
+
+{pstd}{bf:Crude vs IPTW-weighted, side by side:}{p_end}
+
+{phang2}{cmd:. table1_tc, by(treated) wt(iptw) wtcompare smd ///}{p_end}
+{phang3}{cmd:vars(age contn \ female bin \ education cat \ bmi contn)}{p_end}
+
+{pstd}{bf:Custom SMD threshold (0.2 instead of 0.1):}{p_end}
+
+{phang2}{cmd:. table1_tc age sex bmi, by(treated) smd smdthreshold(0.2) ///}{p_end}
+{phang3}{cmd:xlsx("table1_smd.xlsx")}{p_end}
+
+{pstd}{bf:Balance across three or more groups:} the population standardized bias,
+the largest pairwise SMD, or one named pair:{p_end}
+
+{phang2}{cmd:. sysuse auto, clear}{p_end}
+{phang2}{cmd:. table1_tc price mpg foreign, by(rep78) smd smdtype(population)}{p_end}
+{phang2}{cmd:. table1_tc price mpg foreign, by(rep78) smd smdtype(maxpair)}{p_end}
+{phang2}{cmd:. table1_tc price mpg foreign, by(rep78) smd smdpair(3 5)}{p_end}
+
+{pstd}{bf:SMD column without highlighting:}{p_end}
+
+{phang2}{cmd:. table1_tc age sex bmi, by(treated) smd nosmdhighlight xlsx("table1_smd.xlsx")}{p_end}
+
+{pstd}{bf:Two Table 1 blocks in one sheet:} store each block in a frame, then stack the
+frames with {helpb stacktab}; each block gets a bold heading and keeps its own N row.{p_end}
+
+{phang2}{cmd:. sysuse auto, clear}{p_end}
+{phang2}{cmd:. table1_tc price mpg, by(foreign) frame(b1, replace)}{p_end}
+{phang2}{cmd:. table1_tc headroom trunk, by(foreign) frame(b2, replace)}{p_end}
+{phang2}{cmd:. stacktab using table1.xlsx, sheet("Table 1") ///}{p_end}
+{phang3}{cmd:frames(b1 "A. Price and mileage" \ b2 "B. Size")}{p_end}
+
+{pstd}{bf:Store results in a frame:}{p_end}
+
+{phang2}{cmd:. table1_tc age sex bmi, by(treated) frame(mytable, replace)}{p_end}
+{phang2}{cmd:. frame mytable: list}{p_end}
+
+
+{marker stored}{...}
+{title:Stored results}
+
+{pstd}
+{cmd:table1_tc} stores the following in {cmd:r()}:
+
+{synoptset 32 tabbed}{...}
+{p2col 5 32 36 2: Scalars}{p_end}
+{synopt:{cmd:r(markdown_rows)}}body rows written to Markdown{p_end}
+{synopt:{cmd:r(markdown_cols)}}columns written to Markdown{p_end}
+{synopt:{cmd:r(smallcells)}}active small-cell threshold{p_end}
+{synopt:{cmd:r(n_cellreplace)}}cells set by {opt cellreplace()}{p_end}
+{synopt:{cmd:r(N_primary_suppressed)}}primary display cells{p_end}
+{synopt:{cmd:r(N_secondary_suppressed)}}complementary display cells{p_end}
+{synopt:{cmd:r(N_derived_suppressed)}}dependent cells, incl. masked ESS{p_end}
+
+{p2col 5 32 36 2: Macros}{p_end}
+{synopt:{cmd:r(Dapa)}}resolved data-presentation description{p_end}
+{synopt:{cmd:r(methods)}}methods paragraph for resolved tests{p_end}
+{synopt:{cmd:r(varlist)}}processed variables{p_end}
+{synopt:{cmd:r(smallcells_mode)}}{cmd:full} or {cmd:primary} (with {opt smallcells()}){p_end}
+{synopt:{cmd:r(xlsx)}}exported Excel path{p_end}
+{synopt:{cmd:r(sheet)}}Excel sheet name{p_end}
+{synopt:{cmd:r(frame)}}frame name (if {cmd:frame()} specified){p_end}
+{synopt:{cmd:r(markdown)}}Markdown filename (if exported){p_end}
+{synopt:{cmd:r(smdtype)}}{cmd:pair}, {cmd:population}, or {cmd:maxpair} (with {opt smd}){p_end}
+{synopt:{cmd:r(smdnote)}}note naming what the SMD compares{p_end}
+
+{p2col 5 32 36 2: Matrices}{p_end}
+{synopt:{cmd:r(table)}}p-values and absolute SMDs by variable{p_end}
+{synopt:{cmd:r(suppression)}}display-cell suppression codes{p_end}
+
+{pstd}{cmd:r(table)} has one row per analysed variable; category levels and
+missing-summary rows are not included. Columns are {cmd:p_value} (when p-values
+are shown) and {cmd:smd} (with {opt smd}); with neither, {cmd:r(table)} is not
+posted. The SMD column is named {cmd:smd} for every {opt smdtype()}: use
+{cmd:r(smdtype)} ({cmd:pair}, {cmd:population}, or {cmd:maxpair}) to tell which
+statistic it holds, and {cmd:r(smdnote)} for the groups it compares. Under
+{opt wt()} p-values are suppressed, so {cmd:r(table)} has the {cmd:smd} column
+only, holding the weighted statistic (with {opt wtcompare}, the weighted
+comparison; crude SMDs are not computed); without {opt smd} it is not posted. Rows
+are named from the variable
+labels, made unique with {cmd:_2}, {cmd:_3}, and so on, and replaced by a valid
+matrix name when a label cannot be one.{p_end}
+
+
+{marker technical}{...}
+{title:Technical notes}
+
+{pstd}{bf:Small-cell disclosure control.} {opt smallcells(#)} protects exact
+counts within one invocation of {cmd:table1_tc}. A positive count below the
+threshold is primary-suppressed as {cmd:<#}. The command then suppresses
+additional exact cells as {cmd:≥#} until every primary cell has at least two
+feasible integer values under all released row, column, and grand margins. Structural
+zeros remain visible and are never selected as complementary
+cells.{p_end}
+
+{pstd}
+{bf:Counts that follow from printed ones are protected too.} A categorical
+variable's missing count equals the group N minus its printed levels, and a
+binary variable's negative and missing counts follow from the non-missing
+denominator its percentage releases. These counts are not printed, but one below
+the threshold is protected as a primary cell, as it would be if
+{opt missingsummary} or {opt slashN} printed it: printed cells are marked
+{cmd:≥#} where needed, percentages are withheld, and the p-value is
+suppressed. In a table of two or more variables the group and total sample
+sizes are shared by every variable, so they are never withheld as complementary
+cells; when a count cannot be protected without them, {cmd:table1_tc} stops with an
+error.{p_end}
+
+{pstd}
+{bf:Percentages are withheld for a protected variable.} A published percentage
+releases its own denominator: dividing a published count by its published
+percentage recovers the per-variable non-missing group total, after which the
+remaining counts follow by subtraction. Whenever a variable's block carries a
+primary suppression, {cmd:table1_tc} therefore publishes counts only for that
+variable, in every column including {opt total()}. Other variables keep their
+percentages. For the same reason {opt smallcells()} may not be combined with a
+percent-only display -- explicit {opt percent}, the percent-only default that
+{opt wt()} applies without {opt wtn} or {opt percent_n}, or the percent-only
+weighted columns of {opt wtcompare} without {opt wtn} or {opt percent_n} -- because a protected
+block would then have nothing left to publish; use {opt percent_n}, {opt wtn}, or
+the default {cmd:n (%)}.{p_end}
+
+{pstd}
+After certification, the command tests each complementary marker for removal
+in a stable order and repeats until none can be revealed safely. Every remaining
+{cmd:≥#} is therefore individually necessary in the final protected table
+because revealing it would make at least one primary count exact. This set is
+irredundant, but it is not guaranteed to be a globally minimum-cardinality
+suppression set.{p_end}
+
+{pstd}
+Continuous summaries whose contributing N is below the threshold are replaced
+by {cmd:<#}. P-values, test statistics, and SMDs that depend on a protected
+block are shown as {cmd:Suppressed} and stored as {cmd:.d} in {cmd:r(table)}. The
+same already-redacted table is used by the console, Excel, CSV, Markdown,
+{opt frame()}, and {opt clear} sinks. When {opt smallcells()} is active,
+{cmd:r(suppression)} uses codes 0=visible, 1=primary, 2=complementary, and
+3=derived. Output frames carry the threshold, code legend, and protection
+scope as dataset characteristics.{p_end}
+
+{pstd}
+The standard footnote states the active threshold and marker meanings. This is
+an exact-disclosure safeguard for one command call, not a certification of
+anonymization or legal compliance. It does not account for information already
+released, later manual edits, linkage to other tables, or repeated calls on
+overlapping data. Data controllers must still assess those risks and applicable
+rules before publication.{p_end}
+
+{pstd}{bf:SMD methodology:} Standardized mean differences are computed as follows:{p_end}
+{p 8 8 2}Continuous variables: {it:d} = (mean1 - mean2) / sqrt((sd1^2 + sd2^2)/2),
+whose denominator is the root mean of the two group variances (Yang and Dalton,
+2012, eq. 1), not the degrees-of-freedom-weighted pooled SD{p_end}
+{p 8 8 2}Binary variables: difference in proportions / pooled SD of proportions{p_end}
+{p 8 8 2}Categorical variables: the Yang-Dalton multinomial Mahalanobis distance{p_end}
+
+{pstd}
+For a categorical variable with {it:K} levels, one category is omitted and
+{it:p1} and {it:p2} contain the remaining {it:K}-1 group proportions. Define
+{it:Vg} = diag({it:pg}) - {it:pg}{it:pg}' and {it:S} = ({it:V1}+{it:V2})/2, then the
+reported distance is sqrt[({it:p1}-{it:p2})'{it:S}^-1({it:p1}-{it:p2})]. It is
+nonnegative, has no direction, and is invariant to the omitted category when
+{it:S} is nonsingular. The two-level case reduces to the binary SMD, while
+{cmd:table1_tc} reports a missing categorical SMD when either comparison group
+is empty, fewer than two levels are observed, or the pooled covariance is
+singular. Proportions use positive {opt wt()} values or supplied
+{cmd:fweight}s when present.{p_end}
+
+{pstd}
+Observations with zero or missing {opt wt()} are outside the weighted analysis
+sample, including header N and {opt by()}-level validation; negative weights are
+rejected. Consequently, every displayed comparison group must contain at least
+one observation with a positive weight.{p_end}
+
+{pstd}
+See Yang, D. and J. E. Dalton (2012),
+{browse "https://support.sas.com/resources/papers/proceedings12/335-2012.pdf":A unified approach to measuring the effect size between two groups},
+SAS Global Forum Paper 335-2012.{p_end}
+
+{pstd}When {opt wt()} is specified, SMDs use weighted means, weighted standard
+deviations, and weighted proportions for the compared {opt by()} groups (see
+{help table1_tc##multismd:Multi-group SMD} for {cmd:smdtype(population)}).{p_end}
+
+{pstd}{bf:Weight type.} {opt wt()} is intended for probability / inverse-probability weights
+(IPTW, survey, or sampling weights), {it:not} frequency weights -- pass true
+frequency counts as an {opt fweight} instead. The weight is applied analytically
+(like an {opt aweight}) for point estimates: weighted means and proportions equal
+{it:(sum of w*x) / (sum of w)}, which is identical whether the weight is regarded
+as a probability or an analytic weight. The two differ only in variance /
+standard-error estimation -- which is exactly why p-values are suppressed
+under {opt wt()}: correct inference would require survey ({helpb svy}) or robust treatment that
+this descriptive command does not attempt.{p_end}
+
+{pstd}{bf:Weighted display.} Under {opt wt()}, weighted statistics are reported on the
+{it:unweighted}-N scale (the header N and ESS count real observations). Weighted
+columns show {it:percentages only} by default: once weighted, the cell count is
+just {it:(weighted %) x N}, so {it:n (%)} would print the same number twice and dress a
+synthetic quantity up as a real frequency. The percentage -- together with the
+{opt smd} balance column -- is what carries meaning. To display the weighted
+{it:effective} count anyway, add {opt wtn} (shows {it:n (%)}) or {opt percent_n} (shows {it:% (n)}); the
+effective count is {it:(weighted %) x N}, a normalized pseudo-count on the
+real-observation scale, not the sum of weights.{p_end}
+
+{pstd}{bf:Very large weights.} Weighted means, SDs, quantiles, percentages,
+effective counts and the ESS do not depend on the scale of the weights. When a
+weighted sum, product, or square would exceed Stata's double range (about
+8.99e+307), {cmd:table1_tc} divides the weights by a power of two, which is
+exact, and reports the same statistics. A statistic that still cannot be
+formed is reported as missing, never computed from a partial sum: a mean of
+values whose sum itself overflows leaves the cell blank, and an SD of values
+whose squares overflow is shown as {cmd:.}.{p_end}
+
+{pstd}With {opt wtcompare} the crude columns always show {it:n (%)} (real counts), while
+the weighted columns follow the same rule: percent-only by default, {opt wtn} or
+{opt percent_n} to add the weighted effective count.{p_end}
+
+{pstd}Values |SMD| > {opt smdthreshold()} (default 0.1) are highlighted in orange in Excel
+output; Markdown, CSV, and frame output are not highlighted. Specify {opt nosmdhighlight}
+to disable this formatting. The
+0.1 convention follows Austin (2009).{p_end}
+
+{marker multismd}{...}
+{pstd}{bf:Multi-group SMD.} The Yang-Dalton SMD is defined for two groups only. With
+three or more {opt by()} groups the default {cmd:smdtype(pair)} still
+compares two groups -- the first two, or those named in {opt smdpair()} -- and
+says so in every output: the column header is {cmd:SMD (}{it:A} {cmd:vs} {it:B}{cmd:)}
+(console, Excel, CSV, Markdown, {opt frame()}, {opt clear}), and the note
+{it:SMD compares A vs B only (the first two of K groups).} is printed above
+the console table, appended to {opt footnote()} (Excel, CSV, Markdown),
+stored in {cmd:r(smdnote)}, and stored in the frame characteristic
+{cmd:_dta[tabtools_smdnote]}. Two-group output is unchanged.{p_end}
+
+{pstd}{cmd:smdtype(population)} reports, per variable, the population standardized
+bias of McCaffrey et al. (2013, sec. 4.1.2 eq. 5), maximized over groups as in
+their sec. 4.2: max over {it:g} of |{it:m_g} - {it:m_pop}| / {it:sd_pop}, where
+{it:m_pop} and {it:sd_pop} are the mean and SD (n-1) of all analysed records. Group
+means use {opt wt()} when given, but the overall mean and SD stay
+{it:unweighted}, as eq. 5 specifies (the population the weights aim at; twang's
+{cmd:mnps} does the same). Under an {cmd:fweight} the overall mean and SD are
+frequency-weighted, since the weight replicates records. Binary variables use
+sqrt({it:p_pop}(1-{it:p_pop})); categorical variables report the largest value
+over groups and levels, each level standardized by sqrt({it:p_l}(1-{it:p_l})) of its
+overall share (the per-level form of twang 2.6.2 and cobalt
+4.6.3). McCaffrey et al. treat values below 0.20 as small.{p_end}
+
+{pstd}{cmd:smdtype(maxpair)} reports the largest absolute pairwise SMD over all
+pairs of groups, the summary of Lopez and Gutman (2017, eq. 27). Every pair is
+divided by the same SD, sqrt(mean of the {it:K} group variances) (weighted under
+{opt wt()}; {it:p_g}(1-{it:p_g}) for binary variables), so all pairs are on one
+scale and, with two groups, the value equals the absolute {cmd:pair} SMD. This is
+cobalt's {cmd:s.d.denom = "pooled"}. Other shared scales exist: Lopez and Gutman
+divide by the SD of a reference arm, and twang's {cmd:bal.table()} by the
+population SD; a pair's own two variances (Yang-Dalton applied pair by pair)
+would put each pair on a different scale. For a categorical variable,
+{cmd:maxpair} is the Yang-Dalton Mahalanobis distance with {it:S} averaged over
+all {it:K} groups, maximized over pairs. That form is a tabtools extension, not
+a published method: it reduces to Yang-Dalton for two groups and to the binary
+{cmd:maxpair} for a two-level variable. Under {opt wt()} cobalt keeps the
+pooled SD unweighted; {cmd:table1_tc} weights it, as the two-group SMD does.{p_end}
+
+{pstd}For {cmd:population} and {cmd:maxpair} the footnote states the definition,
+including with two groups. A group with no non-missing values for a
+variable (or, for {cmd:maxpair}, a single value, so no variance) leaves that
+variable's statistic blank: it is never computed over fewer
+groups. {opt smdthreshold()} highlights any of the three, with the same default
+(0.1); McCaffrey et al. suggest 0.20 for the population SB. With
+{opt wtcompare} the statistic uses the weighted groups.{p_end}
+
+{pstd}{bf:Auto-type detection:} Variables with more than 7 unique values are classified
+by the shared helper using normality/distributional heuristics; large-N paths
+may use a fallback heuristic instead of direct Shapiro-Wilk testing. Users
+should verify classifications for publishable tables.{p_end}
+
+{pstd}{bf:Reserved by() variable names:} The internal reshape pipeline produces wide
+columns named {cmd:N_<level>}, {cmd:m_<level>}, {cmd:_columna_<level>}, and {cmd:_columnb_<level>}. A
+{opt by()} variable whose own name starts with {cmd:N_}, {cmd:m_}, or {cmd:_column*} would alias those
+reshape outputs and silently corrupt the resulting table, so {cmd:table1_tc} rejects
+such names with rc=498. Reserved exact names are {cmd:N}, {cmd:m}, {cmd:_}, {cmd:_c}, {cmd:_co}, {cmd:_col},
+{cmd:_colu}, {cmd:_colum}, {cmd:_column}, {cmd:_columna}, {cmd:_columnb}; reserved prefixes are {cmd:N_} and
+{cmd:m_}. If you hit this error, rename the variable (for example,
+{cmd:rename N_age age_n}) before calling {cmd:table1_tc}.{p_end}
+
+
+{title:References}
+
+{phang}Austin PC. Balance diagnostics for comparing the distribution of baseline
+covariates between treatment groups in propensity-score matched
+samples. Statistics in Medicine 2009; 28: 3083-3107. doi:10.1002/sim.3697.{p_end}
+{phang}Lopez MJ, Gutman R. Estimation of causal effects with multiple treatments: a
+review and new ideas. Statistical Science
+2017; 32: 432-454. doi:10.1214/17-STS612.{p_end}
+{phang}McCaffrey DF, Griffin BA, Almirall D, Slaughter ME, Ramchand R, Burgette LF. A
+tutorial on propensity score estimation for multiple treatments using
+generalized boosted models. Statistics in Medicine
+2013; 32: 3388-3414. doi:10.1002/sim.5753.{p_end}
+{phang}Yang D, Dalton JE. A unified approach to measuring the effect size between
+two groups using SAS. SAS Global Forum 2012, Paper 335-2012.{p_end}
+{phang}Limpert E, Stahel WA, Abbt M. Log-normal distributions across the
+sciences: keys and clues. BioScience 2001; 51(5): 341-352. doi:10.1641/0006-3568(2001)051[0341:lndats]2.0.co;2.{p_end}
+{phang}table1_mc - Mark Chatfield, The University of Queensland, Australia.{p_end}
+
+
+{marker author}{...}
+{title:Author}
+
+{pstd}Timothy P Copeland, Karolinska Institutet{p_end}
+
+{title:Also see}
+
+{psee}
+{space 2}Help: {helpb tabtools}, {helpb regtab}, {helpb effecttab},
+{helpb stratetab}, {helpb comptab}
+{p_end}
+
+{hline}

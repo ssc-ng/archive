@@ -1,4 +1,4 @@
-*! finegray_cif Version 1.3.2  2026/09/08
+*! finegray_cif Version 1.3.8  2026/10/27
 *! Cumulative incidence curves and fixed-horizon CIF after finegray
 *! Author: Timothy P Copeland, Karolinska Institutet
 *! Program class: rclass (returns results in r())
@@ -6,8 +6,10 @@
 /*
 Basic syntax:
   finegray_cif [, at(var=# ...) over(varname) attime(numlist)
-                  timepoints(numlist) ci level(#) saving(filename)
-                  nograph twoway_options]
+                  timepoints(numlist) bstratum(#) ci level(#)
+                  saving(filename) bootstrap(#) seed(#)
+                  nograph plotopts() plot#opts() ciopts() ci#opts()
+                  twoway_options]
 
 Description:
   Predicted cumulative incidence function (CIF) after finegray, for a chosen
@@ -20,9 +22,14 @@ Description:
   at(var=# ...)      sets the covariate profile (default: estimation-sample means).
   over(varname)      one curve per level of a model variable (or per fitted
                      baseline stratum), overlaid in one call; results stacked.
+  bstratum(#)        selects one fitted baseline stratum after bstrata().
   ci                 adds influence-function confidence limits (cloglog scale).
+  bootstrap(#)       bootstrap limits from # refits (at least 25); seed(#).
   saving(filename)   writes the numeric estimates (time cif se lci uci) to a
                      dataset (the outfile analogue).
+  plotopts()/ciopts() style every CIF line / CI band; plot#opts()/ci#opts()
+                     curve # only (the marginsplot convention).  The default
+                     graph has no note() and leading-zero y-axis labels.
 
 See help finegray_cif for complete documentation.
 */
@@ -38,13 +45,61 @@ program define finegray_cif, rclass sortpreserve
     local _rngstate ""
     local _side_rc = 0
     local _fgrebuilt ""
+    local _vlheld = 0
 
     capture noisily {
 
     syntax [, AT(string) OVER(varname numeric) ATTime(string) ///
         TImepoints(string) CI Level(string) ///
         BSTRATum(string) ///
-        SAVing(string) BOOTstrap(integer 0) SEED(string) noGRAPH *]
+        SAVing(string) BOOTstrap(integer 0) SEED(string) noGRAPH ///
+        PLOTOPts(string asis) CIOPts(string asis) *]
+
+    * Plot-level pass-through, the marginsplot convention: plotopts() reaches
+    * every CIF line and ciopts() every CI band; plot#opts() and ci#opts()
+    * reach curve # only.  The numbered forms cannot be declared up front (the
+    * number of curves is not known yet), so they arrive in `options' and are
+    * pulled out here, one # at a time, with the same PLOT#opts / CI#opts
+    * abbreviations marginsplot uses.  The range check waits until the curve
+    * count is known.  Anything plot#/ci#-shaped still left afterwards -- a
+    * repeat, a zero or leading-zero #, a repeated plotopts() -- is refused
+    * rather than handed to twoway, which would fail only AFTER the analysis
+    * ran and report it as a graph failure.
+    local _pnums ""
+    local _cnums ""
+    local _rest `"`options'"'
+    while `"`_rest'"' != "" {
+        gettoken _tok _rest : _rest, bind
+        if ustrregexm(`"`_tok'"', "^(plot|ci)([1-9][0-9]*)(o|op|opt|opts)?\(") {
+            local _k = ustrregexs(2)
+            if ustrregexs(1) == "plot" local _pnums : list _pnums | _k
+            else local _cnums : list _cnums | _k
+        }
+    }
+    foreach _k of local _pnums {
+        local 0 `", `options'"'
+        syntax [, PLOT`_k'opts(string asis) *]
+    }
+    foreach _k of local _cnums {
+        local 0 `", `options'"'
+        syntax [, CI`_k'opts(string asis) *]
+    }
+    local _rest `"`options'"'
+    while `"`_rest'"' != "" {
+        gettoken _tok _rest : _rest, bind
+        if ustrregexm(`"`_tok'"', "^((plot|ci)[0-9]+(o|op|opt|opts)?|plotopt?s?|ciopt?s?)\(") {
+            local _tok = ustrregexs(1)
+            display as error "option {bf:`_tok'()} is misspecified or repeated"
+            display as error "plotopts() and ciopts() may be given once, and plot#opts() and"
+            display as error "ci#opts() once per curve, with # = 1 for the first curve"
+            exit 198
+        }
+    }
+    if (`"`ciopts'"' != "" | "`_cnums'" != "") & "`ci'" == "" {
+        display as error "ciopts() and ci#opts() require the ci option"
+        display as error "without ci no confidence band is drawn for them to style"
+        exit 198
+    }
 
     * level() is parsed as a string (not cilevel) so an OMITTED level() is empty
     * and distinguishable from an explicit one -- cilevel would auto-fill it with
@@ -170,40 +225,69 @@ program define finegray_cif, rclass sortpreserve
         }
         local _fg_expanded `"`r(numlist)'"'
         local _fg_raw : list retokenize `_fgopt'
-        * Token by token: a plain number is kept as typed, a one-token range
-        * (0(1)10, 1/5, 1[1]5) is expanded on its own.  The multi-token forms
-        * `1 2 to 5' and `1 2 : 5' read their step from the tokens before
-        * them, so a list containing `to' or `:' is taken from numlist whole.
-        local _fg_multi : list posof "to" in _fg_raw
-        if `_fg_multi' == 0 local _fg_multi : list posof ":" in _fg_raw
-        if `_fg_multi' == 0 {
-            local _fg_kept ""
-            foreach _v of local _fg_raw {
-                capture confirm number `_v'
-                if _rc == 0 local _fg_kept "`_fg_kept' `_v'"
-                else {
-                    * The whole list passed numlist above, so a token that
-                    * fails on its own is one that reads its neighbours;
-                    * hand the whole list to numlist's expansion instead.
-                    capture numlist "`_v'"
-                    if _rc {
-                        local _fg_multi = 1
-                        continue, break
-                    }
-                    local _fg_kept "`_fg_kept' `r(numlist)'"
+        local _fg_ntok : word count `_fg_raw'
+        local _fg_rng ""
+        forvalues _fg_j = 1/`_fg_ntok' {
+            local _fg_c : word `_fg_j' of `_fg_raw'
+            if inlist(`"`_fg_c'"', "to", ":") {
+                local _fg_rng `"`_fg_rng' `: word `=`_fg_j' - 1' of `_fg_raw'' `: word `=`_fg_j' + 1' of `_fg_raw''"'
+                if `_fg_j' > 2 {
+                    local _fg_p : word `=`_fg_j' - 2' of `_fg_raw'
+                    if !inlist(`"`_fg_p'"', "to", ":") local _fg_rng `"`_fg_rng' `_fg_p'"'
                 }
+                continue
+            }
+            capture confirm number `_fg_c'
+            if _rc {
+                local _fg_parts = ustrregexra(`"`_fg_c'"', "[\(\)\[\]/]", " ")
+                local _fg_rng `"`_fg_rng' `_fg_parts'"'
             }
         }
-        if `_fg_multi' == 0 {
-            * Sort permutation by value.  Built-in Mata only: the package
-            * engine is loaded further down, after the parse.
-            mata: st_local("_fg_ord", invtokens(strofreal(order(strtoreal(tokens(st_local("_fg_kept")))', 1)')))
-            local _fg_sorted ""
-            foreach _i of local _fg_ord {
-                local _fg_sorted "`_fg_sorted' `: word `_i' of `_fg_kept''"
+        foreach _fg_c of local _fg_rng {
+            capture confirm number `_fg_c'
+            if _rc continue
+            quietly numlist "`_fg_c'"
+            local _fg_s `"`r(numlist)'"'
+            if real("`_fg_s'") != real("`_fg_c'") {
+                display as error "`_fgopt'(): a range reads `_fg_c', which numlist rounds to `_fg_s'"
+                display as error "list that range's analysis times one by one instead"
+                exit 198
             }
         }
-        else local _fg_sorted `"`_fg_expanded'"'
+        quietly numlist `"``_fgopt''"'
+        local _fg_kept `"`r(numlist)'"'
+        local _fg_pre ""
+        forvalues _fg_j = 1/`_fg_ntok' {
+            local _fg_c : word `_fg_j' of `_fg_raw'
+            local _fg_pre `"`_fg_pre' `_fg_c'"'
+            if inlist(`"`_fg_c'"', "to", ":") continue
+            local _fg_nx : word `=`_fg_j' + 1' of `_fg_raw'
+            if inlist(`"`_fg_nx'"', "to", ":") continue
+            local _fg_pv ""
+            if `_fg_j' > 1 local _fg_pv : word `=`_fg_j' - 1' of `_fg_raw'
+            if inlist(`"`_fg_pv'"', "to", ":") continue
+            capture confirm number `_fg_c'
+            if _rc continue
+            if `_fg_j' + 2 <= `_fg_ntok' {
+                local _fg_nx2 : word `=`_fg_j' + 2' of `_fg_raw'
+                if inlist(`"`_fg_nx2'"', "to", ":") continue
+            }
+            quietly numlist `"`_fg_pre'"'
+            local _fg_pos : word count `r(numlist)'
+            local _fg_new ""
+            local _fg_k = 0
+            foreach _fg_e of local _fg_kept {
+                local ++_fg_k
+                if `_fg_k' == `_fg_pos' local _fg_new `"`_fg_new' `_fg_c'"'
+                else                    local _fg_new `"`_fg_new' `_fg_e'"'
+            }
+            local _fg_kept `"`_fg_new'"'
+        }
+        mata: st_local("_fg_ord", invtokens(strofreal(order(strtoreal(tokens(st_local("_fg_kept")))', 1)')))
+        local _fg_sorted ""
+        foreach _i of local _fg_ord {
+            local _fg_sorted "`_fg_sorted' `: word `_i' of `_fg_kept''"
+        }
         * Collapse repeats: numlist's `sort' keeps duplicates, and every
         * duplicate became a duplicate ROW of the table (and a repeated marker
         * on the curve): attime(1 1 2) printed t = 1 twice at rc 0 with
@@ -261,6 +345,18 @@ program define finegray_cif, rclass sortpreserve
         display as error "and run {bf:finegray} there; see {help finegray##mi:help finegray}"
         exit 301
     }
+    * A stratified delayed-entry fit from 1.3.0-1.3.2 lacks the per-stratum
+    * weight normalizer (ZZF 2011 eq. 6; finegray 1.3.3), and the fit stamps
+    * e(lt_norm) only once it carries it.  Rebuilding a baseline, residuals or
+    * a variance with the corrected weights under those coefficients pairs two
+    * different estimators at rc 0.  Refuse by name.
+    if inlist(`"`e(lt_weight)'"', "zzf1_stratified", "zzf1_factorized") ///
+        & `"`e(lt_norm)'"' == "" {
+        display as error "estimation results predate finegray 1.3.3"
+        display as error "this stratified delayed-entry fit lacks the stratum weight"
+        display as error "normalizer that 1.3.3 added; re-run {bf:finegray} before using finegray_cif"
+        exit 301
+    }
     * A nonconverged fit posts e(b), and e(b) is all this command reads. Without
     * this gate a CIF and its confidence band are built from a last iterate that
     * is not a solution -- rc 0, no warning, silently wrong.
@@ -277,15 +373,16 @@ program define finegray_cif, rclass sortpreserve
     * much smaller design and the reported SE is inflated (measured 2026-09-01:
     * about twice the analytic one).  Refuse rather than report it.  The
     * analytic interval needs no resampling here: under frequency weights the
-    * influence-function variance is exact, because an fweighted fit IS the fit
-    * of the replicated data (asserted bit for bit in qa/test_finegray_weights.do,
-    * WT-03).
+    * influence-function variance equals that of the expanded data, because an
+    * fweighted fit IS the fit of the replicated data (asserted bit for bit in
+    * qa/test_finegray_weights.do, WT-03).  It is the same asymptotic interval,
+    * not an exact one.
     if `bootstrap' > 0 & `"`e(wtype)'"' == "fweight" {
         display as error "bootstrap() is not supported after a fit with fweights"
         display as error "{bf:bsample} resamples rows, not the replicated subjects the"
         display as error "frequency weights stand for, so the replicate SD would describe"
         display as error "a smaller sample than the fit"
-        display as error "the analytic interval is exact under fweights -- use {bf:ci} without"
+        display as error "the analytic interval equals that of the expanded data -- use {bf:ci} without"
         display as error "{bf:bootstrap()}, or expand the data ({bf:expand} the weight) and"
         display as error "bootstrap the expanded fit"
         exit 198
@@ -367,7 +464,28 @@ program define finegray_cif, rclass sortpreserve
             * from Mata, several hundred lines of work later.
             quietly count if e(sample) & `_bsvar' == `bstratum'
             if r(N) == 0 {
-                quietly levelsof `_bsvar' if e(sample), local(_bslevels) clean
+                * Each level in the fewest digits that read back as the
+                * stored value, so a listed level pasted into bstratum() is
+                * accepted.  levelsof printed .3 for 0.1 + 0.2 and .1 for a
+                * float-stored 0.1, and refused both when pasted back.
+                tempname _bslvm _bslv1
+                tempvar _bses
+                quietly gen byte `_bses' = e(sample)
+                mata: st_matrix("`_bslvm'", uniqrows(st_data(., "`_bsvar'", "`_bses'")))
+                local _bslevels ""
+                forvalues _bsli = 1/`=rowsof(`_bslvm')' {
+                    scalar `_bslv1' = `_bslvm'[`_bsli', 1]
+                    foreach _fw in 9 12 15 16 17 18 19 20 21 {
+                        local _bsls : display %`_fw'.0g scalar(`_bslv1')
+                        local _bsls = trim("`_bsls'")
+                        if real("`_bsls'") == scalar(`_bslv1') continue, break
+                    }
+                    if real("`_bsls'") != scalar(`_bslv1') {
+                        local _bsls : display %21x scalar(`_bslv1')
+                    }
+                    local _bslevels "`_bslevels' `_bsls'"
+                }
+                local _bslevels : list retokenize _bslevels
                 display as error "bstratum(`bstratum') is not a fitted baseline stratum"
                 display as error "the estimation sample holds `_bsvar' levels: `_bslevels'"
                 exit 459
@@ -489,32 +607,39 @@ program define finegray_cif, rclass sortpreserve
         }
     }
 
-    * Parse saving(filename[, replace]); reject shell metacharacters
+    * Parse saving(filename[, replace]); reject shell metacharacters.
+    * The name is user text and is read and tested in Mata, never expanded
+    * as a macro before the character check: through 1.3.7 the trim below
+    * re-expanded it, so a literal `$G' in the name wrote a file under the
+    * CONTENTS of $G at rc 0, a quoted local pair vanished from the name,
+    * and an unbalanced backtick exited r(199) after the analysis ran
+    * instead of the documented r(198).
     local savefile ""
     local savereplace ""
-    if `"`saving'"' != "" {
-        gettoken savefile _svrest : saving, parse(",") bind
-        local savefile = strtrim(`"`savefile'"')
-        local _svrest = lower(strtrim(`"`_svrest'"'))
-        * Accept ",replace" and ", replace" alike: strip the leading comma,
-        * then compare the bare suboption.
-        if substr(`"`_svrest'"', 1, 1) == "," {
-            local _svrest = strtrim(substr(`"`_svrest'"', 2, .))
+    mata: st_local("_svc", strofreal(strpos(st_local("saving"), ",")))
+    mata: st_local("_svany", strofreal(st_local("saving") != ""))
+    if `_svany' {
+        if `_svc' {
+            mata: st_local("savefile", strtrim(substr(st_local("saving"), 1, `_svc' - 1)))
+            mata: st_local("_svrest", strlower(strtrim(substr(st_local("saving"), `_svc' + 1, .))))
         }
-        if `"`savefile'"' == "" | !inlist(`"`_svrest'"', "", "replace") {
+        else {
+            mata: st_local("savefile", strtrim(st_local("saving")))
+            local _svrest ""
+        }
+        mata: st_local("_svbad", strofreal(sum(strpos(st_local("savefile"), ///
+            (";", "|", "&", "<", ">", char(36), char(96), char(34), char(39))) :> 0) > 0))
+        if `_svbad' {
+            display as error "invalid characters in saving() filename"
+            exit 198
+        }
+        mata: st_local("_svok", strofreal(st_local("savefile") != "" & ///
+            anyof(("", "replace"), st_local("_svrest"))))
+        if !`_svok' {
             display as error "saving() must be filename[, replace]"
             exit 198
         }
         if `"`_svrest'"' == "replace" local savereplace "replace"
-        if strpos(`"`savefile'"', ";") | strpos(`"`savefile'"', "|") | ///
-           strpos(`"`savefile'"', "&") | strpos(`"`savefile'"', "<") | ///
-           strpos(`"`savefile'"', ">") | strpos(`"`savefile'"', "$") | ///
-           strpos(`"`savefile'"', char(96)) | ///
-           strpos(`"`savefile'"', char(34)) | ///
-           strpos(`"`savefile'"', char(39)) {
-            display as error "invalid characters in saving() filename"
-            exit 198
-        }
     }
 
     local covs "`e(designvars)'"
@@ -538,7 +663,8 @@ program define finegray_cif, rclass sortpreserve
     if `"`_fvsem_r'"' != "" & `"`_fvsem_r'"' != "." {
         * Non-base semantic terms align 1:1, in order, with e(designvars).
         foreach _t of local _fvsem_r {
-            if regexm("`_t'", "[0-9]+b\.") continue
+            if regexm("`_t'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                regexm("`_t'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
             local _nbterms `"`_nbterms' `_t'"'
         }
     }
@@ -860,6 +986,17 @@ program define finegray_cif, rclass sortpreserve
             local _lev`g' : word `g' of `_ovlevs'
             local _levx`g' : word `g' of `_ovlevsx'
             local _lbl`g' : label (`_ovvar') `_lev`g''
+            * Whether the level has a value label of its own (strict returns
+            * "" otherwise); the graph legend drops the "var = " prefix then.
+            local _slbl : label (`_ovvar') `_lev`g'', strict
+            local _slen : length local _slbl
+            local _haslbl`g' = `_slen' > 0
+            * The same label for display sinks (console and graph): SMCL and
+            * the graph commands' own re-expansion would otherwise act on it, so
+            * $name, a backquote, {bf:...} or a double quote in a value label was
+            * drawn expanded or as markup, and an unbalanced backquote stopped the
+            * graph with r(132).  `_lbl`g'' stays raw for r() and saving().
+            _finegray_graph_text _glbl`g' : `"`macval(_lbl`g')'"'
         }
         * The levels as machine doubles, returned so a caller can feed a level
         * straight back into at()/bstratum() and land on the same curve.
@@ -1066,14 +1203,22 @@ program define finegray_cif, rclass sortpreserve
     } /* end per-curve profile loop */
 
     * Load Mata engine
-    capture mata: _finegray_mata_ok()
+    capture mata: _finegray_numeric_ok()
     * probe MATA, not a Stata program: `mata clear' drops Mata functions but
     * leaves Stata programs standing, so a program sentinel says "loaded" when
     * the engine is gone and the next Mata call dies with r(3499).
     if _rc {
         capture findfile _finegray_mata.ado
         if _rc == 0 {
-            run "`r(fn)'"
+            * A failed load aborts _finegray_mata.ado before it restores the
+            * caller's matastrict; restore it here on that path (audit F08).
+            local _fg_ms0 = c(matastrict)
+            capture noisily run "`r(fn)'"
+            if _rc {
+                local _fg_lrc = _rc
+                mata: mata set matastrict `_fg_ms0'
+                exit `_fg_lrc'
+            }
         }
         else {
             display as error "_finegray_mata.ado not found; reinstall finegray"
@@ -1115,10 +1260,23 @@ program define finegray_cif, rclass sortpreserve
     * Stata matrix it does create is small enough for the quadratic to vanish.
     * attime() and timepoints() are mutually exclusive (refused at parse time),
     * so this order expresses a preference over nothing.
+    * plot#opts()/ci#opts() range: # counts curves, so it is checkable only now.
+    * An out-of-range # used to be (in marginsplot, still is) dropped silently.
+    foreach _kind in plot ci {
+        local _knums = cond("`_kind'" == "plot", "`_pnums'", "`_cnums'")
+        foreach _k of local _knums {
+            if `_k' > `_ncurve' {
+                display as error "option {bf:`_kind'`_k'opts()} names curve `_k'," ///
+                    " but this call draws `_ncurve' curve" cond(`_ncurve' == 1, "", "s")
+                display as error "# in plot#opts() and ci#opts() must be between 1 and `_ncurve'"
+                exit 198
+            }
+        }
+    }
     if "`attime'" != "" {
         local mode "table"
         * attime() draws no graph, so any leftover twoway options cannot apply.
-        if `"`options'"' != "" {
+        if `"`options'`plotopts'`ciopts'"' != "" | "`_pnums'`_cnums'" != "" {
             display as text "note: graph (twoway) options are ignored with attime()"
         }
     }
@@ -1169,8 +1327,13 @@ program define finegray_cif, rclass sortpreserve
             local grid`g' ""
             if `nbh' > 0 {
                 local _ngb = rowsof(`BHG')
+                * %21x, not `=...': the decimal rendering of a double does
+                * not always round-trip, and a time rounded DOWN is evaluated
+                * before its own jump (.12345678901234564 came back three
+                * ulps early and the curve read CIF 0 through a real event).
                 forvalues r = 1/`_ngb' {
-                    local grid`g' "`grid`g'' `=`BHG'[`r',1]'"
+                    local _gtx : display %21x `BHG'[`r',1]
+                    local grid`g' "`grid`g'' `_gtx'"
                 }
             }
         }
@@ -1229,7 +1392,9 @@ program define finegray_cif, rclass sortpreserve
         mata: st_local("_fg_nmis", strofreal(sum(st_matrix("`_O'")[., 1] :>= .)))
         if `_fg_nmis' > 0 {
             display as error "the CIF could not be evaluated at `_fg_nmis' of `ngrid`g'' requested time(s)"
-            if "`_overmode'" != "" display as error `"(curve `_ovvar' = `_lbl`g'')"'
+            if "`_overmode'" != "" {
+                display as error `"(curve `_ovvar' = `macval(_glbl`g')')"'
+            }
             display as error "the covariate profile gives a nonfinite linear predictor; check the at() values"
             exit 498
         }
@@ -1307,6 +1472,14 @@ program define finegray_cif, rclass sortpreserve
         * Refits must see each subject's true entry time, not the kept
         * record's own interval start (multi-record reduction)
         if "`_t0var'" != "_t0" quietly replace _t0 = `_t0var'
+        * Design columns rebuilt above for the analytic path stay OUT of the
+        * refit dataset: each refit writes and owns its own _fg_* columns.  On
+        * data saved before the fit (estimates use over the pre-fit dataset)
+        * there is no ownership token to stamp on a rebuilt column, so every
+        * refit saw a user variable under a package-owned name and rejected
+        * the replicate -- 0 of 25 successful, r(498) (1.3.5).  They come back
+        * with `restore' and are dropped in the cleanup zone as before.
+        if "`_fgrebuilt'" != "" quietly drop `_fgrebuilt'
         tempfile _bdata
         quietly save `"`_bdata'"'
 
@@ -1396,7 +1569,7 @@ program define finegray_cif, rclass sortpreserve
             if `_bok`g'' < `_minboot' {
                 display as error "bootstrap failed: only `_bok`g'' of `bootstrap' replications succeeded"
                 if "`_overmode'" != "" {
-                    display as error `"(curve `_ovvar' = `_lbl`g'')"'
+                    display as error `"(curve `_ovvar' = `macval(_glbl`g')')"'
                 }
                 display as error "at least `_minboot' are required to estimate a standard error"
                 exit 498
@@ -1439,16 +1612,16 @@ program define finegray_cif, rclass sortpreserve
     * =====================================================================
     local z = invnormal(1 - (1 - `level'/100)/2)
     forvalues g = 1/`_ncurve' {
-        tempname _R
+        tempname _R _CI _cifv _sev
         local R`g' "`_R'"
         matrix `_R' = J(`ngrid`g'', 5, .)
         forvalues r = 1/`ngrid`g'' {
             local tt : word `r' of `grid`g''
-            local cifv = `OUT`g''[`r', 1]
-            local sev  = `OUT`g''[`r', 2]
+            scalar `_cifv' = `OUT`g''[`r', 1]
+            scalar `_sev' = `OUT`g''[`r', 2]
             matrix `_R'[`r', 1] = `tt'
-            matrix `_R'[`r', 2] = `cifv'
-            matrix `_R'[`r', 3] = `sev'
+            matrix `_R'[`r', 2] = `_cifv'
+            matrix `_R'[`r', 3] = `_sev'
             * Confidence limits, or NOTHING.  `R' is initialised to missing, and a
             * limit we cannot compute must stay missing.  Writing the point estimate
             * into lci/uci instead -- which is what this did through v1.1.0 --
@@ -1457,11 +1630,11 @@ program define finegray_cif, rclass sortpreserve
             * uncertainty-free estimate. It also meant r(table) carried
             * lci = uci = cif whenever ci was NOT requested, so a caller reading
             * those columns got a fabricated interval it never asked for.
-            if "`ci'" != "" & `cifv' > 0 & `cifv' < 1 & `sev' < . & `sev' > 0 {
-                local g_ = ln(-ln(1 - `cifv'))
-                local seg = `sev' / ((1 - `cifv') * (-ln(1 - `cifv')))
-                matrix `_R'[`r', 4] = 1 - exp(-exp(`g_' - `z' * `seg'))
-                matrix `_R'[`r', 5] = 1 - exp(-exp(`g_' + `z' * `seg'))
+            if "`ci'" != "" & `_cifv' > 0 & `_cifv' < 1 & `_sev' < . & `_sev' > 0 {
+                mata: st_matrix("`_CI'", _finegray_cloglog_ci( ///
+                    st_numscalar("`_cifv'"), st_numscalar("`_sev'"), `z'))
+                matrix `_R'[`r', 4] = `_CI'[1, 1]
+                matrix `_R'[`r', 5] = `_CI'[1, 2]
             }
         }
         matrix colnames `_R' = time cif se lci uci
@@ -1559,7 +1732,7 @@ program define finegray_cif, rclass sortpreserve
         forvalues g = 1/`_ncurve' {
             if "`_overmode'" != "" {
                 display as text ""
-                display as text "-> `_ovvar' = " as result `"`_lbl`g''"'
+                display as text "-> `_ovvar' = " as result `"`macval(_glbl`g')'"'
             }
             display as text "{hline 13}{c TT}{hline `_rulew'}"
             if "`ci'" != "" {
@@ -1619,19 +1792,93 @@ program define finegray_cif, rclass sortpreserve
                     if `_tt' > `_tlast'  local ++_nafter
                     if `_tt' < `_tfirst' local ++_nbefore
                 }
-                local _tl : display %9.0g `_tlast'
-                local _tl = trim("`_tl'")
-                local _tf : display %9.0g `_tfirst'
-                local _tf = trim("`_tf'")
+                * Printed in the fewest digits that read back as the stored
+                * time.  %9.0g printed ".003" for a float-stored first event
+                * of .0030000000260770, so attime(.003) was reported to
+                * "precede" .003.  %21x is the last resort; %21.0g has
+                * round-tripped every double measured.  Every width from 15 up
+                * is tried: %18.0g gives 16 significant digits and %19.0g 17,
+                * so a 15/18/21 ladder printed 19 digits where 17 read back.
+                foreach _fx in tl tf {
+                    local _fxs = cond("`_fx'" == "tl", "`_tlast'", "`_tfirst'")
+                    foreach _fw in 9 12 15 16 17 18 19 20 21 {
+                        local _`_fx' : display %`_fw'.0g scalar(`_fxs')
+                        local _`_fx' = trim("`_`_fx''")
+                        if real("`_`_fx''") == scalar(`_fxs') continue, break
+                    }
+                    if real("`_`_fx''") != scalar(`_fxs') {
+                        local _`_fx' : display %21x scalar(`_fxs')
+                    }
+                }
+                * A typed horizon just below a cause-event time that equals it
+                * at float precision: the time variable is almost surely a
+                * float, its stored value is the float rounding of the time
+                * the user reads off a listing, and the horizon, used exactly
+                * as typed, excludes that event.  Correct by the documented
+                * rule, and invisible without this note.
+                local _fltlist ""
+                local _fltt ""
+                * One pass decides whether any cause-event time is off the
+                * float grid; if one is, the times are not float-stored and
+                * the per-horizon scan is skipped.
+                quietly count if `es' & `e(compete)' == `=e(cause)' `_bsrestrict' ///
+                    & _t != float(_t)
+                local _fltscan = (r(N) == 0)
+                if `_fltscan' {
+                    foreach _tt of local grid`g' {
+                        quietly count if `es' & `e(compete)' == `=e(cause)' `_bsrestrict' ///
+                            & _t > `_tt' & _t == float(`_tt')
+                        if r(N) > 0 {
+                            local _fltlist "`_fltlist' `_tt'"
+                            if "`_fltt'" == "" {
+                                tempname _fltv
+                                scalar `_fltv' = float(`_tt')
+                                foreach _fw in 9 12 15 16 17 18 19 20 21 {
+                                    local _fltt : display %`_fw'.0g scalar(`_fltv')
+                                    local _fltt = trim("`_fltt'")
+                                    if real("`_fltt'") == scalar(`_fltv') continue, break
+                                }
+                            }
+                        }
+                    }
+                }
+                local _fltlist : list retokenize _fltlist
                 local _which ""
-                if "`_overmode'" == "bstrata" local _which `" (`_bsvar' = `_lbl`g'')"'
+                * block form: a one-line if re-expands its command, and the
+                * label is user text that must not be (see saving() parse)
+                if "`_overmode'" == "bstrata" {
+                    local _which `" (`_bsvar' = `macval(_glbl`g')')"'
+                }
                 if `_nafter' > 0 {
-                    display as text "note: `_nafter' requested time(s) exceed the last cause-event time (`_tl')`_which';"
-                    display as text "the CIF is flat beyond it, so those rows repeat the terminal estimate"
+                    display as text `"note: `_nafter' horizon(s) exceed the last cause-event time (`_tl')`macval(_which)'"'
+                    display as text "(the CIF is flat beyond it, so those rows repeat the terminal estimate)"
                 }
                 if `_nbefore' > 0 {
-                    display as text "note: `_nbefore' requested time(s) precede the first cause-event time (`_tf')`_which';"
-                    display as text "the CIF is exactly 0 there and has no confidence limits"
+                    display as text `"note: `_nbefore' horizon(s) precede the first cause-event time (`_tf')`macval(_which)'"'
+                    display as text "(the CIF is exactly 0 there and has no confidence limits)"
+                }
+                if "`_fltlist'" != "" {
+                    * Blame float storage only when the stset time variable
+                    * IS a float.  On a double time holding integers,
+                    * attime(2.99999999) is flagged just the same (the event
+                    * at 3 equals it at float precision, and is excluded as
+                    * typed), but storage has nothing to do with it.
+                    local _fltsrc : char _dta[st_bt]
+                    local _fltis = 0
+                    capture confirm variable `_fltsrc', exact
+                    if !_rc & `: word count `_fltsrc'' == 1 {
+                        local _fltis = ("`: type `_fltsrc''" == "float")
+                    }
+                    display as text `"note: horizon(s) `_fltlist' lie just below a cause-event time equal to their"'
+                    display as text `"float-precision value (`_fltt' for the first)`macval(_which)', so that event"'
+                    if `_fltis' {
+                        display as text "is excluded; the time variable `_fltsrc' is stored as float and holds"
+                        display as text "such values; type the stored time to include it"
+                    }
+                    else {
+                        display as text "is excluded; horizons are used exactly as typed; type the event time"
+                        display as text "to include it"
+                    }
                 }
             }
         }
@@ -1642,29 +1889,44 @@ program define finegray_cif, rclass sortpreserve
     * precision, which is the limit of the estimator at that profile, not
     * evidence that the data reach it.  Say so.
     if "`_fg_cifovf'" != "" {
-        display as text "note: exp(xb) exceeds double precision at one or more requested time(s)/profile(s);"
-        display as text "the CIF is 1 and its SE 0 to machine precision there, with no confidence limits"
+        display as text "note: exp(xb) exceeds double precision at one or more requested"
+        display as text "time(s)/profile(s); the CIF is 1 and its SE 0 to machine precision there,"
+        display as text "with no confidence limits"
     }
 
     * Last observed analysis time in the estimation sample, per curve.  Read
     * HERE, before the preserve below clears the data: the graph draws the
     * CIF's flat tail out to this time (see the terminal-row block), as sts
     * graph and stcurve do.
+    * The last CAUSE-EVENT time is read beside it: the flat tail is only a
+    * fact of the estimator beyond the curve's final cause event, so the
+    * terminal-row block below may extend a grid only when that grid reaches
+    * it (1.3.3; a timepoints() grid ending earlier used to be extended too,
+    * drawing a plateau at the last requested value straight through every
+    * later jump).
     forvalues g = 1/`_ncurve' {
         local _bsrestrict2 ""
         if "`_bslev`g''" != "." local _bsrestrict2 "& `_bsvar' == `_bslev`g''"
+        * Held in %21x so the terminal-row block compares exact doubles: a
+        * decimal macro can land on either side of a grid time.
         quietly summarize _t if `es' `_bsrestrict2', meanonly
-        local _maxfu`g' = r(max)
+        local _maxfu`g' : display %21x r(max)
+        quietly summarize _t if `es' & `e(compete)' == `=e(cause)' `_bsrestrict2', meanonly
+        local _lastev`g' : display %21x r(max)
     }
     * The over() variable's value label, carried into the saving() dataset so
     * its `over' column reads as the source variable does.  Read now: the
     * preserved dataset below is cleared, and value labels go with it.
+    * Copied through Mata, not `label save' + `run': running the saved
+    * do-file re-expanded each label as macro text, so a label "A $G" was
+    * saved as "A <contents of $G>" at rc 0 (through 1.3.7).
     local _ovvl ""
     if "`_overmode'" != "" {
         local _ovvl : value label `_ovvar'
         if "`_ovvl'" != "" {
-            tempfile _ovvlfile
-            quietly label save `_ovvl' using `"`_ovvlfile'"', replace
+            tempname _vlv _vlt
+            local _vlheld = 1
+            mata: st_vlload("`_ovvl'", `_vlv' = ., `_vlt' = .)
         }
     }
 
@@ -1677,7 +1939,8 @@ program define finegray_cif, rclass sortpreserve
             if "`_overmode'" == "" svmat double `R', names(col)
             else svmat double `RALL', names(col)
             if "`_ovvl'" != "" {
-                run `"`_ovvlfile'"'
+                mata: st_local("_vln", strofreal(rows(`_vlv')))
+                if `_vln' mata: st_vlmodify("`_ovvl'", `_vlv', `_vlt')
                 label values over `_ovvl'
             }
         }
@@ -1714,14 +1977,18 @@ program define finegray_cif, rclass sortpreserve
                     * of the data, so a later `cif[_N-1]' would read the
                     * origin, not the last estimate.
                     quietly summarize time if `_graph_g' == `g' & !`_graph_origin', meanonly
-                    local _graph_tmax = r(max)
-                    local _graph_tmin = r(min)
+                    * Every value is carried in %21x: an equality lookup
+                    * against a DECIMAL max-time macro selected no row when
+                    * the time did not round-trip, and the plateau was drawn
+                    * missing (1.3.7).
+                    local _graph_tmax : display %21x r(max)
+                    local _graph_tmin : display %21x r(min)
                     quietly summarize cif if `_graph_g' == `g' & time == `_graph_tmax', meanonly
-                    local _graph_lastcif = r(mean)
+                    local _graph_lastcif : display %21x r(mean)
                     quietly summarize `_graph_lci' if `_graph_g' == `g' & time == `_graph_tmax', meanonly
-                    local _graph_lastlci = r(mean)
+                    local _graph_lastlci : display %21x r(mean)
                     quietly summarize `_graph_uci' if `_graph_g' == `g' & time == `_graph_tmax', meanonly
-                    local _graph_lastuci = r(mean)
+                    local _graph_lastuci : display %21x r(mean)
                     if `_graph_tmin' > 0 {
                         local _graph_newobs = _N + 1
                         quietly set obs `_graph_newobs'
@@ -1739,8 +2006,22 @@ program define finegray_cif, rclass sortpreserve
                     * means -- sts graph and stcurve both extend it.  Display-only,
                     * like the origin: removed before saving(), so r(table) and the
                     * exported numeric estimates are unchanged.
+                    *
+                    * ONLY when the grid reaches the curve's last cause-event time.
+                    * A timepoints() grid may stop earlier; the CIF is NOT flat
+                    * past such a grid, and carrying its last value out to the
+                    * end of follow-up would draw a terminal plateau that the fit
+                    * never produced (understating the CIF by every later jump).
+                    * Such a curve ends at its last requested time instead.  A
+                    * curve with no cause events at all (_lastev missing) is flat
+                    * everywhere, so it is still extended.  The comparison
+                    * is EXACT: the curve is a step function, and a grid
+                    * ending one ulp before the final jump has not reached it
+                    * (a 1e-12 tolerance extended the pre-jump value through
+                    * a genuine jump at 1 + 5e-13, 1.3.7).
                     if `_maxfu`g'' < . & `_graph_tmax' < . & ///
-                       `_maxfu`g'' > `_graph_tmax' + 1e-12 {
+                       `_maxfu`g'' > `_graph_tmax' & ///
+                       (`_lastev`g'' >= . | `_graph_tmax' >= `_lastev`g'') {
                         local _graph_newobs = _N + 1
                         quietly set obs `_graph_newobs'
                         quietly replace `_graph_origin' = 1 in `_graph_newobs'
@@ -1762,70 +2043,78 @@ program define finegray_cif, rclass sortpreserve
                     if missing(`_graph_uci') & inlist(cif, 0, 1)
                 quietly sort `_graph_g' time
 
+                * Every plot carries its built-in style first and the user's
+                * plotopts()/ciopts() and plot#opts()/ci#opts() after it, so
+                * the user's choice wins (the last of a repeated plot option
+                * is the one used).  Band and line g share pstyle p<g> in
+                * over() mode, so a band is its own curve's colour at 30%
+                * opacity; pstyles cycle after the scheme's 15.  All bands
+                * are drawn first, so every line sits on top of every band.
+                *
+                * No note() by default: a figure is the user's to caption.
+                * The profile is printed in the results table and returned
+                * in r(at); `note(...)' in the twoway options adds one.
+                local _plots ""
+                local _nband = cond("`ci'" != "", `_ncurve', 0)
+                if "`ci'" != "" {
+                    forvalues g = 1/`_ncurve' {
+                        local _ps = mod(`g' - 1, 15) + 1
+                        local _pif ""
+                        local _pst ""
+                        if "`_overmode'" != "" {
+                            local _pif "if `_graph_g' == `g'"
+                            local _pst "pstyle(p`_ps')"
+                        }
+                        local _plots `"`_plots' (rarea `_graph_lci' `_graph_uci' time `_pif', `_pst' color(%30) lwidth(none) connect(stairstep) `ciopts' `ci`g'opts')"'
+                    }
+                }
+                local _legord ""
+                forvalues g = 1/`_ncurve' {
+                    local _ps = mod(`g' - 1, 15) + 1
+                    local _pif ""
+                    local _pst ""
+                    if "`_overmode'" != "" {
+                        local _pif "if `_graph_g' == `g'"
+                        local _pst "pstyle(p`_ps')"
+                    }
+                    local _plots `"`_plots' (line cif time `_pif', `_pst' lwidth(medthick) connect(stairstep) `plotopts' `plot`g'opts')"'
+                    * A labelled level is keyed by its value label alone; an
+                    * unlabelled one keeps "var = level", since a bare number
+                    * would not say which variable the curves vary.
+                    if "`_overmode'" != "" {
+                        if `_haslbl`g'' local _legord `"`macval(_legord)' `=`_nband' + `g'' `"`macval(_glbl`g')'"'"'
+                        else local _legord `"`macval(_legord)' `=`_nband' + `g'' `"`_ovvar' = `macval(_glbl`g')'"'"'
+                    }
+                }
                 * Default legend is a single row; because repeated legend()
                 * options merge, anything in `options' (e.g. legend(off),
                 * legend(rows(2)), legend(pos(6))) overrides these defaults.
-                *
-                * The default note() states the covariate profile, for the same
-                * reason the table now prints an `at:' line: a saved .png of a
-                * CIF curve otherwise carries no record of which profile it is.
-                * `options' is expanded last, so a user's own note() wins.
+                * In over() mode the bands are named once, by a line of text
+                * inside the legend box (the legend's own note(), so
+                * legend(note("")) removes it): a key for band 1 would carry
+                * curve 1's colour and misname the others, and a key-less
+                * text entry widened a one-row legend beside the plot.
                 if "`_overmode'" == "" {
-                    if "`ci'" != "" {
-                        twoway ///
-                            (rarea `_graph_lci' `_graph_uci' time, ///
-                                color(%30) lwidth(none) connect(stairstep)) ///
-                            (line cif time, lwidth(medthick) connect(stairstep)), ///
-                            ytitle("Cumulative incidence") ///
-                            xtitle("Analysis time") ///
-                            legend(order(2 "CIF" 1 "`level'% CI") rows(1)) ///
-                            note(`"`_atsrc': `_atline'"') ///
-                            xscale(range(0 .)) plotregion(margin(zero)) `options'
-                    }
-                    else {
-                        twoway ///
-                            (line cif time, lwidth(medthick) connect(stairstep)), ///
-                            ytitle("Cumulative incidence") ///
-                            xtitle("Analysis time") legend(rows(1)) ///
-                            note(`"`_atsrc': `_atline'"') ///
-                            xscale(range(0 .)) plotregion(margin(zero)) `options'
-                    }
+                    if "`ci'" != "" local _gleg `"legend(order(2 "CIF" 1 "`level'% CI") rows(1))"'
+                    else local _gleg "legend(rows(1))"
                 }
                 else {
-                    * One band per curve first (so every line is drawn on top
-                    * of every band), then one line per curve.  Band and line
-                    * g share pstyle p<g>, so a band is its own curve's colour
-                    * at 30% opacity; pstyles cycle after the scheme's 15.
-                    * The legend names the lines; the bands are named once in
-                    * the note.
-                    local _plots ""
-                    local _legord ""
-                    forvalues g = 1/`_ncurve' {
-                        local _ps = mod(`g' - 1, 15) + 1
-                        if "`ci'" != "" {
-                            local _plots `"`_plots' (rarea `_graph_lci' `_graph_uci' time if `_graph_g' == `g', pstyle(p`_ps') color(%30) lwidth(none) connect(stairstep))"'
-                        }
+                    local _gleg `"legend(order(`macval(_legord)') rows(1))"'
+                    if "`ci'" != "" {
+                        local _gleg `"legend(order(`macval(_legord)') rows(1) note("Shaded: `level'% CI"))"'
                     }
-                    local _nband = cond("`ci'" != "", `_ncurve', 0)
-                    forvalues g = 1/`_ncurve' {
-                        local _ps = mod(`g' - 1, 15) + 1
-                        local _plots `"`_plots' (line cif time if `_graph_g' == `g', pstyle(p`_ps') lwidth(medthick) connect(stairstep))"'
-                        local _legord `"`_legord' `=`_nband' + `g'' `"`_ovvar' = `_lbl`g''"'"'
-                    }
-                    * Two note lines: the shared profile, then the overlay
-                    * and the band -- one line ran past the plot width.
-                    local _gnote2 `"`_overline'"'
-                    if "`ci'" != "" local _gnote2 `"`_overline'; shaded: `level'% CI"'
-                    if `"`_atline'"' != "" local _gnote1 `"`_atsrc': `_atline'"'
-                    else local _gnote1 `"`_gnote2'"'
-                    if `"`_atline'"' == "" local _gnote2 ""
-                    twoway `_plots', ///
-                        ytitle("Cumulative incidence") ///
-                        xtitle("Analysis time") ///
-                        legend(order(`_legord') rows(1)) ///
-                        note(`"`_gnote1'"' `"`_gnote2'"') ///
-                        xscale(range(0 .)) plotregion(margin(zero)) `options'
                 }
+                local _gopts `"ytitle("Cumulative incidence") xtitle("Analysis time") `macval(_gleg)' xscale(range(0 .)) plotregion(margin(zero))"'
+                * Leading-zero y labels (0.1, not .1).  The decimals follow
+                * the tick step, which only twoway knows once the user's own
+                * ylabel()/yscale() are merged in, so _finegray_cif_yfmt
+                * builds the graph once undrawn and reads the ticks back.  It
+                * returns nothing when the user's ylabel() set a format(),
+                * which then stands; a user ylabel() without format() still
+                * gets the leading zero, because repeated ylabel() merge.
+                local _yfmt ""
+                _finegray_cif_yfmt _yfmt : `_plots', `macval(_gopts)' `options'
+                twoway `_plots', `macval(_gopts)' `_yfmt' `options'
             }
             local _graph_rc = _rc
             * Cleanup is required even after a graph-side failure so saving()
@@ -1895,6 +2184,7 @@ program define finegray_cif, rclass sortpreserve
 
     local rc = _rc
     if `_preserved' capture restore
+    if `_vlheld' capture mata: mata drop `_vlv' `_vlt'
     if `_held' capture _estimates unhold `_esth'
     * Give the caller back the random-number stream the bootstrap borrowed.
     if `_rngsaved' capture set rngstate `_rngstate'
@@ -2002,4 +2292,82 @@ program define finegray_cif, rclass sortpreserve
         if `_side_rc' local rc = `_side_rc'
     }
     if `rc' exit `rc'
+end
+
+* _finegray_cif_yfmt: the default leading-zero ylabel(, format()) for a CIF
+* graph, decimals chosen from the tick step.
+*   _finegray_cif_yfmt <macname> : <twoway plots>, <twoway options>
+* Builds the graph once, undrawn and under a temporary name, with a sentinel
+* label format ahead of the caller's options, and reads the y ticks back from
+* the graph object -- so the step is the one twoway itself chose after merging
+* any user ylabel()/yscale()/scheme().  saving(), name(), nodraw and play()
+* are stripped from that probe build (it must not write a file, replace a
+* named graph, or replay edits).  Sets <macname> in the caller to
+*   ylabel(, format(%<d+2>.<d>f))   d = decimals the ticks need, at least 1
+* or to empty when the user's own ylabel() set a format() (the sentinel was
+* overridden) or the ticks need more than 6 decimals (a fixed format would
+* round the user's tick values).  0.1 steps give %3.1f; 0.05 and 0.02 give
+* %4.2f.  A probe build that fails sets <macname> empty; the real build then
+* reports the error.
+capture program drop _finegray_cif_yfmt
+program define _finegray_cif_yfmt
+    version 16.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    local _made = 0
+    local _fmt ""
+    tempname _gprobe
+    capture noisily {
+        gettoken _cmac 0 : 0
+        gettoken _colon 0 : 0
+        if `"`_colon'"' != ":" error 198
+        _parse comma _plots 0 : 0
+        syntax [, SAVing(string asis) NAME(string) noDRAW PLAY(string asis) *]
+        local _sentinel "%20.0g"
+        * Quietly and captured: a probe that fails (a bad user option) leaves
+        * the format empty, and the real build that follows reports the error
+        * once, in the user's terms; quietly also keeps notes such as a
+        * missing scheme from printing twice.
+        capture quietly twoway `_plots', ylabel(, format(`_sentinel')) ///
+            `macval(options)' nodraw name(`_gprobe')
+        local _made = _rc == 0
+        if `_made' & ///
+            `"`.`_gprobe'.yaxis1.major.label_format'"' == "`_sentinel'" {
+            local _rule `"`.`_gprobe'.yaxis1.major.use_rule.istrue'"'
+            local _vals ""
+            if "`_rule'" == "1" {
+                * A rule's ticks are min + k*delta: those two set the decimals.
+                local _vals `.`_gprobe'.yaxis1.major.min' `.`_gprobe'.yaxis1.major.delta'
+            }
+            else if "`_rule'" == "0" {
+                * Explicit values; a tick with its own text label is not
+                * formatted, so it does not vote.
+                local _nt `.`_gprobe'.yaxis1.major.ticks.arrnels'
+                forvalues _j = 1/0`_nt' {
+                    if `"`.`_gprobe'.yaxis1.major.ticks[`_j'][2]'"' == "" {
+                        local _vals `_vals' `.`_gprobe'.yaxis1.major.ticks[`_j'][1]'
+                    }
+                }
+            }
+            local _ok = `"`_vals'"' != ""
+            local _dec = 1
+            foreach _v of local _vals {
+                local _dv = .
+                forvalues _d = 0/6 {
+                    if missing(`_dv') & ///
+                        abs(`_v' * 10^`_d' - round(`_v' * 10^`_d')) < 1e-6 {
+                        local _dv = `_d'
+                    }
+                }
+                if missing(`_dv') local _ok = 0
+                else local _dec = max(`_dec', `_dv')
+            }
+            if `_ok' local _fmt "ylabel(, format(%`=`_dec' + 2'.`_dec'f))"
+        }
+    }
+    local rc = _rc
+    capture graph drop `_gprobe'
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+    c_local `_cmac' `"`_fmt'"'
 end

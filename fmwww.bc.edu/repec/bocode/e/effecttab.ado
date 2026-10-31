@@ -1,0 +1,2082 @@
+*! effecttab Version 1.0.0  2026/10/20
+*! Format treatment effects and margins results for Excel export
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass (returns results in r())
+
+/*
+DESCRIPTION:
+	Formats treatment effects (teffects) and margins results into polished Excel
+	tables. Exports point estimate, 95% CI, and p-value with professional formatting.
+	Designed for causal inference workflows including IPTW, g-computation, and
+	marginal effects.
+
+SYNTAX:
+	effecttab, [xlsx(string) sheet(string) type(string) effect(string) models(string)
+	           sep(string) title(string) clean tlabels(string asis)]
+
+	xlsx:    Optional. Excel file name (requires .xlsx suffix). Omit for console,
+	         frame(), csv(), or markdown() output only
+	sheet:   Optional. Excel sheet name (default: "Effects")
+	type:    Type of results: teffects, margins, or auto (default: auto)
+	effect:  Label for effect column (e.g., ATE, RD, RR, AME). Default varies by type.
+	models:  Label models, separating names with backslash (e.g., Model 1 \ Model 2)
+	sep:     Character separating 95% CI bounds (default: ", ")
+	title:   Table title for cell A1
+	clean:   Clean up teffects row labels. Automatically uses value labels from the
+	         treatment variable when available (e.g., "r1vs0.treated" → "SNRI vs SSRI").
+	         Falls back to basic cleanup if no value labels exist.
+	tlabels: Explicit treatment level labels as value-label pairs. Implies clean.
+	         Example: tlabels(0 "SSRI" 1 "SNRI") → ATE row becomes "SNRI vs SSRI"
+
+SUPPORTED COMMANDS:
+	- teffects ipw, teffects ra, teffects aipw, teffects ipwra
+	- teffects psmatch, teffects nnmatch
+	- margins (with or without post option)
+	- margins with dydx(), over(), at() options
+
+EXAMPLES:
+	* IPTW treatment effect
+	teffects ipw (outcome) (treatment age sex), ate
+	effecttab, xlsx(results.xlsx) sheet("ATE") effect("ATE") title("Treatment Effect")
+
+	* Margins for predicted probabilities
+	logit outcome i.treatment age sex
+	margins treatment
+	effecttab, xlsx(results.xlsx) sheet("Margins") type(margins) effect("Pr(Y)")
+
+	* G-computation style marginal effects
+	logit outcome i.treatment##c.age sex
+	margins, dydx(treatment)
+	effecttab, xlsx(results.xlsx) sheet("Effects") effect("AME")
+*/
+
+program define effecttab, rclass
+	version 17.0
+	local _orig_varabbrev = c(varabbrev)
+	set varabbrev off
+	tempname _xlsx_book
+
+	capture noisily {
+
+	capture putexcel close
+
+	* Auto-load shared helper programs if not already in memory
+	capture _tabtools_helpers_ready
+	if !_rc capture mata: assert(findexternal("_tt_sep_parse()") != NULL)
+	* (a session can hold an older _tabtools_common.ado's programs: run,
+	* so discard keeps them; this release's Mata must be there too)
+	if _rc {
+		capture findfile _tabtools_common.ado
+		if _rc == 0 {
+			run "`r(fn)'"
+			capture _tabtools_helpers_ready
+			if _rc {
+				display as error "_tabtools_common.ado failed to load fully; reinstall tabtools"
+				exit 111
+			}
+		}
+		else {
+			display as error "_tabtools_common.ado not found; reinstall tabtools"
+			exit 111
+		}
+	}
+	_tabtools_require_helpers
+
+	syntax, [xlsx(string) excel(string) sheet(string)] [sep(string) type(string) effect(string) ///
+	        models(string) title(string) clean TLABels(string asis) ///
+	        FOOTnote(string) open zebra HEADERShade HIGHlight(real -1) BOLDp(real -1) ///
+	        BORDERstyle(string) full FONT(string) FONTSIZE(integer -1) digits(integer -1) ///
+		        HEADERColor(string) ZEBRAColor(string) csv(string) MARKdown(string) MDAPPend FRAme(string) EPLOTFrame(string asis) ///
+	        FROM(name) ADDRow(string asis) pdp(integer -1) highpdp(integer -1) ///
+	        LABELWidth(integer 0) Level(real -1) REFcat(string) ///
+	        OMITLabel(string) EMPTYLabel(string) CFormat(string)]
+
+	* Label used for reference (base-category) rows; matches regtab's refcat()
+	if `"`refcat'"' == "" local refcat "Reference"
+	* A base category, a term dropped for collinearity, and a cell that
+	* identifies no observations all arrive from collect as a constrained
+	* coefficient with no interval; they are different facts and are labelled
+	* differently. Matches regtab's omitlabel()/emptylabel().
+	if `"`omitlabel'"' == "" local omitlabel "Omitted"
+	if `"`emptylabel'"' == "" local emptylabel "Empty"
+	if `"`refcat'"' == `"`omitlabel'"' | `"`refcat'"' == `"`emptylabel'"' ///
+		| `"`omitlabel'"' == `"`emptylabel'"' {
+		display as error ///
+			"refcat(), omitlabel(), and emptylabel() must differ from each other"
+		exit 198
+	}
+
+	* Accept excel() as synonym for xlsx()
+	if "`xlsx'" == "" & "`excel'" != "" local xlsx "`excel'"
+	* Session destinations (tabtools set workbook/markdown) apply only when
+	* sheet() asks for a sheet; an explicit option wins. Without this a
+	* sheet() call after tabtools set workbook wrote nothing, silently.
+	if `"`macval(sheet)'"' != "" {
+		_tabtools_set_sinks resolve, xlsx(`"`xlsx'"') markdown(`"`markdown'"') `mdappend'
+		local xlsx `"`_ss_xlsx'"'
+		local markdown `"`_ss_md'"'
+		local mdappend "`_ss_mdappend'"
+		if `"`xlsx'"' == "" display as text "(tabtools: sheet() ignored; no xlsx() and no session workbook)"
+	}
+		local _has_xlsx = "`xlsx'" != ""
+		if `"`macval(sheet)'"' == "" local sheet "Effects"
+
+		local _eplotframe_name ""
+		local _eplotframe_replace 0
+			if `"`eplotframe'"' != "" {
+			local _ep_spec = subinstr(strtrim(`"`eplotframe'"'), char(34), "", .)
+			gettoken _eplotframe_name _ep_rest : _ep_spec, parse(",")
+			local _eplotframe_name = strtrim(`"`_eplotframe_name'"')
+			if `"`_eplotframe_name'"' == "" {
+				noisily display as error "eplotframe() requires a frame name"
+				exit 198
+			}
+			capture confirm name `_eplotframe_name'
+			if _rc {
+				noisily display as error "eplotframe() must start with a valid Stata frame name"
+				exit 198
+			}
+			local _ep_rest : subinstr local _ep_rest "," "", all
+			local _ep_rest = lower(strtrim(`"`_ep_rest'"'))
+			if `"`_ep_rest'"' != "" {
+				if `"`_ep_rest'"' == "replace" {
+					local _eplotframe_replace 1
+				}
+				else {
+					noisily display as error "eplotframe() only allows the replace suboption"
+					exit 198
+				}
+				}
+			}
+				local _displayframe_name ""
+				local _displayframe_replace 0
+				local _displayframe_flat 0
+				if `"`frame'"' != "" {
+				local _fr_spec = subinstr(strtrim(`"`frame'"'), char(34), "", .)
+				gettoken _displayframe_name _fr_rest : _fr_spec, parse(",")
+					local _displayframe_name = strtrim(`"`_displayframe_name'"')
+					local _fr_rest : subinstr local _fr_rest "," "", all
+					local _fr_rest = lower(strtrim(`"`_fr_rest'"'))
+				capture confirm name `_displayframe_name'
+				if _rc {
+					noisily display as error "frame() must start with a valid Stata frame name"
+						exit 198
+					}
+					* Suboptions replace and flat, in any order (flat: one row per
+					* body line, printed headers as variable labels).
+					foreach _fr_w of local _fr_rest {
+						if `"`_fr_w'"' == "replace" local _displayframe_replace 1
+						else if `"`_fr_w'"' == "flat" local _displayframe_flat 1
+						else {
+							noisily display as error "frame() only allows the replace and flat suboptions"
+							exit 198
+						}
+					}
+			}
+			if `"`_displayframe_name'"' != "" & ///
+				`"`_eplotframe_name'"' != "" & ///
+				`"`_displayframe_name'"' == `"`_eplotframe_name'"' {
+				noisily display as error "frame() and eplotframe() must name different frames"
+				exit 198
+			}
+				foreach _dest in _displayframe_name _eplotframe_name {
+					if `"``_dest''"' != "" & ///
+						`"``_dest''"' == `"`c(frame)'"' {
+						noisily display as error "output frames cannot replace the current frame"
+						exit 198
+					}
+				}
+				if `"`_displayframe_name'"' != "" {
+					capture confirm frame `_displayframe_name'
+					if !_rc & !`_displayframe_replace' {
+						noisily display as error "frame `_displayframe_name' already exists; specify frame(`_displayframe_name', replace)"
+						exit 110
+					}
+				}
+				if `"`_eplotframe_name'"' != "" {
+					capture confirm frame `_eplotframe_name'
+					if !_rc & !`_eplotframe_replace' {
+						noisily display as error "frame `_eplotframe_name' already exists; specify eplotframe(`_eplotframe_name', replace)"
+						exit 110
+					}
+				}
+				local _displayframe_target `"`_displayframe_name'"'
+				local _eplotframe_target `"`_eplotframe_name'"'
+				local _displayframe_build ""
+				local _eplotframe_build ""
+				if `"`_displayframe_target'"' != "" {
+					tempname _displayframe_tmp
+					local _displayframe_build `"`_displayframe_tmp'"'
+					local frame "`_displayframe_build', replace"
+				}
+				if `"`_eplotframe_target'"' != "" {
+					tempname _eplotframe_tmp
+					local _eplotframe_build `"`_eplotframe_tmp'"'
+					local _eplotframe_name `"`_eplotframe_build'"'
+					local _eplotframe_replace 1
+				}
+
+		* Label-column width cap (0 -> default 45): keeps a lone verbose label from
+	* stretching the whole column; longer labels wrap (text-wrap rule below).
+	local _label_width_cap = `labelwidth'
+	if `_label_width_cap' <= 0 local _label_width_cap = 45
+
+	* cformat(): a full numeric display format for the estimate and both CI
+	* bounds (regtab's rule); digits() is the shorthand, so not both.
+	local _cfmt `"`cformat'"'
+	if `"`_cfmt'"' != "" {
+		if `digits' != -1 {
+			noisily display as error "cformat() and digits() cannot both be specified"
+			exit 198
+		}
+		local _cfmt = strtrim(`"`_cfmt'"')
+		capture confirm numeric format `_cfmt'
+		local _cf_rc = _rc
+		if !`_cf_rc' & !ustrregexm(`"`_cfmt'"', "^%-?0?[0-9]*[.,][0-9]+[fge]c?$") local _cf_rc = 7
+		if `_cf_rc' {
+			noisily display as error `"cformat() must be a numeric display format such as %9.2f or %12.0fc (got `_cfmt')"'
+			exit 198
+		}
+	}
+
+	* Resolve persistent defaults
+	if `digits' == -1 {
+		if "$TABTOOLS_DIGITS" != "" local digits = $TABTOOLS_DIGITS
+		else local digits = 2
+	}
+	if `boldp' == -1 & "$TABTOOLS_BOLDP" != "" local boldp = $TABTOOLS_BOLDP
+	if `pdp' == -1 local pdp = 3
+	if `highpdp' == -1 local highpdp = 2
+
+	* Validate sheet name for Excel constraints
+	_tabtools_validate_sheet `"`macval(sheet)'"' "sheet()"
+
+quietly {
+	* =========================================================================
+	* VALIDATION
+	* =========================================================================
+
+	* Check if from() matrix or collect table
+	local _from_matrix = "`from'" != ""
+	if !`_from_matrix' {
+		capture quietly collect query row
+		if _rc {
+			noisily display as error "No active collect table found"
+			noisily display as error "Run teffects or margins with {bf:collect:} prefix first"
+			noisily display as error "Hint: {bf:collect clear} then {bf:collect: teffects ipw ...}"
+			noisily display as error "Or use from(matrix_name) to pass a matrix directly"
+			exit 119
+		}
+		quietly collect dims
+		local _collect_dims `"`s(dimnames)'"'
+		if strpos(" `_collect_dims' ", " cmdset ") == 0 {
+			noisily display as error "No active collect table found"
+			noisily display as error "Run teffects or margins with {bf:collect:} prefix first"
+			noisily display as error "Hint: {bf:collect clear} then {bf:collect: teffects ipw ...}"
+			noisily display as error "Or use from(matrix_name) to pass a matrix directly"
+			exit 119
+		}
+	}
+	if `level' != -1 & (`level' <= 0 | `level' >= 100) {
+		noisily display as error "level() must be between 0 and 100"
+		exit 198
+	}
+	if `_from_matrix' {
+		local _ci_level_num = cond(`level' == -1, 95, `level')
+		* C7 (codex audit 2026-09-26): a from() row must describe a possible
+		* result before anything is shown or written. A nonmissing p-value
+		* lies in [0, 1] and a nonmissing interval has lower <= upper; missing
+		* values stay allowed. The estimate is not required to lie inside its
+		* interval, which is not true of every method; a row where it does
+		* not is named in a note (below).
+		capture confirm matrix `from'
+		* stata-dev-ignore: shape-dispatch — a from() matrix under 4 columns is refused with r(198) at the _ncols check below; this guard only skips the range checks
+		if !_rc & colsof(`from') >= 4 {
+			forvalues _vr = 1/`=rowsof(`from')' {
+				mata: st_local("_vrn", st_matrixrowstripe(st_local("from"))[`_vr', 2])
+				if !missing(`from'[`_vr', 4]) & ///
+					(`from'[`_vr', 4] < 0 | `from'[`_vr', 4] > 1) {
+					local _vbad = strtrim(ustrregexra(string(`from'[`_vr', 4], "%12.0g"), "-(?=[0.,]+\z)", ""))
+					noisily display as error ///
+						`"from() row `_vr' (`macval(_vrn)'): p-value `_vbad' is outside [0, 1]"'
+					exit 198
+				}
+				if !missing(`from'[`_vr', 2]) & !missing(`from'[`_vr', 3]) & ///
+					`from'[`_vr', 2] > `from'[`_vr', 3] {
+					local _vlo = strtrim(ustrregexra(string(`from'[`_vr', 2], "%12.0g"), "-(?=[0.,]+\z)", ""))
+					local _vhi = strtrim(ustrregexra(string(`from'[`_vr', 3], "%12.0g"), "-(?=[0.,]+\z)", ""))
+					noisily display as error ///
+						`"from() row `_vr' (`macval(_vrn)'): lower limit `_vlo' exceeds upper limit `_vhi'"'
+					exit 198
+				}
+				* An estimate outside its own interval is possible (percentile
+				* and bias-corrected bootstrap intervals need not contain it),
+				* so it is not refused; it is also the mark of a column-order
+				* mistake, so each such row is named.
+				if !missing(`from'[`_vr', 1]) & !missing(`from'[`_vr', 2]) & ///
+					!missing(`from'[`_vr', 3]) & ///
+					(`from'[`_vr', 1] < `from'[`_vr', 2] | `from'[`_vr', 1] > `from'[`_vr', 3]) {
+					local _vb = strtrim(ustrregexra(string(`from'[`_vr', 1], "%12.0g"), "-(?=[0.,]+\z)", ""))
+					local _vlo = strtrim(ustrregexra(string(`from'[`_vr', 2], "%12.0g"), "-(?=[0.,]+\z)", ""))
+					local _vhi = strtrim(ustrregexra(string(`from'[`_vr', 3], "%12.0g"), "-(?=[0.,]+\z)", ""))
+					noisily display as text ///
+						`"Note: from() row `_vr' (`macval(_vrn)'): estimate `_vb' lies outside its interval [`_vlo', `_vhi']; columns are read as estimate, lower limit, upper limit, p-value"'
+				}
+			}
+		}
+	}
+	else {
+		* Shared with regtab: see _tabtools_resolve_ci_level in _tabtools_common.
+		* When the collection carries no level provenance and level() was not
+		* given, this warns and falls back to the current c(level).
+		noisily _tabtools_resolve_ci_level `level'
+		local _ci_level_num = r(level)
+		local _ci_found = r(found)
+	}
+	* _ci_level is the level as shown (header, methods, frame characteristics):
+	* at most 15 significant digits, so 99.9 never prints as the double's
+	* 17-digit 99.90000000000001. r(ci_level) returns the number itself.
+	local _ci_level = strtrim(ustrregexra(string(`_ci_level_num', "%21.15g"), "-(?=[0.,]+\z)", ""))
+
+	* Check xlsx if specified
+	if `_has_xlsx' {
+		if !strmatch("`xlsx'", "*.xlsx") {
+			noisily display as error "Excel filename must have .xlsx extension"
+			exit 198
+		}
+		_tabtools_validate_path "`xlsx'" "xlsx()"
+	}
+	if "`open'" != "" & !`_has_xlsx' {
+		noisily display as error "open requires xlsx() or excel()"
+		exit 198
+	}
+
+	* Validate highlight
+	local has_highlight = `highlight' != -1
+	if `has_highlight' & (`highlight' <= 0 | `highlight' >= 1) {
+		noisily display as error "highlight() must be between 0 and 1"
+		exit 198
+	}
+
+	* Validate boldp
+	local has_boldp = `boldp' != -1
+	if `has_boldp' & (`boldp' <= 0 | `boldp' >= 1) {
+		noisily display as error "boldp() must be between 0 and 1"
+		exit 198
+	}
+
+	* Validate digits range
+	if `digits' < 0 | `digits' > 6 {
+		noisily display as error "digits() must be between 0 and 6"
+		exit 198
+	}
+	if `pdp' < 1 | `pdp' > 10 {
+		noisily display as error "pdp() must be between 1 and 10"
+		exit 198
+	}
+	if `highpdp' < 1 | `highpdp' > 10 {
+		noisily display as error "highpdp() must be between 1 and 10"
+		exit 198
+	}
+	if "`mdappend'" != "" & `"`markdown'"' == "" {
+		noisily display as error "mdappend requires markdown()"
+		exit 198
+	}
+	if `"`markdown'"' != "" {
+		_tabtools_validate_path `"`markdown'"' "markdown()"
+		local _md_lower = lower(`"`markdown'"')
+		if !(strmatch(`"`_md_lower'"', "*.md") | ///
+			 strmatch(`"`_md_lower'"', "*.markdown") | ///
+			 strmatch(`"`_md_lower'"', "*.qmd") | ///
+			 strmatch(`"`_md_lower'"', "*.rmd")) {
+			noisily display as error "markdown() must specify a .md, .markdown, .qmd, or .rmd file"
+			exit 198
+		}
+	}
+	if `"`csv'"' != "" _tabtools_validate_path "`csv'" "csv()"
+	_tabtools_check_sinks, xlsx(`"`xlsx'"') csv(`"`csv'"') markdown(`"`markdown'"')
+
+	* Build format strings from digits, or take cformat() as given:
+	* strtrim(string(x, fmt)), unrounded (round(x, 0) is x).
+	local coef_fmt "%32.`digits'f"
+	local coef_round = 10^(-`digits')
+	if `"`_cfmt'"' != "" {
+		local coef_fmt `"`_cfmt'"'
+		local coef_round = 0
+	}
+	* from(): bounds pass through text before they are re-read, at full
+	* precision under cformat() so a format with more decimals than digits()
+	* is not fed pre-rounded numbers.
+	local _from_fmt "%32.`digits'f"
+	if `"`_cfmt'"' != "" local _from_fmt "%21.0g"
+
+	* Resolve formatting
+	_tabtools_resolve_format, font(`"`font'"') fontsize(`fontsize') borderstyle(`borderstyle') headershade(`headershade') zebra(`zebra')
+	_tabtools_resolve_colors, headercolor(`"`headercolor'"') zebracolor(`"`zebracolor'"')
+
+		* sep() is data (help tabtools##sep): syntax read it as it reads every
+		* string option (the rule all tabtools commands share); the default is
+		* applied in Mata, and the text then lives in this local only, read by
+		* Mata into the table, never re-expanded or handed to collect.
+		mata: st_local("sep", _tt_sep_parse(st_local("sep")))
+		* The renderer joins the two bounds with a private delimiter no number
+		* holds; the bounds are split on it and joined with sep() below. Two
+		* bytes, as long as the default ", ", so the columns the renderer makes
+		* keep the storage widths they have under the default.
+		local _ci_tok "~|"
+		* A comma-decimal cformat() (%9,2f) prints "0,45"; with a comma in the CI
+		* separator the two bounds could not be told apart: refused.
+		mata: st_local("_sep_comma", strofreal(strpos(st_local("sep"), ",") > 0))
+		if `"`_cfmt'"' != "" & `_sep_comma' {
+		    if ustrregexm(`"`_cfmt'"', "^%-?0?[0-9]*,") {
+		        noisily display as error `"cformat(`_cfmt') uses a decimal comma; choose a sep() without a comma, such as sep(" to ") or sep("; ")"'
+		        exit 198
+		    }
+		}
+	if "`type'" == "" local type "auto"
+
+	* Validate type option
+	if !inlist("`type'", "auto", "teffects", "margins") {
+		noisily display as error "type() must be auto, teffects, or margins"
+		exit 198
+	}
+
+	* Inspect the active collection itself instead of ambient e()
+	local _collect_models 0
+	local _et_eqrows 0
+	local _collect_kind ""
+	local _collect_kind_mixed 0
+	local _teffects_tvars ""
+	if !`_from_matrix' {
+		* F11 (codex audit 2026-09-27): the metadata columns are found by
+		* their result level, not by the label collect happens to print. A
+		* caller's collect label levels result cmd "..." made a valid
+		* collection unreadable. The present labels are set to the level
+		* names for the render and restored exactly afterwards.
+		local _et_rl_n 0
+		local _et_rl_present ""
+		capture quietly collect label list result, all
+		if _rc == 0 {
+			local _et_k ""
+			mata: st_local("_et_k", st_global("s(k)"))
+			if "`_et_k'" == "" local _et_k 0
+			forvalues _i = 1/`_et_k' {
+				mata: st_local("_et_lv", st_global("s(level`_i')"))
+				if !inlist("`_et_lv'", "cmd", "cmdline", "stat") continue
+				local ++_et_rl_n
+				local _et_rl_present `_et_rl_present' `_et_lv'
+				mata: st_local("_et_rl_lbl_`_et_rl_n'", st_global("s(label`_i')"))
+			}
+			forvalues _j = 1/`_et_rl_n' {
+				local _et_lv : word `_j' of `_et_rl_present'
+				quietly collect label levels result `_et_lv' "`_et_lv'", modify
+			}
+		}
+		capture {
+			collect layout (cmdset) (result[cmd cmdline stat])
+		}
+			if _rc == 0 {
+				preserve
+				* stata-dev-ignore: capture-rc — _rc is consumed by the "if _rc" on the first statement after the closing brace
+				capture {
+					_tabtools_collect_render, type(meta) rowdim(cmdset) ///
+						results(cmd cmdline stat) dropempty
+
+					local _meta_col_cmd ""
+					local _meta_col_cmdline ""
+					local _meta_col_stat ""
+				ds
+				local _meta_allvars `r(varlist)'
+				foreach _v of local _meta_allvars {
+					local _hdr = strtrim(`_v'[1])
+					if "`_hdr'" == "cmd" local _meta_col_cmd "`_v'"
+					if "`_hdr'" == "cmdline" local _meta_col_cmdline "`_v'"
+					if "`_hdr'" == "stat" local _meta_col_stat "`_v'"
+				}
+
+				if "`_meta_col_cmd'" != "" {
+					local _collect_models = _N - 1
+					forvalues _m = 1/`_collect_models' {
+						local _r = `_m' + 1
+						local collect_cmd_`_m' = lower(strtrim(`_meta_col_cmd'[`_r']))
+						local collect_cmdline_`_m' = strtrim(`_meta_col_cmdline'[`_r'])
+						* teffects' estimand (e(stat): ate, atet, pomeans) as
+						* collected with the fit; empty for margins
+						local collect_stat_`_m' ""
+						if "`_meta_col_stat'" != "" local collect_stat_`_m' = lower(strtrim(`_meta_col_stat'[`_r']))
+					}
+				}
+			}
+			if _rc local _collect_models = 0
+			restore
+		}
+		forvalues _j = 1/`_et_rl_n' {
+			local _et_lv : word `_j' of `_et_rl_present'
+			quietly collect label levels result `_et_lv' `"`macval(_et_rl_lbl_`_j')'"', modify
+		}
+
+		if `_collect_models' == 0 {
+			noisily display as error "Could not inspect the active collect table"
+			noisily display as error "Run teffects or margins with {bf:collect:} prefix first"
+			exit 198
+		}
+
+		forvalues _m = 1/`_collect_models' {
+			local _cmd `"`collect_cmd_`_m''"'
+			local _cmdline `"`collect_cmdline_`_m''"'
+			local _kind ""
+
+			if "`_cmd'" == "teffects" local _kind "teffects"
+			else if "`_cmd'" == "margins" local _kind "margins"
+
+			if "`_kind'" == "" {
+				noisily display as error "effecttab supports only teffects or margins collections"
+				noisily display as error "Current collect contains unsupported command: `collect_cmd_`_m''"
+				exit 198
+			}
+
+			if "`_collect_kind'" == "" local _collect_kind "`_kind'"
+			else if "`_collect_kind'" != "`_kind'" local _collect_kind_mixed = 1
+
+            if "`_kind'" == "teffects" {
+                * Keep identifier case: only command classification is lowercase.
+                if !regexm(`"`_cmdline'"', "^[^ ]+[ ]+[^ ]+[ ]+\([^)]*\)[ ]+\(([^)]*)\)") {
+                    noisily display as error "Could not identify the collected treatment variable"
+                    exit 198
+                }
+                local _tblock = strtrim(regexs(1))
+                gettoken _model_tvar _tblock_rest : _tblock, parse(" ,")
+                local _teffects_tvars : list _teffects_tvars | _model_tvar
+            }
+		}
+
+		if `_collect_kind_mixed' {
+			noisily display as error "effecttab does not support mixing teffects and margins in one collection"
+			exit 198
+		}
+	}
+
+	* Create temporary file for intermediate processing
+	* Note: tempfile on Unix creates paths like /tmp/StXXXXX.XXXXXX without .tmp
+	* We append .xlsx to ensure a valid Excel file path
+	* Pair provenance distinguishes separate invocations with identical metadata.
+	tempfile temp_export
+    _tabtools_companion_id
+	local temp_xlsx "`temp_export'.xlsx"
+
+	* =========================================================================
+	* AUTO-DETECT RESULT TYPE
+	* =========================================================================
+
+	if "`type'" == "auto" {
+		if `_from_matrix' {
+			local type "margins"
+		}
+		else {
+			local type `"`_collect_kind'"'
+		}
+	}
+	else if !`_from_matrix' {
+		if "`type'" != "`_collect_kind'" {
+			noisily display as error "type(`type') does not match the active collect type (`_collect_kind')"
+			exit 198
+		}
+	}
+
+	* Set default effect label based on type
+	if "`effect'" == "" {
+		if "`type'" == "teffects" {
+			local effect "Effect"
+		}
+		else {
+			local effect "Estimate"
+		}
+	}
+
+    if !`_from_matrix' {
+    if `"`tlabels'"' != "" local clean "clean"
+
+    * Resolve rows from actual collection identities, for every model. Data
+    * levels do not identify the fitted control and may no longer be present.
+    local _trow_n = 0
+    local _colname_filter ""
+    local _te_eqlevels ""
+    if "`type'" == "teffects" {
+        if "`full'" == "" {
+            quietly collect levelsof coleq
+            local _equations `s(levels)'
+            foreach _eq of local _equations {
+                if inlist(lower("`_eq'"), "ate", "atet", "pomean", "pomeans") ///
+                    local _te_eqlevels "`_te_eqlevels' `_eq'"
+            }
+            if "`_te_eqlevels'" == "" {
+                noisily display as error "No treatment-effect equations found in the collection"
+                exit 2000
+            }
+        }
+        quietly collect levelsof colname
+        local _trow_levels `s(levels)'
+        foreach _key of local _trow_levels {
+            local _tv ""
+            local _base ""
+            if regexm("`_key'", "^r([0-9]+)vs([0-9]+)[.](.+)$") {
+                local _lev = regexs(1)
+                local _base = regexs(2)
+                local _tv = regexs(3)
+            }
+            else if regexm("`_key'", "^([0-9]+)[.](.+)$") {
+                local _lev = regexs(1)
+                local _tv = regexs(2)
+            }
+            local _is_tvar : list _tv in _teffects_tvars
+            if "`_tv'" == "" | !`_is_tvar' continue
+            local _colname_filter "`_colname_filter' `_key'"
+            local ++_trow_n
+            local _trow_key_`_trow_n' "`_key'"
+
+            * Capture labels before rendering replaces the dataset. Numeric
+            * labels remain usable when the caller has cleared the data.
+            local _vlab ""
+            local _tvlabel "`_tv'"
+            capture confirm variable `_tv'
+            if !_rc {
+                local _vlab : value label `_tv'
+                * C1 (codex audit 2026-09-26): labels are data; they are
+                * copied, tested and joined with macval()/Mata only.
+                local _tvlabel : variable label `_tv'
+                if `"`macval(_tvlabel)'"' == "" local _tvlabel "`_tv'"
+            }
+            mata: st_local("_tvlabel", subinstr(strupper(substr(st_local("_tvlabel"), 1, 1)) + substr(st_local("_tvlabel"), 2, .), "_", " "))
+            local _lab_lev "`_lev'"
+            local _lab_base "`_base'"
+            foreach _part in lev base {
+                if "`_`_part''" == "" continue
+                if `"`tlabels'"' != "" {
+                    local _rest `"`tlabels'"'
+                    while `"`_rest'"' != "" {
+                        gettoken _val _rest : _rest
+                        gettoken _lab _rest : _rest
+                        if "`_val'" == "`_`_part''" & `"`macval(_lab)'"' != "" ///
+                            local _lab_`_part' : copy local _lab
+                    }
+                }
+                else if "`_vlab'" != "" {
+                    local _lab_`_part' : label `_vlab' `_`_part''
+                }
+            }
+            mata: st_local("_lev_rel", strofreal(st_local("_lab_lev") != st_local("_lev")))
+            mata: st_local("_base_rel", strofreal(st_local("_lab_base") != st_local("_base")))
+            if "`_base'" != "" {
+                local _label `"`macval(_tvlabel)' (`_lev' vs `_base')"'
+                if `_lev_rel' | `_base_rel' {
+                    local _label `"`macval(_lab_lev)' vs `macval(_lab_base)'"'
+                }
+            }
+            else {
+                local _label `"`macval(_tvlabel)' = `_lev' (PO Mean)"'
+                if `_lev_rel' {
+                    local _label `"`macval(_lab_lev)' (PO Mean)"'
+                }
+            }
+            local _trow_label_`_trow_n' : copy local _label
+        }
+        if `_trow_n' == 0 {
+            noisily display as error "No treatment contrasts or potential-outcome means found in the collection"
+            exit 2000
+        }
+        if "`full'" != "" local _colname_filter ""
+    }
+    * F03 (codex audit 2026-09-27): full shows every equation, and teffects
+    * equations share coefficient names (x and _cons in OME0 and in OME1).
+    * Rows are then keyed by equation and name; a colname-only layout let one
+    * equation's values overwrite the other's in every sink.
+    if "`full'" != "" {
+        capture quietly collect levelsof coleq
+        if _rc == 0 & `: word count `s(levels)'' > 1 local _et_eqrows 1
+    }
+
+	* =========================================================================
+	* CONFIGURE COLLECT LAYOUT
+	* =========================================================================
+
+	* Apply formatting to result items
+	collect label levels result _r_b "`effect'", modify
+	collect label levels result _r_ci "`_ci_level'% CI", modify
+	collect label levels result _r_p "p-value", modify
+		* Internal rendering deliberately avoids the comma-grouped fc format.
+		* Otherwise sep(",") is indistinguishable from thousands separators and
+		* silently corrupts the numeric CI bounds posted to eplotframe().
+		collect style cell result[_r_b], warn nformat(%`=`digits'+2'.`digits'f) halign(center) valign(center)
+		* The renderer never reads collect's delimiter, and collect re-expands
+		* the text it is given: sep() is not handed to it.
+		collect style cell result[_r_ci], warn nformat(%`=`digits'+3'.`digits'f) sformat("(%s)") ///
+	        cidelimiter(", ") halign(center) valign(center)
+	collect style cell result[_r_p], warn nformat(%5.4f) halign(center) valign(center)
+	collect style column, dups(center)
+	collect style row stack, nodelimiter nospacer indent length(.) ///
+	        wrapon(word) noabbreviate wrap(.) truncate(tail)
+
+	* Set layout based on type
+	* Both teffects and margins use colname for row dimension
+	* Multiple models (cmdset) go on columns
+
+	* Note: collect levelsof cmdset returns r(levels) as empty even when cmdset
+	* has levels (Stata quirk). So we try multi-model layout first regardless.
+
+	* Set layout - ALWAYS try multi-model first since r(levels) is unreliable
+	local layout_ok = 0
+
+	if "`_colname_filter'" != "" {
+		* Filtered layout for teffects: only ATE/POmean rows
+		capture collect layout (colname[`_colname_filter']) (cmdset#result[_r_b _r_ci _r_p])
+		if _rc == 0 {
+			local layout_ok = 1
+		}
+		if `layout_ok' == 0 {
+			capture collect layout (colname[`_colname_filter']) (result[_r_b _r_ci _r_p])
+			if _rc == 0 local layout_ok = 1
+		}
+	}
+
+	if `layout_ok' == 0 {
+		* Try multi-model layout with cmdset dimension
+		capture collect layout (colname) (cmdset#result[_r_b _r_ci _r_p])
+		if _rc == 0 {
+			local layout_ok = 1
+		}
+	}
+
+	if `layout_ok' == 0 {
+		* Try single model layout (for cases with only one model)
+		capture collect layout (colname) (result[_r_b _r_ci _r_p])
+		if _rc == 0 {
+			local layout_ok = 1
+		}
+	}
+
+	if `layout_ok' == 0 {
+		* Try generic layout without result specification
+		capture collect layout (colname) (result)
+		if _rc == 0 {
+			local layout_ok = 1
+		}
+	}
+
+	if `layout_ok' == 0 {
+		noisily display as error "Could not set collect layout"
+		noisily display as error "Check that teffects/margins results are in the collection"
+		exit 198
+	}
+
+	* =========================================================================
+	* APPLY TREATMENT LABELS TO COLLECT TABLE
+	* =========================================================================
+
+    * C1 (codex audit 2026-09-26): the clean treatment labels are applied to
+    * the rendered rows by raw colname key after rendering (see below), not
+    * through -collect label levels-, which re-parses its arguments as macro
+    * syntax (a backtick in a value label stopped it with r(198)) and also
+    * relabelled the caller's own collection.
+    }
+
+	* =========================================================================
+	* EXPORT AND IMPORT FOR PROCESSING
+	* =========================================================================
+
+	if `_from_matrix' {
+		* Build dataset directly from input matrix
+		* Matrix must have columns: estimate, ci_lower, ci_upper, pvalue
+		preserve
+		local _nrows = rowsof(`from')
+		local _ncols = colsof(`from')
+		if `_ncols' < 4 {
+			noisily display as error "from() matrix must have at least 4 columns (estimate, ci_lower, ci_upper, pvalue)"
+			restore
+			exit 198
+		}
+		clear
+		qui set obs `=`_nrows'+2'
+		* Create columns: A (label), c1 (estimate), c2 (CI), c3 (p-value)
+		qui gen str244 A = ""
+		qui gen str244 c1 = ""
+		qui gen str244 c2 = ""
+		qui gen str244 c3 = ""
+		* Row 1: title-level placeholder
+		qui replace A = "" in 1
+		* Row 2: headers
+		qui replace A = "" in 2
+		qui replace c1 = `"`effect'"' in 2
+		* The collect path's and regtab's header text
+		qui replace c2 = "`_ci_level'% CI" in 2
+		qui replace c3 = "p-value" in 2
+		* Data rows
+		local _rnames : rownames `from'
+			forvalues _fr = 1/`_nrows' {
+				local _obs = `_fr' + 2
+			* Read the row's own stripe: a row name may contain spaces, which
+			* word-splitting the rownames list would spread across rows.
+			mata: st_local("_rn", st_matrixrowstripe(st_local("from"))[`_fr', 2])
+			local _rn = subinstr("`_rn'", "_", " ", .)
+			qui replace A = `"`_rn'"' in `_obs'
+				local _est = `from'[`_fr', 1]
+				local _cilo = `from'[`_fr', 2]
+				local _cihi = `from'[`_fr', 3]
+				local _pv = `from'[`_fr', 4]
+				if !missing(`_est') qui replace c1 = strtrim(ustrregexra(string(`_est', "`_from_fmt'"), "-(?=[0.,]+\z)", "")) in `_obs'
+			if !missing(`_cilo') & !missing(`_cihi') {
+				local _cilo_s : display `_from_fmt' `_cilo'
+				local _cihi_s : display `_from_fmt' `_cihi'
+				local _cilo_s = strtrim("`_cilo_s'")
+				local _cihi_s = strtrim("`_cihi_s'")
+				local _cilo_s = ustrregexra("`_cilo_s'", "-(?=[0.,]+\z)", "")
+				local _cihi_s = ustrregexra("`_cihi_s'", "-(?=[0.,]+\z)", "")
+				qui replace c2 = "(`_cilo_s'`_ci_tok'`_cihi_s')" in `_obs'
+			}
+			if !missing(`_pv') {
+				qui replace c3 = ustrregexra(string(`_pv', "%21.0g"), "-(?=[0.,]+\z)", "") in `_obs'
+			}
+		}
+		local n 3
+		local last 1
+	}
+	else {
+        * Track existing labels so factor formatting respects caller labels.
+        * Coefficient identity is supplied separately by the renderer.
+		local _cnmap_n = 0
+		capture quietly collect label list colname
+		if _rc == 0 {
+			local _cnmap_n = real("`s(k)'")
+			if missing(`_cnmap_n') local _cnmap_n = 0
+			forvalues _ci = 1/`_cnmap_n' {
+				local _cnmap_level_`_ci' `"`s(level`_ci')'"'
+				mata: st_local("_cnmap_label_`_ci'", st_global("s(label`_ci')"))
+			}
+		}
+
+		* collect renders a factor level as the bare term "1.grp". Capture the
+		* parent variable label and each level's value label now, while the
+		* estimation data is still in memory, and apply them to the rendered
+		* rows below - the same treatment regtab gives its factor rows. A level
+		* the caller already relabelled (clean/tlabels) keeps its own label.
+		* teffects rows are treatment contrasts and potential-outcome means,
+		* not levels of a covariate, so they keep their own labelling: heading
+		* a POmean row with the treatment variable's label would misdescribe it.
+		local _fvrow_label_n = 0
+		local _fvrow_parent_n = 0
+		local _fp_opt "factorparents"
+		if "`type'" == "teffects" local _fp_opt ""
+		capture quietly collect levelsof colname
+		if _rc == 0 & "`type'" != "teffects" {
+			local _fv_collevels `s(levels)'
+			* margins at() rows ("2._at", "1._at#0.female") are named by the
+			* scenario values the collection holds, as margins prints them
+			local _fv_atopt ""
+			local _fv_conslab ""
+			local _fv_hascons : list posof "_cons" in _fv_collevels
+			if strpos(`" `_fv_collevels'"', "._at") > 0 | `_fv_hascons' {
+				tempname _fv_atmat
+				_tabtools_collect_atmatrix, matrix(`_fv_atmat')
+				local _fv_nat = r(n_at)
+				local _fv_conf = r(conflict)
+				local _fv_single = r(single)
+				local _fv_nsets = r(n_sets)
+				local _fv_atcols `"`r(atcols)'"'
+				local _fv_atstats `"`r(atstats)'"'
+				if `_fv_nat' > 0 & `_fv_conf' == 0 {
+					local _fv_atopt `"atmatrix(`_fv_atmat') atcols(`_fv_atcols') atstats(`_fv_atstats')"'
+				}
+				if `_fv_conf' == 1 {
+					noisily display as text "Note: the collection holds margins calls with different at() values;" ///
+						" at() rows keep their scenario numbers (1._at, 2._at, ...)"
+				}
+				local _fv_ncmd 1
+				capture quietly collect levelsof cmdset
+				if _rc == 0 {
+					local _fv_ncmd : word count `s(levels)'
+					if `_fv_ncmd' < 1 local _fv_ncmd 1
+				}
+				* margins names its overall margin _cons, which collect labels
+				* "Intercept". It is the margin of one scenario only when every
+				* margins call in the collection posted that same scenario;
+				* columns from calls with different (or no) at() share the row,
+				* which then reads "Margin" rather than any one call's scenario.
+				if `_fv_hascons' {
+					local _fv_conslab "Overall"
+					if `_fv_conf' == 1 | (`_fv_nat' > 0 & `_fv_nsets' < `_fv_ncmd') {
+						local _fv_conslab "Margin"
+					}
+					else if `_fv_single' == 1 & `"`_fv_atopt'"' != "" {
+						_tabtools_fvterm_label "1._at", `_fv_atopt'
+						mata: st_local("_fv_conslab", strtrim(st_local("_fvt_label")))
+						if inlist(`"`macval(_fv_conslab)'"', "", "as observed") local _fv_conslab "Overall"
+					}
+				}
+			}
+			foreach _fvterm of local _fv_collevels {
+				local _fv_relabelled = 0
+				forvalues _ci = 1/`_cnmap_n' {
+					if `"`_cnmap_level_`_ci''"' == `"`_fvterm'"' ///
+						local _fv_relabelled = 1
+				}
+				if `_fv_relabelled' continue
+				* interactions and at() scenarios: _tabtools_fvterm_label.ado
+				if strpos("`_fvterm'", "#") > 0 | regexm("`_fvterm'", "^[0-9]+\._at$") {
+					_tabtools_fvterm_label `"`_fvterm'"', `_fv_atopt'
+					if `"`macval(_fvt_label)'"' == "" continue
+					local ++_fvrow_label_n
+					local _fvrow_pat_`_fvrow_label_n' `"`_fvterm'"'
+					local _fvrow_lab_`_fvrow_label_n' : copy local _fvt_label
+					if `"`_fvt_parent'"' == "" continue
+					local _fvrow_parent_seen = 0
+					forvalues _fvp = 1/`_fvrow_parent_n' {
+						if `"`_fvrow_parent_var_`_fvp''"' == `"`_fvt_parent'"' ///
+							local _fvrow_parent_seen = 1
+					}
+					if !`_fvrow_parent_seen' {
+						local ++_fvrow_parent_n
+						local _fvrow_parent_var_`_fvrow_parent_n' `"`_fvt_parent'"'
+						local _fvrow_parent_lab_`_fvrow_parent_n' : copy local _fvt_plabel
+					}
+					continue
+				}
+				if regexm("`_fvterm'", "^([0-9]+)\.(.+)$") {
+					local _fvval = regexs(1)
+					local _fvvar = regexs(2)
+					if strpos("`_fvvar'", "#") > 0 continue
+					capture confirm variable `_fvvar'
+					if _rc == 0 {
+						local _fvrow_parent_seen = 0
+						forvalues _fvp = 1/`_fvrow_parent_n' {
+							if `"`_fvrow_parent_var_`_fvp''"' == `"`_fvvar'"' ///
+								local _fvrow_parent_seen = 1
+						}
+						if !`_fvrow_parent_seen' {
+							local _fvplbl : variable label `_fvvar'
+							if `"`macval(_fvplbl)'"' == "" local _fvplbl `"`_fvvar'"'
+							local ++_fvrow_parent_n
+							local _fvrow_parent_var_`_fvrow_parent_n' `"`_fvvar'"'
+							local _fvrow_parent_lab_`_fvrow_parent_n' : copy local _fvplbl
+						}
+						local _fvlbl `"`_fvval'"'
+						capture local _fvlbl : label (`_fvvar') `_fvval'
+						if _rc | `"`macval(_fvlbl)'"' == "" local _fvlbl "`_fvval'"
+						local ++_fvrow_label_n
+						local _fvrow_pat_`_fvrow_label_n' `"`_fvterm'"'
+						local _fvrow_lab_`_fvrow_label_n' `"  `macval(_fvlbl)'"'
+					}
+				}
+			}
+		}
+
+		* Preserve user data before rendering the collect table into strings
+		preserve
+
+		if `_et_eqrows' {
+			* stata-dev-ignore: capture-rc, capture_rc — both branches join at "local _collect_render_rc = _rc" below
+			capture _tabtools_collect_render, type(main) rowdim(coleq#colname) ///
+				coldim(cmdset) results(_r_b _r_ci _r_p) sep("`_ci_tok'") ///
+				omitmap rowkeys parentkeys uniquekeys
+		}
+		else {
+			capture _tabtools_collect_render, type(main) rowdim(colname) ///
+				rowlevels(`"`_colname_filter'"') coldim(cmdset) ///
+				results(_r_b _r_ci _r_p) sep("`_ci_tok'") `_fp_opt' omitmap rowkeys ///
+				eqlevels("`_te_eqlevels'") uniquekeys
+		}
+		local _collect_render_rc = _rc
+		* Read the constraint map before any other r-class command clears r().
+		local _omit_n = 0
+		if `_collect_render_rc' == 0 {
+			* an older installed helper returns no omit_n, which is missing
+			local _omit_n = r(omit_n)
+			if `"`_omit_n'"' == "" local _omit_n = 0
+			if missing(`_omit_n') local _omit_n = 0
+			forvalues _ok = 1/`_omit_n' {
+				local _omit_key_`_ok' `"`r(omit_key_`_ok')'"'
+				local _omit_val_`_ok' `"`r(omit_val_`_ok')'"'
+			}
+		}
+        if `_collect_render_rc' {
+            restore
+            noisily display as error "Could not render the collection with exact row identities"
+            exit `_collect_render_rc'
+        }
+
+	}
+
+	* Guard against empty collect tables (R3)
+	if _N < 3 {
+		noisily display as error "Collect table appears empty or has insufficient data"
+		capture erase "`temp_xlsx'"
+		restore
+		exit 2000
+	}
+
+	* =========================================================================
+	* PROCESS COLUMNS (same logic as regtab)
+	* =========================================================================
+
+	* Get all variables - first variable is row labels, rest are data columns
+	ds
+	local allvars `r(varlist)'
+    local _raw_helper "_raw_colname _raw_parent"
+    local allvars : list allvars - _raw_helper
+    if !`_from_matrix' rename _raw_colname _raw_A
+    * the equation of each row (empty outside the equation-keyed layout)
+    capture confirm variable _raw_parent
+    if _rc == 0 rename _raw_parent _eplot_sec
+    else quietly generate strL _eplot_sec = ""
+
+	* Check that we have data to process
+	local nvars : word count `allvars'
+	if `nvars' < 2 {
+		noisily display as error "Insufficient columns in collect export"
+		noisily display as error "Expected at least 2 columns, found `nvars'"
+		capture erase "`temp_xlsx'"
+		restore
+		exit 198
+	}
+
+	* Get the first variable name (row labels column)
+	gettoken firstvar allvars : allvars
+
+	* Rename the first variable to A if it's not already named A
+	if "`firstvar'" != "A" {
+		rename `firstvar' A
+	}
+
+	if "`clean'" != "" & "`type'" == "teffects" & !`_from_matrix' {
+		forvalues _ti = 1/`_trow_n' {
+			quietly replace A = `"`macval(_trow_label_`_ti')'"' ///
+				if _n > 2 & strtrim(_raw_A) == "`_trow_key_`_ti''"
+		}
+	}
+
+	* Rename remaining variables to c1, c2, c3, etc.
+	local n 1
+	foreach var of local allvars {
+		rename `var' c`n'
+		replace c`n' = "" if _n == 1
+		local n `=`n'+1'
+		}
+		local n `=`n'-1'
+
+		if `_from_matrix' {
+			gen double _eplot_est1 = .
+			gen double _eplot_ll1 = .
+			gen double _eplot_ul1 = .
+			gen double _eplot_p1 = .
+			forvalues _fr = 1/`_nrows' {
+				local _obs = `_fr' + 2
+				replace _eplot_est1 = `from'[`_fr', 1] in `_obs'
+				replace _eplot_ll1 = `from'[`_fr', 2] in `_obs'
+				replace _eplot_ul1 = `from'[`_fr', 3] in `_obs'
+				replace _eplot_p1 = `from'[`_fr', 4] in `_obs'
+			}
+		}
+
+	* Apply model labels if provided
+	if "`models'" != "" {
+		* Split models string by backslashes
+		local models : subinstr local models " \ " "\", all
+		local models : subinstr local models "\  " "\", all
+		local models : subinstr local models "  \" "\", all
+		tokenize `"`models'"', parse("\")
+		local model_idx = 1
+		local col_idx = 1
+
+		* Loop through tokenized results
+		while "``model_idx''" != "" {
+			if "``model_idx''" != "\" {
+				* Apply label to appropriate column
+				replace c`col_idx' = "``model_idx''" if _n == 1
+				local col_idx = `col_idx' + 3
+			}
+			local model_idx = `model_idx' + 1
+		}
+	}
+
+	* Build raw r(table) before display formatting changes values
+	local last = `n' - 2
+	local _mat_nrows = 0
+	local _keep_obs ""
+	local _n_models = 0
+	forvalues _mi = 1(3)`last' {
+		local _n_models = `_n_models' + 1
+	}
+
+	* Per-model constraint class, keyed by model column index and raw colname.
+	* collect reports a base level, a level dropped for collinearity, and a
+	* not-estimable margin as the same constrained cell, so the rendered table
+	* cannot tell them apart; the saved collection can. Index 0 means the
+	* collection carried no model dimension, so the class applies to every
+	* column. "mixed" (one colname classed differently across equations of one
+	* model) is left blank so the numeric heuristic below decides instead.
+	if `"`_omit_n'"' == "" local _omit_n = 0
+	if `_omit_n' > 0 {
+		forvalues _m = 1/`_n_models' {
+			capture confirm variable _omit_type`_m'
+			if _rc quietly gen str8 _omit_type`_m' = ""
+		}
+		forvalues _ok = 1/`_omit_n' {
+			local _okey `"`_omit_key_`_ok''"'
+			local _oval `"`_omit_val_`_ok''"'
+			local _obar = strpos(`"`_okey'"', "|")
+			if `_obar' > 0 & inlist(`"`_oval'"', "base", "omit", "empty") {
+				local _omi = real(substr(`"`_okey'"', 1, `_obar' - 1))
+				local _ocn = substr(`"`_okey'"', `_obar' + 1, .)
+				if !missing(`_omi') & `_omi' == 0 {
+					forvalues _m = 1/`_n_models' {
+						quietly replace _omit_type`_m' = `"`_oval'"' ///
+							if _n > 2 & strtrim(_raw_A) == `"`_ocn'"'
+					}
+				}
+				else if !missing(`_omi') & `_omi' >= 1 & `_omi' <= `_n_models' {
+					quietly replace _omit_type`_omi' = `"`_oval'"' ///
+						if _n > 2 & strtrim(_raw_A) == `"`_ocn'"'
+				}
+			}
+		}
+	}
+
+	* Factor rows: parent variable label, then indented value labels.
+	if `"`_fvrow_parent_n'"' == "" local _fvrow_parent_n = 0
+	if `"`_fvrow_label_n'"' == "" local _fvrow_label_n = 0
+	forvalues _fvp = 1/`_fvrow_parent_n' {
+		quietly replace A = `"`macval(_fvrow_parent_lab_`_fvp')'"' ///
+			if strtrim(A) == `"`_fvrow_parent_var_`_fvp''"' & _n >= 3
+	}
+	forvalues _fvi = 1/`_fvrow_label_n' {
+		* interaction rows match on the raw key while they still show
+		* collect's default text, as in regtab
+		local _fv_dflt = ustrregexra(`"`_fvrow_pat_`_fvi''"', "(^|#)c\.", "$1")
+		quietly replace A = `"`macval(_fvrow_lab_`_fvi')'"' ///
+			if (strtrim(A) == `"`_fvrow_pat_`_fvi''"' | ///
+			(strtrim(_raw_A) == `"`_fvrow_pat_`_fvi''"' & strtrim(A) == `"`_fv_dflt'"')) & _n >= 3
+	}
+	if `"`macval(_fv_conslab)'"' != "" & !`_from_matrix' {
+		quietly replace A = `"`macval(_fv_conslab)'"' ///
+			if _n >= 3 & strtrim(_raw_A) == "_cons" & strtrim(A) == "Intercept"
+	}
+	forvalues _obs = 3/`=_N' {
+		local _row_has_data = 0
+		forvalues _ci = 1(3)`last' {
+				capture confirm variable c`_ci'
+				local _has_est_cell = (_rc == 0)
+				capture confirm variable c`=`_ci'+1'
+				local _has_ci_cell = (_rc == 0)
+				capture confirm variable c`=`_ci'+2'
+				local _has_p_cell = (_rc == 0)
+				if `_has_est_cell' {
+					local _cell = strtrim(c`_ci'[`_obs'])
+					local _cicell ""
+					if `_has_ci_cell' local _cicell = strtrim(c`=`_ci'+1'[`_obs'])
+					local _numval = real("`_cell'")
+					local _is_refcell = 0
+					local _oclass ""
+					capture confirm variable _omit_type`=(`_ci'+2)/3'
+					if _rc == 0 ///
+						local _oclass = _omit_type`=(`_ci'+2)/3'[`_obs']
+					if !`_from_matrix' & ///
+						inlist(`"`_oclass'"', "base", "omit", "empty") {
+						local _is_refcell = 1
+					}
+					else if !`_from_matrix' & `"`_oclass'"' == "" & ///
+						`_numval' == 0 & ///
+						(`"`_cicell'"' == "" | strpos(lower(`"`_cicell'"'), "base") > 0) {
+						local _is_refcell = 1
+					}
+					if `_numval' < . & !`_is_refcell' {
+						local _row_has_data = 1
+					}
+				}
+				if `_has_p_cell' {
+					local _pcell = strtrim(c`=`_ci'+2'[`_obs'])
+					local _pnum = real("`_pcell'")
+					if `_pnum' < . local _row_has_data = 1
+				}
+		}
+		if `_row_has_data' {
+			local _mat_nrows = `_mat_nrows' + 1
+			local _keep_obs `"`_keep_obs' `_obs'"'
+		}
+	}
+	tempname _rtable
+	if `_mat_nrows' > 0 {
+		matrix `_rtable' = J(`_mat_nrows', `_n_models' * 2, .)
+		local _rnames ""
+		local _mr = 0
+		tempname _rprobe
+		matrix `_rprobe' = (0)
+		foreach _obs of local _keep_obs {
+			local _mr = `_mr' + 1
+			local _mc = 0
+			forvalues _ci = 1(3)`last' {
+					local _mc = `_mc' + 1
+					capture confirm variable c`_ci'
+					local _has_est_cell = (_rc == 0)
+					capture confirm variable c`=`_ci'+1'
+					local _has_ci_cell = (_rc == 0)
+					if `_has_est_cell' {
+						local _cell = strtrim(c`_ci'[`_obs'])
+						local _cicell ""
+						if `_has_ci_cell' local _cicell = strtrim(c`=`_ci'+1'[`_obs'])
+						local _numval = real("`_cell'")
+						* C6 (codex audit 2026-09-26): a from() estimate is the
+						* input number, never the digits()-rounded display text.
+						* _eplot_est1 holds the matrix value for this observation.
+						* The cell is assigned from the variable, not through a
+						* macro, so it keeps full double precision.
+						if `_from_matrix' local _numval = .
+						if `_from_matrix' matrix `_rtable'[`_mr', `_mc'] = _eplot_est1[`_obs']
+						local _is_refcell = 0
+						local _oclass ""
+						capture confirm variable _omit_type`=(`_ci'+2)/3'
+						if _rc == 0 ///
+							local _oclass = _omit_type`=(`_ci'+2)/3'[`_obs']
+						if !`_from_matrix' & ///
+							inlist(`"`_oclass'"', "base", "omit", "empty") {
+							local _is_refcell = 1
+						}
+						else if !`_from_matrix' & `"`_oclass'"' == "" & ///
+							`_numval' == 0 & ///
+							(`"`_cicell'"' == "" | strpos(lower(`"`_cicell'"'), "base") > 0) {
+							local _is_refcell = 1
+						}
+						if `_numval' < . & !`_is_refcell' {
+							matrix `_rtable'[`_mr', `_mc'] = `_numval'
+						}
+					}
+					local _mc = `_mc' + 1
+					local _pcol = `_ci' + 2
+					capture confirm variable c`_pcol'
+					if !_rc {
+						local _cell = strtrim(c`_pcol'[`_obs'])
+						local _numval = real("`_cell'")
+						if `_from_matrix' {
+							local _numval = .
+							matrix `_rtable'[`_mr', `_mc'] = _eplot_p1[`_obs']
+						}
+						if `_numval' < . matrix `_rtable'[`_mr', `_mc'] = `_numval'
+				}
+			}
+			* C1 (codex audit 2026-09-26): the row name is built in Mata from the
+			* label as typed, with the macro characters (backtick, apostrophe,
+			* dollar, double quote) replaced, so it can never expand below.
+			mata: st_local("_rname", subinstr(subinstr(subinstr(subinstr( ///
+			    st_sdata(`_obs', "A"), char(96), "_"), char(39), "_"), char(36), "_"), char(34), "_"))
+			local _rname = subinstr("`_rname'", ".", "_", .)
+			local _rname = subinstr("`_rname'", " ", "_", .)
+			local _rname = subinstr("`_rname'", ",", "", .)
+			local _rname = substr("`_rname'", 1, 32)
+			if "`_rname'" == "" local _rname "row`_mr'"
+			* F03: an equation-keyed row is named eq:name, as in e(b)
+			if `_et_eqrows' {
+				mata: st_local("_reqn", subinstr(subinstr(subinstr(subinstr(subinstr(subinstr( ///
+				    st_sdata(`_obs', "_eplot_sec"), char(96), "_"), char(39), "_"), char(36), "_"), ///
+				    char(34), "_"), " ", "_"), ":", "_"))
+				if `"`_reqn'"' != "" local _rname = substr("`_reqn'", 1, 32) + ":" + "`_rname'"
+			}
+			* A label can still be a name matrix stripes refuse ("#1" before "[",
+			* read as factor-variable notation): that row takes row#, so one odd label
+			* cannot abort the table. The probe is a 1 x 1 scratch matrix.
+			capture matrix rownames `_rprobe' = `_rname'
+			if _rc local _rname "row`_mr'"
+			* Sanitizing and truncation can map two rows to one name, and a
+			* name lookup would then silently return the first row. Keep the
+			* names unique: a repeat takes _2, _3, ... within 32 characters.
+			local _rbase "`_rname'"
+			local _rsfx = 1
+			while `: list _rname in _rnames' {
+				local ++_rsfx
+				local _rname = substr("`_rbase'", 1, 32 - strlen("_`_rsfx'")) + "_`_rsfx'"
+			}
+			local _rnames `"`_rnames' `_rname'"'
+		}
+		matrix rownames `_rtable' = `_rnames'
+	}
+
+	* Format numeric columns
+		forvalues i = 1(3)`last' {
+			destring c`i', gen(c`i'z) force
+			* C6 (codex audit 2026-09-26): the plotted estimate is taken before
+			* the display rounding below; it was the digits()-rounded value, so
+			* eplotframe() estimates changed with a formatting option while ll,
+			* ul and pvalue did not.
+			local _model_ix = (`i' + 2) / 3
+			capture confirm variable _eplot_est`_model_ix'
+			if _rc gen double _eplot_est`_model_ix' = .
+			replace _eplot_est`_model_ix' = c`i'z ///
+				if _n >= 3 & c`i'z < . & missing(_eplot_est`_model_ix')
+			replace c`i'z = round(c`i'z, `coef_round')
+			tostring c`i'z, replace force format(`coef_fmt')
+			* a value that formats to zero prints without a sign ("-0.00" -> "0.00")
+			quietly replace c`i'z = ustrregexra(c`i'z, "-(?=[0.,]+\z)", "")
+				* Matrix input has no structural base-level metadata, so a numeric zero
+				* can never be reinterpreted as a reference category.
+				local _omit_ok = 0
+				capture confirm variable _omit_type`_model_ix'
+				if _rc == 0 local _omit_ok = 1
+				if !`_from_matrix' & `_omit_ok' {
+					replace c`i' = `"`refcat'"' ///
+						if _omit_type`_model_ix' == "base" & _n >= 3
+					replace c`i' = `"`omitlabel'"' ///
+						if _omit_type`_model_ix' == "omit" & _n >= 3
+					replace c`i' = `"`emptylabel'"' ///
+						if _omit_type`_model_ix' == "empty" & _n >= 3
+					replace c`i' = `"`refcat'"' ///
+						if inlist(_omit_type`_model_ix', "", "mixed") ///
+						& real(c`i'z) == 0 ///
+						& (strtrim(c`=`i'+1') == "" | ///
+						strpos(lower(strtrim(c`=`i'+1')), "base") > 0) & _n >= 3
+				}
+				else if !`_from_matrix' {
+					replace c`i' = `"`refcat'"' if real(c`i'z) == 0 ///
+						& (strtrim(c`=`i'+1') == "" | ///
+						strpos(lower(strtrim(c`=`i'+1')), "base") > 0) & _n >= 3
+				}
+        * Constraint identity is structural, never the rendered label. The
+        * matrix route contains estimates only, even if an estimate's text
+        * equals refcat(), omitlabel(), or emptylabel().
+        gen str6 _constraint`_model_ix' = ""
+        if !`_from_matrix' {
+            if `_omit_ok' {
+                replace _constraint`_model_ix' = _omit_type`_model_ix' ///
+                    if inlist(_omit_type`_model_ix', "base", "omit", "empty") ///
+                    & _n >= 3
+            }
+            replace _constraint`_model_ix' = "base" ///
+                if _constraint`_model_ix' == "" & real(c`i'z) == 0 ///
+                & (strtrim(c`=`i'+1') == "" | ///
+                    strpos(lower(strtrim(c`=`i'+1')), "base") > 0) & _n >= 3
+        }
+		replace c`i' = c`i'z if c`i'z != "." & _n >= 3 ///
+			& !(_constraint`_model_ix' != "")
+		* Clear CI and p-value for constrained rows
+			replace c`=`i'+1' = "" ///
+				if (_constraint`_model_ix' != "") & _n >= 3
+			capture confirm variable c`=`i'+2'
+			if _rc == 0 replace c`=`i'+2' = "" ///
+				if (_constraint`_model_ix' != "") & _n >= 3
+			replace _eplot_est`_model_ix' = . ///
+				if (_constraint`_model_ix' != "") & _n >= 3
+			drop c`i'z
+		capture confirm variable c`=`i'+1'
+		if _rc == 0 replace c`=`i'+1' = "" if _n == 1
+		capture confirm variable c`=`i'+2'
+		if _rc == 0 replace c`=`i'+2' = "" if _n == 1
+	}
+	capture drop _raw_A
+	capture drop _omit_type*
+
+	* Normalize and reformat CI cells without changing numeric return values.
+	* Every interval arrives with the private delimiter between its bounds
+	* (the renderer's and the from() matrix's alike); it is split there, on
+	* numbers only, and joined with sep(), which enters the table only as
+	* the value of a variable stored from Mata (help tabtools##sep).
+	local _ci_sep_len = strlen("`_ci_tok'")
+	tempvar _ci_sepv
+	quietly generate strL `_ci_sepv' = ""
+	mata: st_sstore(., st_local("_ci_sepv"), J(st_nobs(), 1, st_local("sep")))
+	mata: st_local("_ci_fmt_type", strlen(st_local("sep")) + 250 > 2045 ? "strL" : "str" + strofreal(strlen(st_local("sep")) + 250))
+	forvalues i = 2(3)`n' {
+		capture confirm variable c`i'
+		if _rc == 0 {
+			replace c`i' = strtrim(c`i') if _n >= 3
+			quietly count if strpos(c`i', "( ") > 0 & _n >= 3
+			while r(N) > 0 {
+				replace c`i' = subinstr(c`i', "( ", "(", .) if _n >= 3
+				quietly count if strpos(c`i', "( ") > 0 & _n >= 3
+			}
+			tempvar _ci_raw _ci_body _ci_pos _ci_lo_s _ci_hi_s _ci_lo _ci_hi _ci_fmt
+			gen str244 `_ci_raw' = strtrim(c`i') if _n >= 3
+			gen str244 `_ci_body' = `_ci_raw'
+			replace `_ci_body' = substr(`_ci_body', 2, length(`_ci_body') - 2) ///
+				if length(`_ci_body') >= 2 & substr(`_ci_body', 1, 1) == "(" ///
+				& substr(`_ci_body', length(`_ci_body'), 1) == ")"
+			gen int `_ci_pos' = strpos(`_ci_body', "`_ci_tok'")
+			gen str122 `_ci_lo_s' = strtrim(substr(`_ci_body', 1, `_ci_pos' - 1)) if `_ci_pos' > 0
+			gen str122 `_ci_hi_s' = strtrim(substr(`_ci_body', `_ci_pos' + `_ci_sep_len', .)) if `_ci_pos' > 0
+			replace `_ci_lo_s' = subinstr(`_ci_lo_s', ",", "", .)
+			replace `_ci_hi_s' = subinstr(`_ci_hi_s', ",", "", .)
+				destring `_ci_lo_s', gen(`_ci_lo') force
+				destring `_ci_hi_s', gen(`_ci_hi') force
+				local _model_ix = (`i' + 1) / 3
+				capture confirm variable _eplot_ll`_model_ix'
+				if _rc gen double _eplot_ll`_model_ix' = .
+				capture confirm variable _eplot_ul`_model_ix'
+				if _rc gen double _eplot_ul`_model_ix' = .
+				replace _eplot_ll`_model_ix' = `_ci_lo' ///
+					if _n >= 3 & `_ci_lo' < . & missing(_eplot_ll`_model_ix')
+				replace _eplot_ul`_model_ix' = `_ci_hi' ///
+					if _n >= 3 & `_ci_hi' < . & missing(_eplot_ul`_model_ix')
+				gen `_ci_fmt_type' `_ci_fmt' = ""
+			* A bound takes the estimate's rounding, round(), so one value prints
+			* alike in both cells: string() alone rounds an exact binary tie
+			* (2.25 at one decimal) to even where the estimate rounds it up. A
+			* bound that rounds to zero keeps its own text (-0.00 stays -0.00).
+			replace `_ci_fmt' = "(" + strtrim(ustrregexra(string(cond(round(`_ci_lo', `coef_round') == 0, `_ci_lo', round(`_ci_lo', `coef_round')), "`coef_fmt'"), "-(?=[0.,]+\z)", "")) + `_ci_sepv' + ///
+				strtrim(ustrregexra(string(cond(round(`_ci_hi', `coef_round') == 0, `_ci_hi', round(`_ci_hi', `coef_round')), "`coef_fmt'"), "-(?=[0.,]+\z)", "")) + ")" ///
+				if `_ci_lo' < . & `_ci_hi' < . & _n >= 3
+			* an interval with a bound that is not a number keeps its bounds
+			* as rendered, joined by sep()
+			replace `_ci_fmt' = "(" + `_ci_lo_s' + `_ci_sepv' + `_ci_hi_s' + ")" ///
+				if `_ci_fmt' == "" & `_ci_pos' > 0 & _n >= 3
+			replace c`i' = `_ci_fmt' if `_ci_fmt' != "" & _n >= 3
+			drop `_ci_raw' `_ci_body' `_ci_pos' `_ci_lo_s' `_ci_hi_s' `_ci_lo' `_ci_hi' `_ci_fmt'
+		}
+	}
+	drop `_ci_sepv'
+
+	* Format p-values
+	forvalues i = 3(3)`n' {
+		* Store original string value to detect genuinely missing p-values
+		gen str20 c`i'_orig = c`i'
+			* Convert to numeric - force will set non-numeric to missing
+			destring c`i', gen(c`i'z) force
+			local _model_ix = `i' / 3
+			capture confirm variable _eplot_p`_model_ix'
+			if _rc gen double _eplot_p`_model_ix' = .
+			replace _eplot_p`_model_ix' = c`i'z ///
+				if _n >= 3 & c`i'z < . & missing(_eplot_p`_model_ix')
+			gen str20 c`i'_fmt = ""
+		* Handle genuinely missing p-values
+		replace c`i'_fmt = "" if missing(c`i'z) & (strtrim(c`i'_orig) == "." | strtrim(c`i'_orig) == "")
+		* Format p-values using pdp/highpdp
+		local _pmin = 10^(-`pdp')
+		local _pmax = 1 - 10^(-`highpdp')
+		local _pfmt_lo = "%`=`pdp'+2'.`pdp'f"
+		local _pfmt_hi = "%`=`highpdp'+2'.`highpdp'f"
+		replace c`i'_fmt = "<" + ustrregexra(string(`_pmin', "`_pfmt_lo'"), "-(?=[0.,]+\z)", "") if c`i'z < `_pmin' & !missing(c`i'z)
+		replace c`i'_fmt = ustrregexra(string(c`i'z, "`_pfmt_lo'"), "-(?=[0.,]+\z)", "") if c`i'z >= `_pmin' & c`i'z < 0.10 & !missing(c`i'z)
+		replace c`i'_fmt = ustrregexra(string(c`i'z, "`_pfmt_hi'"), "-(?=[0.,]+\z)", "") if c`i'z >= 0.10 & !missing(c`i'z)
+		replace c`i'_fmt = ">" + ustrregexra(string(`_pmax', "`_pfmt_hi'"), "-(?=[0.,]+\z)", "") if c`i'z > `_pmax' & c`i'z < 1 & !missing(c`i'z)
+		replace c`i'_fmt = "<" + ustrregexra(string(`_pmin', "`_pfmt_lo'"), "-(?=[0.,]+\z)", "") if c`i'z == 0 & !missing(c`i'z)
+		* Add leading zero if missing (e.g., .123 -> 0.123)
+		replace c`i'_fmt = "0" + c`i'_fmt if substr(c`i'_fmt, 1, 1) == "."
+		* Apply formatting - only if we have a non-missing formatted value
+		replace c`i' = c`i'_fmt if c`i'_fmt != "" & _n >= 3
+		* Leave blank for missing p-values
+		replace c`i' = "" if missing(c`i'z) & _n >= 3
+			drop c`i'z c`i'_fmt c`i'_orig
+		}
+
+		if `"`_eplotframe_name'"' != "" {
+			capture frame `_eplotframe_name': quietly count
+			if _rc == 0 {
+				if `_eplotframe_replace' {
+					frame drop `_eplotframe_name'
+				}
+				else {
+					noisily display as error "frame `_eplotframe_name' already exists; specify eplotframe(`_eplotframe_name', replace)"
+					exit 110
+				}
+			}
+			frame create `_eplotframe_name' str244 label double estimate double ll double ul ///
+				double pvalue int model str244 model_label str24 rowtype str244 section ///
+				long source_row str32 source_frame
+			forvalues _ep_obs = 3/`=_N' {
+				local _ep_source_row = `_ep_obs' - 2
+				mata: st_local("_ep_label", st_sdata(`_ep_obs', "A"))
+				forvalues _ep_m = 1/`_n_models' {
+					local _ep_est = .
+					local _ep_ll = .
+					local _ep_ul = .
+					local _ep_p = .
+					* stata-dev-ignore: capture-rc — a missing _eplot column leaves the preset missing value, no rc to act on
+					capture local _ep_est = regexr(ustrregexra(string(_eplot_est`_ep_m'[`_ep_obs'], "%21x"), "-(?=[0.,]+\z)", ""), "^[+]", "")
+					* stata-dev-ignore: capture-rc — a missing _eplot column leaves the preset missing value, no rc to act on
+					capture local _ep_ll = regexr(ustrregexra(string(_eplot_ll`_ep_m'[`_ep_obs'], "%21x"), "-(?=[0.,]+\z)", ""), "^[+]", "")
+					* stata-dev-ignore: capture-rc — a missing _eplot column leaves the preset missing value, no rc to act on
+					capture local _ep_ul = regexr(ustrregexra(string(_eplot_ul`_ep_m'[`_ep_obs'], "%21x"), "-(?=[0.,]+\z)", ""), "^[+]", "")
+					* stata-dev-ignore: capture-rc — a missing _eplot column leaves the preset missing value, no rc to act on
+					capture local _ep_p = regexr(ustrregexra(string(_eplot_p`_ep_m'[`_ep_obs'], "%21x"), "-(?=[0.,]+\z)", ""), "^[+]", "")
+					local _ep_model_col = (`_ep_m' - 1) * 3 + 1
+					mata: st_local("_ep_model_label", st_sdata(1, "c`_ep_model_col'"))
+					if `"`macval(_ep_model_label)'"' == "" local _ep_model_label "Model `_ep_m'"
+					local _ep_cell = strtrim(c`_ep_model_col'[`_ep_obs'])
+					local _ep_rowtype "effect"
+					if _constraint`_ep_m'[`_ep_obs'] == "base" local _ep_rowtype "reference"
+					if `_ep_est' < . | `_ep_ll' < . | `_ep_ul' < . | `_ep_p' < . | `"`_ep_rowtype'"' == "reference" {
+						* C1 (codex audit 2026-09-26): the row and model labels are stored
+						* in Mata after the post, so they are never expanded as macros.
+						frame post `_eplotframe_name' ("") (`_ep_est') (`_ep_ll') (`_ep_ul') ///
+							(`_ep_p') (`_ep_m') ("") (`"`_ep_rowtype'"') ("") ///
+							(`_ep_source_row') ("")
+						mata: st_local("_ep_section", st_sdata(`_ep_obs', "_eplot_sec"))
+						frame `_eplotframe_name' {
+						    mata: st_sstore(st_nobs(), "label", st_local("_ep_label"))
+						    mata: st_sstore(st_nobs(), "model_label", st_local("_ep_model_label"))
+						    mata: st_sstore(st_nobs(), "section", st_local("_ep_section"))
+						}
+					}
+			}
+				}
+			frame `_eplotframe_name': char _dta[tabtools_source] "effecttab"
+			frame `_eplotframe_name': mata: st_global("_dta[tabtools_companion_id]", st_local("_companion_id"))
+			frame `_eplotframe_name': char _dta[tabtools_ci_level] "`_ci_level'"
+			frame `_eplotframe_name': char _dta[tabtools_n_models] "`_n_models'"
+			frame `_eplotframe_name': char _dta[tabtools_statistic_ids] "estimate ci pvalue"
+				forvalues _meta_m = 1/`_n_models' {
+					local _meta_id `"`collect_cmdline_`_meta_m''"'
+					if `_from_matrix' local _meta_id "matrix:`from':`_meta_m'"
+					local _meta_label_col = (`_meta_m' - 1) * 3 + 1
+					mata: st_local("_meta_label", st_sdata(1, "c`_meta_label_col'"))
+					frame `_eplotframe_name': char _dta[tabtools_model_id_`_meta_m'] `"`_meta_id'"'
+					frame `_eplotframe_name': char _dta[tabtools_outcome_id_`_meta_m'] ""
+					frame `_eplotframe_name': char _dta[tabtools_effect_scale_`_meta_m'] `"`effect'"'
+					frame `_eplotframe_name': mata: st_global("_dta[tabtools_model_label_`_meta_m']", st_local("_meta_label"))
+			}
+		}
+		capture drop _eplot_est* _eplot_ll* _eplot_ul* _eplot_p* _eplot_sec
+
+	* =========================================================================
+	* ADD CUSTOM ROWS (addrow option)
+	* =========================================================================
+	if `"`addrow'"' != "" {
+		local _ar_rest `"`addrow'"'
+		while `"`_ar_rest'"' != "" {
+			local _bs_pos = strpos(`"`_ar_rest'"', "\")
+			if `_bs_pos' > 0 {
+				local _ar_chunk = substr(`"`_ar_rest'"', 1, `_bs_pos' - 1)
+				local _ar_rest = substr(`"`_ar_rest'"', `_bs_pos' + 1, .)
+			}
+			else {
+				local _ar_chunk `"`_ar_rest'"'
+				local _ar_rest ""
+			}
+			local _ar_chunk = strtrim(`"`_ar_chunk'"')
+			if `"`_ar_chunk'"' == "" continue
+
+			gettoken _ar_label _ar_vals : _ar_chunk
+			_tabtools_strip_outer_quotes, text(`"`_ar_label'"')
+			local _ar_label `"`r(text)'"'
+
+			local curr_n = _N
+			set obs `=`curr_n'+1'
+			replace A = `"`_ar_label'"' in `=`curr_n'+1'
+
+			local _ar_m = 0
+			local _ar_vals = strtrim(`"`_ar_vals'"')
+			while `"`_ar_vals'"' != "" {
+				gettoken _ar_v _ar_vals : _ar_vals
+				local _ar_m = `_ar_m' + 1
+				local col = (`_ar_m' - 1) * 3 + 1
+				if `col' <= `n' {
+					replace c`col' = `"`_ar_v'"' in `=`curr_n'+1'
+				}
+			}
+		}
+	}
+
+	* =========================================================================
+	* EXPORT TO EXCEL
+	* =========================================================================
+
+	* Add title row
+	gen id = _n
+	count
+	local count `=`r(N)'+1'
+	set obs `count'
+	replace id = 0 if id == .
+	sort id
+	drop id
+	gen title = ""
+	order title
+	replace title = `"`macval(title)'"' if _n == 1
+
+	* Track Reference/Omitted/Empty rows for merged cell formatting (after the
+	* title row is added) PER MODEL, keyed by the model's first c-column. A
+	* union across models merged and blanked the estimate/CI/p triplet of any
+	* model with a real result on a row another model treats as its reference.
+	forvalues i = 1(3)`last' {
+		gen ref`i' = _n ///
+			if _constraint`=(`i'+2)/3' != ""
+		levelsof ref`i', local(ref_rows_`i')
+		drop ref`i'
+	}
+
+	capture drop _constraint*
+	local num_rows = _N
+	local num_cols = c(k)
+	local _xlsx_ok 0
+
+	* Build methods description (I2)
+	local _methods ""
+	if `_from_matrix' {
+		local _methods "Effect estimates were formatted from the supplied matrix with `_ci_level'% confidence intervals and p-values."
+	}
+	else if `_n_models' > 1 {
+		local _methods "Effect estimates from multiple collected models were formatted with `_ci_level'% confidence intervals."
+	}
+	else if "`type'" == "teffects" {
+		if `_n_models' == 1 {
+			* The estimator comes from the collection's own command line only.
+			* When that is absent or unparseable the description stays
+			* generic: the active e() may belong to an unrelated later fit.
+			local _te_subcmd ""
+			if `"`collect_cmdline_1'"' != "" {
+				* stata-dev-ignore: identity-fold — folds an executed teffects command line only to pick a descriptive sentence; the result is never stored or compared as an identity
+				if regexm(lower(`"`collect_cmdline_1'"'), "^teffects[ ]+([a-z0-9_]+)") {
+					local _te_subcmd = regexs(1)
+				}
+			}
+			* The estimand is the collected e(stat) of that fit, never the
+			* active e(). A collection without it names no estimand.
+			local _te_est "Treatment effects"
+			if "`collect_stat_1'" == "ate" local _te_est "Average treatment effects"
+			else if "`collect_stat_1'" == "atet" local _te_est "Average treatment effects on the treated"
+			else if "`collect_stat_1'" == "pomeans" local _te_est "Potential-outcome means"
+			if "`_te_subcmd'" == "ipw" local _methods "`_te_est' estimated using inverse probability weighting"
+			else if "`_te_subcmd'" == "ra" local _methods "`_te_est' estimated using regression adjustment"
+			else if "`_te_subcmd'" == "aipw" local _methods "`_te_est' estimated using augmented inverse probability weighting"
+			else if "`_te_subcmd'" == "ipwra" local _methods "`_te_est' estimated using inverse probability weighted regression adjustment"
+			else if "`_te_subcmd'" == "psmatch" local _methods "`_te_est' estimated using propensity score matching"
+			else if "`_te_subcmd'" == "nnmatch" local _methods "`_te_est' estimated using nearest-neighbor matching"
+			else local _methods "`_te_est' estimated using teffects"
+			local _methods "`_methods' with `_ci_level'% confidence intervals."
+		}
+	}
+	else {
+		local _methods "Marginal effects estimated using the margins command with `_ci_level'% confidence intervals."
+	}
+	local _methods "`_methods' Analysis performed in Stata `c(stata_version)' (StataCorp, College Station, TX)."
+
+	* Return statistics before any file-writing failure can abort the command
+	if `_mat_nrows' > 0 {
+		return matrix table = `_rtable'
+	}
+	return scalar N_rows = `num_rows'
+	return scalar N_cols = `num_cols'
+		return scalar ci_level = `_ci_level_num'
+		return local effect_label "`effect'"
+		return local type "`type'"
+		return local methods "`_methods'"
+		if `"`_eplotframe_name'"' != "" return local eplotframe "`_eplotframe_name'"
+
+		if `_has_xlsx' {
+			capture noisily _tabtools_xlsx_write using "`xlsx'", sheet(`"`macval(sheet)'"') book(`_xlsx_book')
+			if _rc {
+				local _export_rc = _rc
+				noisily display as error `"Failed to export to `xlsx', sheet `macval(sheet)'"'
+			capture erase "`temp_xlsx'"
+			restore
+			error `_export_rc'
+		}
+	}
+
+	* =========================================================================
+	* CALCULATE COLUMN WIDTHS
+	* =========================================================================
+
+	* Widths come from the shared _tabtools_colwidth helper, PER MODEL, from
+	* that model's own rendered cells (rows 3+, so the row-3 statistic header
+	* such as "Pr(CV Event)" always fits). A single max shared across models
+	* sized every model's estimate/CI/p column to the widest model. The model
+	* label in row 2 is merged across its own block, so its wrap depth comes
+	* from that block's width, not from the whole table.
+	local headerheight = 1
+	forvalues _mw = 1/`_n_models' {
+		local _c_est = (`_mw' - 1) * 3 + 1
+		_tabtools_colwidth c`_c_est', minwidth(8) maxwidth(22) headerrow(2)
+		local _est_width_`_mw' = r(width)
+		local _m_hdr_len = r(hlen)
+		_tabtools_colwidth c`=`_c_est' + 1', minwidth(16) maxwidth(34)
+		local _ci_width_`_mw' = r(width)
+		_tabtools_colwidth c`=`_c_est' + 2', minwidth(8) maxwidth(12)
+		local _p_width_`_mw' = r(width)
+		local _m_block_width = `_est_width_`_mw'' + `_ci_width_`_mw'' + `_p_width_`_mw''
+		_tabtools_colwidth, hlength(`_m_hdr_len') blockwidth(`_m_block_width')
+		if r(hlines) > `headerheight' local headerheight = r(hlines)
+	}
+
+	gen A_length = length(A)
+	egen factor_length = max(A_length)
+	sum factor_length, d
+	local factor_length = ceil(r(max) * 0.95) + 2
+	* Include effect label length in factor_length calculation
+	local _effect_len = strlen(`"`effect'"')
+	if ceil(`_effect_len' * 0.85) + 2 > `factor_length' {
+	    local factor_length = ceil(`_effect_len' * 0.85) + 2
+	}
+	if `factor_length' > `_label_width_cap' local factor_length = `_label_width_cap'
+
+	drop A_length factor_length
+
+	* CSV export (F2) — must happen before clear
+	if "`csv'" != "" {
+		_tabtools_csv_write using "`csv'", labelvar(A) reservedrow ///
+			title(`"`macval(title)'"') footnote(`"`macval(footnote)'"')
+	}
+
+	* Console display. Row 2 is the model-name row and is entirely empty when
+	* models() was not supplied; displaying it produced a blank boxed row above
+	* the statistic labels. Start the display at row 3 in that case.
+	local _console_hdr = 2
+	if _N >= 2 {
+		local _hdr2_filled = 0
+		forvalues _hc = 1/`n' {
+			capture confirm variable c`_hc'
+			if !_rc {
+				if strtrim(c`_hc'[2]) != "" local _hdr2_filled = 1
+			}
+		}
+		if !`_hdr2_filled' local _console_hdr = 3
+	}
+	noisily _tabtools_console_display `n' `"`macval(title)'"', labelvar(A) headerstart(`_console_hdr')
+
+	* Markdown export
+	local _ret_markdown ""
+	local _ret_markdown_rows .
+	local _ret_markdown_cols .
+	if `"`markdown'"' != "" {
+		local _mdappend_opt ""
+		if "`mdappend'" != "" local _mdappend_opt "append"
+		* GFM allows one header row, but this table has two semantic header
+		* levels: row 2 carries the model names (blank when models() is not
+		* given) and row 3 the statistic labels. Writing row 2 alone produced a
+		* blank header with "Effect / 95% CI / p-value" as the first body row.
+		* Flatten both into row 3 and start the body at row 4. Snapshot first:
+		* the flatten must not reach frame() or the eplot frame.
+		tempfile _md_snapshot
+		quietly save `"`_md_snapshot'"', replace
+		local _md_nmodels = int(`n' / 3)
+		if _N >= 3 & `_md_nmodels' >= 1 {
+			forvalues _mdc = 1/`_md_nmodels' {
+				local _md_first = (`_mdc' - 1) * 3 + 1
+				* C1: the model name is used as a data expression, never through a
+				* macro holding its text.
+				local _md_name "strtrim(c`_md_first'[2])"
+				if strtrim(c`_md_first'[2]) != "" {
+					forvalues _md_off = 0/2 {
+						local _md_col = `_md_first' + `_md_off'
+						capture confirm variable c`_md_col'
+						if !_rc {
+							quietly replace c`_md_col' = ///
+								`_md_name' + ": " + strtrim(c`_md_col') ///
+								in 3 if strtrim(c`_md_col') != ""
+							quietly replace c`_md_col' = `_md_name' ///
+								in 3 if strtrim(c`_md_col') == ""
+						}
+					}
+				}
+			}
+		}
+		capture noisily _tabtools_markdown_write using `"`markdown'"', ///
+			`_mdappend_opt' labelvar(A) title(`"`macval(title)'"') footnote(`"`macval(footnote)'"') ///
+			headerstart(3) datastart(4) strictheaders
+		if _rc {
+			local _md_rc = _rc
+			noisily display as error "Failed to export Markdown to `markdown'"
+			restore
+			exit `_md_rc'
+		}
+		local _ret_markdown `"`markdown'"'
+		local _ret_markdown_rows = r(n_rows)
+		local _ret_markdown_cols = r(n_cols)
+		quietly use `"`_md_snapshot'"', clear
+		noisily display as text "Markdown exported to `markdown'"
+	}
+
+	* Store output in frame if requested
+	if `"`frame'"' != "" {
+		* frame(name, flat): one row per body line, rowlabel then one string
+		* variable per printed column labelled "Model, statistic".
+		local _flat_snapshot ""
+		if `_displayframe_flat' {
+			tempfile _flat_snapshot
+			quietly save `"`_flat_snapshot'"', replace
+			_tabtools_flatframe `n' 3
+		}
+		_tabtools_frame_put `"`frame'"'
+		local frame `"`_frame_name'"'
+		if `_displayframe_flat' {
+			quietly use `"`_flat_snapshot'"', clear
+			frame `frame': char _dta[tabtools_layout] "flat"
+		}
+		frame `frame': char _dta[tabtools_source] "effecttab"
+		frame `frame': mata: st_global("_dta[tabtools_companion_id]", st_local("_companion_id"))
+		frame `frame': char _dta[tabtools_ci_level] "`_ci_level'"
+		frame `frame': char _dta[tabtools_n_models] "`_n_models'"
+		frame `frame': char _dta[tabtools_statistic_ids] "estimate ci pvalue"
+			forvalues _meta_m = 1/`_n_models' {
+				local _meta_id `"`collect_cmdline_`_meta_m''"'
+				if `_from_matrix' local _meta_id "matrix:`from':`_meta_m'"
+				local _meta_label_col = (`_meta_m' - 1) * 3 + 1
+				mata: st_local("_meta_label", st_sdata(2, "c`_meta_label_col'"))
+				frame `frame': char _dta[tabtools_model_id_`_meta_m'] `"`_meta_id'"'
+				frame `frame': char _dta[tabtools_outcome_id_`_meta_m'] ""
+				frame `frame': char _dta[tabtools_effect_scale_`_meta_m'] `"`effect'"'
+				frame `frame': mata: st_global("_dta[tabtools_model_label_`_meta_m']", st_local("_meta_label"))
+		}
+			if `"`_eplotframe_name'"' != "" {
+				frame `frame': char _dta[tabtools_eplotframe] "`_eplotframe_target'"
+			}
+			return local frame "`frame'"
+		}
+		if `"$TABTOOLS_QA_EFFECT_STAGE_FAIL"' == "1" {
+			restore
+			error 459
+		}
+		if `"`_ret_markdown'"' != "" {
+		return local markdown `"`_ret_markdown'"'
+		return scalar markdown_rows = `_ret_markdown_rows'
+		return scalar markdown_cols = `_ret_markdown_cols'
+	}
+
+	if `_has_xlsx' {
+	* =========================================================================
+	* APPLY EXCEL FORMATTING (MATA)
+	* =========================================================================
+
+	* Pre-extract p-value data for conditional formatting
+	if `has_boldp' | `has_highlight' {
+		local _n_models = `n' / 3
+		forvalues _m = 1/`_n_models' {
+			forvalues _dr = 4/`num_rows' {
+				* stata-dev-ignore: capture-rc — _rc is consumed by the "if _rc" on the first statement after the closing brace
+				capture {
+					local _pstr = c`=`_m'*3'[`_dr']
+					local _pstr = strtrim("`_pstr'")
+					if substr("`_pstr'", 1, 1) == "<" {
+						local _bp_m`_m'_r`_dr' = 0
+					}
+					else {
+						local _bp_m`_m'_r`_dr' = real("`_pstr'")
+					}
+				}
+				if _rc local _bp_m`_m'_r`_dr' = .
+			}
+		}
+	}
+
+		* stata-dev-ignore: capture-rc — _rc is consumed by the "if _rc" on the first statement after the closing brace
+		capture {
+			local _hborder_code = 1
+			if "`_hborder'" == "medium" local _hborder_code = 2
+			if "`_hborder'" == "thick" local _hborder_code = 3
+			if "`_hborder'" == "none" local _hborder_code = 4
+			local _vborder_code = 1
+			if "`borderstyle'" == "medium" local _vborder_code = 2
+			if "`borderstyle'" == "thick" local _vborder_code = 3
+			if "`borderstyle'" == "none" local _vborder_code = 4
+
+			tempname _style_rules
+			local _style_rule_rows ""
+			local _style_rule_rows `"`_style_rule_rows' | 12, 1, 1, 1, 1, 30, 0, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 13, 1, 1, 1, 1, 1, 0, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 13, 1, 1, 2, 2, `factor_length', 0, 0, 0"'
+			* Excel column of c<k> is k + 2 (column 1 is the spacer, 2 the label)
+			forvalues _mc = 1/`_n_models' {
+				local _x_est = (`_mc' - 1) * 3 + 3
+				local _style_rule_rows `"`_style_rule_rows' | 13, 1, 1, `_x_est', `_x_est', `_est_width_`_mc'', 0, 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 13, 1, 1, `=`_x_est' + 1', `=`_x_est' + 1', `_ci_width_`_mc'', 0, 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 13, 1, 1, `=`_x_est' + 2', `=`_x_est' + 2', `_p_width_`_mc'', 0, 0, 0"'
+			}
+			if `headerheight' > 1 {
+				local _style_rule_rows `"`_style_rule_rows' | 12, 2, 2, 1, 1, `=`headerheight'*15', 0, 0, 0"'
+			}
+			* Wrap the label column -- and only the label column -- so labels
+			* exceeding the capped width flow onto extra lines instead of being
+			* clipped. Top-align the whole body row, not just the label: with the
+			* rule on column B alone, estimate/CI/p cells kept Excel's bottom
+			* alignment and sat on the last line of a wrapped label.
+			if `num_rows' >= 4 {
+				local _style_rule_rows `"`_style_rule_rows' | 4, 4, `num_rows', 2, 2, 0, 1, 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 6, 4, `num_rows', 2, `num_cols', 0, 3, 0, 0"'
+			}
+
+			local _style_rule_rows `"`_style_rule_rows' | 1, 1, `num_rows', 1, `num_cols', `_fontsize', 1, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 1, 1, 1, 1, `num_cols', `=`_fontsize'+2', 1, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 14, 1, 1, 1, `num_cols', 0, 0, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 4, 1, 1, 1, 1, 0, 1, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 5, 1, 1, 1, 1, 0, 1, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 6, 1, 1, 1, 1, 0, 2, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 2, 1, 1, 1, 1, 0, 1, 0, 0"'
+			if "`headershade'" != "" {
+				local _style_rule_rows `"`_style_rule_rows' | 7, 2, 3, 2, `num_cols', 0, -1, 0, 0"'
+			}
+			local _style_rule_rows `"`_style_rule_rows' | 2, 3, 3, 2, `num_cols', 0, 1, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 5, 3, 3, 2, `num_cols', 0, 2, 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 6, 3, 3, 2, `num_cols', 0, 2, 0, 0"'
+
+			* Merge the estimate/CI/p triplet only in the model block that holds
+			* the Reference/Omitted/Empty label on that row. Excel column of c<k>
+			* is k + 2.
+			forvalues i = 1(3)`last' {
+				local col_num = `i' + 2
+				local _col_end = `col_num' + 2
+				foreach row of local ref_rows_`i' {
+					local _style_rule_rows `"`_style_rule_rows' | 14, `row', `row', `col_num', `_col_end', 0, 0, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 5, `row', `row', `col_num', `col_num', 0, 2, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 6, `row', `row', `col_num', `col_num', 0, 2, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 3, `row', `row', `col_num', `col_num', 0, 1, 0, 0"'
+				}
+			}
+
+			local col_num = 3
+			while `col_num' <= `n' {
+				local _col_end = `col_num' + 2
+				local _style_rule_rows `"`_style_rule_rows' | 14, 2, 2, `col_num', `_col_end', 0, 0, 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 5, 2, 2, `col_num', `col_num', 0, 2, 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 6, 2, 2, `col_num', `col_num', 0, 2, 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 2, 2, 2, `col_num', `col_num', 0, 1, 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 4, 2, 2, `col_num', `col_num', 0, 1, 0, 0"'
+				if "`borderstyle'" != "academic" {
+					local _style_rule_rows `"`_style_rule_rows' | 11, 2, `num_rows', `_col_end', `_col_end', 0, `_vborder_code', 0, 0"'
+				}
+				local col_num = `col_num' + 3
+			}
+
+			local _style_rule_rows `"`_style_rule_rows' | 8, 2, 2, 2, `num_cols', 0, `_hborder_code', 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 8, 3, 3, 3, `num_cols', 0, `_hborder_code', 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 9, 3, 3, 2, `num_cols', 0, `_hborder_code', 0, 0"'
+			local _style_rule_rows `"`_style_rule_rows' | 9, `num_rows', `num_rows', 2, `num_cols', 0, `_hborder_code', 0, 0"'
+			if "`borderstyle'" != "academic" {
+				local _style_rule_rows `"`_style_rule_rows' | 11, 2, `num_rows', `num_cols', `num_cols', 0, `_vborder_code', 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 10, 2, `num_rows', 2, 2, 0, `_vborder_code', 0, 0"'
+				local _style_rule_rows `"`_style_rule_rows' | 11, 2, `num_rows', 2, 2, 0, `_vborder_code', 0, 0"'
+			}
+			if "`zebra'" != "" {
+				forvalues _zr = 5(2)`num_rows' {
+					local _style_rule_rows `"`_style_rule_rows' | 7, `_zr', `_zr', 2, `num_cols', 0, -2, 0, 0"'
+				}
+			}
+			if `num_rows' >= 4 {
+				local _style_rule_rows `"`_style_rule_rows' | 5, 4, `num_rows', 3, `num_cols', 0, 2, 0, 0"'
+			}
+			if `has_boldp' | `has_highlight' {
+				forvalues _m = 1/`_n_models' {
+					local _pcol = 2 + `_m' * 3
+					forvalues _dr = 4/`num_rows' {
+						local _pnum = `_bp_m`_m'_r`_dr''
+						if `_pnum' < . {
+							if `has_boldp' & `_pnum' < `boldp' {
+								local _style_rule_rows `"`_style_rule_rows' | 2, `_dr', `_dr', `_pcol', `_pcol', 0, 1, 0, 0"'
+							}
+							if `has_highlight' & `_pnum' < `highlight' {
+								local _style_rule_rows `"`_style_rule_rows' | 7, `_dr', `_dr', 2, `num_cols', 0, -3, 0, 0"'
+							}
+						}
+					}
+				}
+			}
+			if `"`macval(footnote)'"' != "" {
+				* The token space-backslash-space separates footnote paragraphs:
+				* one merged, wrapped row per paragraph, as the shared CSV and
+				* Markdown writers do, with the same text.
+				local _fn_fontsize = max(`_fontsize' - 2, 6)
+				local _fn_rest : copy local footnote
+				local _fn_k = 0
+				local _fn_more = 1
+				while `_fn_more' {
+					mata: st_local("_fn_pos", strofreal(strpos(st_local("_fn_rest"), " " + char(92) + " ")))
+					if `_fn_pos' == 0 {
+						mata: st_local("_fn_piece", strtrim(st_local("_fn_rest")))
+						local _fn_more = 0
+					}
+					else {
+						mata: st_local("_fn_piece", strtrim(substr(st_local("_fn_rest"), 1, `_fn_pos' - 1)))
+						mata: st_local("_fn_rest", substr(st_local("_fn_rest"), `_fn_pos' + 3, .))
+					}
+					mata: st_local("_fn_empty", strofreal(strtrim(st_local("_fn_piece")) == ""))
+					if `_fn_empty' continue
+					local ++_fn_k
+					local _fn_row = `num_rows' + `_fn_k'
+					mata: `_xlsx_book'.put_string(`_fn_row', 2, st_local("_fn_piece"))
+					local _style_rule_rows `"`_style_rule_rows' | 14, `_fn_row', `_fn_row', 2, `num_cols', 0, 0, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 5, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 6, `_fn_row', `_fn_row', 2, 2, 0, 2, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 4, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 1, `_fn_row', `_fn_row', 2, 2, `_fn_fontsize', 1, 0, 0"'
+					local _style_rule_rows `"`_style_rule_rows' | 3, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0"'
+				}
+			}
+
+			_tabtools_xlsx_build_styles, matrix(`_style_rules') ///
+				rules(`"`_style_rule_rows'"') cols(9)
+			_tabtools_xlsx_apply_styles, defer book(`_xlsx_book') sheet(`"`macval(sheet)'"') ///
+				rules(`_style_rules') font("`_font'") ///
+				color1("`_headercolor'") color2("`_zebracolor'") ///
+				color3("255 255 204")
+			mata: `_xlsx_book'.close_book()
+
+			* xl() appends a style record for every styled cell instead of
+			* reusing one per distinct format, so collapse the pools here;
+			* a workbook that keeps growing would otherwise reach Stata's
+			* 65,536-record ceiling and fail with r(16147).
+			_tabtools_xlsx_compact_styles using "`xlsx'"
+		}
+	if _rc {
+		local saved_rc = _rc
+		* stata-dev-ignore: capture-rc — error-path cleanup; the original rc is saved in saved_rc above
+		capture mata: `_xlsx_book'.close_book()
+		capture mata: mata drop `_xlsx_book'
+		noisily display as error "Excel formatting failed with error `saved_rc'"
+		capture erase "`temp_xlsx'"
+		restore
+		error `saved_rc'
+	}
+	capture mata: mata drop `_xlsx_book'
+
+	} // end if _has_xlsx (Excel formatting)
+
+	* Clean up temporary file
+	capture erase "`temp_xlsx'"
+
+	clear
+	restore
+
+	* Console confirmation (O1)
+	if `_has_xlsx' {
+		* QA-only hook to exercise the final missing-workbook guard.
+		local _qa_erase_xlsx "$TABTOOLS_QA_EFF_ERASE_XLSX"
+		if `"`_qa_erase_xlsx'"' == `"`xlsx'"' {
+			capture erase "`xlsx'"
+		}
+		capture confirm file "`xlsx'"
+		if _rc {
+			noisily display as error "Export command succeeded but file not found"
+			exit 601
+		}
+		else {
+			local _xlsx_ok 1
+			noisily _tabtools_export_done using `"`xlsx'"', sheet(`"`macval(sheet)'"')
+		}
+	}
+	if `_xlsx_ok' {
+		return local xlsx "`xlsx'"
+		return local sheet `"`macval(sheet)'"'
+	}
+
+		* Open file if requested (W3)
+		if `_xlsx_ok' & "`open'" != "" _tabtools_open_file "`xlsx'"
+
+		* Commit staged frames only after all requested file outputs succeeded.
+		if `"`_eplotframe_build'"' != "" {
+			capture confirm frame `_eplotframe_target'
+			if !_rc frame drop `_eplotframe_target'
+			frame rename `_eplotframe_build' `_eplotframe_target'
+			local _eplotframe_build ""
+			return local eplotframe "`_eplotframe_target'"
+		}
+		if `"`_displayframe_build'"' != "" {
+			capture confirm frame `_displayframe_target'
+			if !_rc frame drop `_displayframe_target'
+			frame rename `_displayframe_build' `_displayframe_target'
+			local _displayframe_build ""
+			local frame `"`_displayframe_target'"'
+			return local frame "`_displayframe_target'"
+		}
+	}
+
+		} // end capture noisily
+		local _rc = _rc
+		if `_rc' {
+			if `"`_displayframe_build'"' != "" capture frame drop `_displayframe_build'
+			if `"`_eplotframe_build'"' != "" capture frame drop `_eplotframe_build'
+		}
+	set varabbrev `_orig_varabbrev'
+	if `_rc' exit `_rc'
+end
+*

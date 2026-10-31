@@ -42,6 +42,10 @@ cumulative incidence after {help finegray}
 {synopt :{opt l:evel(#)}}set confidence level; default is {cmd:c(level)}{p_end}
 {synopt :{opt sav:ing(filename[, replace])}}save the numeric estimates{p_end}
 {synopt :{opt nograph}}suppress the graph{p_end}
+{synopt :{opt plotop:ts(line_options)}}style every CIF line{p_end}
+{synopt :{opt plot#opts(line_options)}}style the line of curve {it:#}{p_end}
+{synopt :{opt ciop:ts(area_options)}}style every confidence band; requires {opt ci}{p_end}
+{synopt :{opt ci#opts(area_options)}}style the band of curve {it:#}; requires {opt ci}{p_end}
 {synopt :{it:twoway_options}}any options documented in {help twoway_options}{p_end}
 {synoptline}
 {p 4 6 2}{cmd:finegray_cif} is for use after {helpb finegray}; see
@@ -64,14 +68,24 @@ most 401 points when the baseline is dense; use {opt timepoints()} for an exact
 grid. With {opt attime()} it reports the CIF at specific horizons
 instead. {opt over(varname)} draws one curve per level of a model variable or
 baseline stratum; see {help finegray_cif##over:Overlaid curves}. The covariate profile is always
-reported in an {cmd:at:} line and graph note. The curve extends to the end of
-follow-up, and times outside the support are flagged. See
+reported in an {cmd:at:} line above the results and in {cmd:r(at)}; the graph
+carries no note unless you add one with {cmd:note()}. The curve extends to the end of
+follow-up when its grid reaches the last cause-event time (the CIF is flat past
+it), and times outside the support are flagged. See
 {help finegray_methods##cif:Cumulative incidence}.
 
-{pstd}
-The command requires the unchanged {cmd:stset} estimation data. A converged fit
-is required ({cmd:r(430)} otherwise). Not available after a fit on {cmd:mi}
-data ({cmd:r(301)}); see {help finegray##mi:Multiple imputation}.
+{pstd} The command requires the unchanged {cmd:stset} estimation data: it
+checks every original estimation record in full, so a change to the data,
+including a permutation of one variable's values across observations, is
+{cmd:r(459)}
+({cmd:the estimation data no longer reproduce the fitted observation tuples}). Estimates
+saved by finegray 1.3.7 or earlier carry no {cmd:e(rowsig)}, so every form of
+{cmd:finegray_cif}, including a point CIF with {opt at()} and a baseline
+posted by {opt basehaz}, is {cmd:r(301)}
+({cmd:this fit predates joint-row estimation-data identity checks}); refit
+with {cmd:finegray}. A converged fit is required ({cmd:r(430)} otherwise). Not
+available after a fit on {cmd:mi} data ({cmd:r(301)}); see
+{help finegray##mi:Multiple imputation}.
 
 {marker options}{...}
 {title:Options}
@@ -140,8 +154,10 @@ for {opt bstratum()}, and the two may not be combined.
 {pmore}
 With {opt attime()} one table is printed per curve; otherwise the curves are
 overlaid on one graph, each confidence band (with {opt ci}) shaded in its own
-curve's color, with a legend entry per level (the value label where one is
-defined). {cmd:r(table)} gains a sixth column, {cmd:over}, holding each row's level, {cmd:r(at)}
+curve's color, with a legend entry per level: the level's value label alone
+where one is defined, otherwise {it:varname} {cmd:=} {it:level}. A value label is drawn and printed exactly as written: {cmd:$},
+backquotes, braces and double quotes in it are text, not macro or SMCL
+syntax. {cmd:r(table)} gains a sixth column, {cmd:over}, holding each row's level, {cmd:r(at)}
 has one row per curve, and the {opt saving()} dataset gains an {cmd:over} variable
 carrying the source variable's value label; {cmd:r(over)} and {cmd:r(levels)} name the
 variable and the levels drawn. With {opt bootstrap()} the replications are shared
@@ -156,22 +172,38 @@ counts when they differ.
 {opt timepoints()}. Horizons are used exactly as typed, to full double
 precision: the CIF is a step function, so a horizon at a cause-event time
 includes that event and one an ulp before it does not. Repeated horizons are
-collapsed to one row; horizons that differ in any digit are separate rows.
+collapsed to one row; horizons that differ in any digit are separate rows. A
+range ({cmd:1(1)5}, {cmd:1/5}, {cmd:1 2 to 5}) is expanded by {cmd:numlist},
+which may round a range's endpoints and step: any range endpoint or step that
+{cmd:numlist} would round is {cmd:r(198)}
+({cmd:list that range's analysis times one by one instead}).
+{bf:Float time variables.} A time variable stored as {cmd:float} holds the
+float rounding of each time, so an event displayed as {cmd:.939} is stored as
+.93900001049..., and {cmd:attime(.939)}, used as typed, lies just below it and
+excludes it. A note names such horizons and prints the stored time, and says
+the time variable is a float only when it is one; type that value, or {cmd:recast double} and round the time variable before {cmd:stset},
+to include the event. The support notes print event times in as many digits
+as it takes to read back as the stored value.
 
 {phang}
 {opt timepoints(numlist)} evaluates the curve at the specified times rather than
 at the distinct cause-event times of the fitted baseline. May not be combined
 with {opt attime()}: both name the times the CIF is evaluated at, and
 {opt attime()} additionally selects table output over a plotted curve, so the
-combination is refused rather than resolved silently. Unlike the default grid,
+combination is refused. Unlike the default grid,
 the requested grid is not thinned. Times are used exactly as typed, as for
-{opt attime()}.
+{opt attime()}. The plotted curve ends at the last requested time unless that
+time is at or beyond the curve's last cause-event time, in which case the flat
+tail is drawn out to the end of follow-up as for the default grid; a grid that
+stops earlier is not extended, because the CIF still rises past it. A
+requested time beyond the last cause-event time is flagged with a note. The
+same range rule applies as for {opt attime()}.
 
 {marker tvc}{...}
 {phang}
 {bf:After a fit with} {helpb finegray##tvc:tvc()} the CIF is accumulated
 interval by interval. Both analytic {opt ci} and {opt bootstrap(#)} are
-available; the analytic route is fixed-weight. See
+available; analytic intervals treat the weights as fixed. See
 {help finegray_methods##tvc:Time-varying effects}.
 
 {marker bstratum}{...}
@@ -179,10 +211,11 @@ available; the analytic route is fixed-weight. See
 {opt bstratum(#)} names the baseline stratum the CIF belongs to. {bf:Required}
 when the fit has more than one baseline stratum ({cmd:e(k_bstrata)} > 1), since
 a covariate profile alone no longer identifies a curve there. It is refused
-({cmd:r(198)}) after every other fit -- including a {opt bstrata()} fit with a
+({cmd:r(198)}) after every other fit, including a {opt bstrata()} fit with a
 single stratum, which is the unstratified estimator bit for bit and has no
 stratum to name. A value with no estimation-sample subjects or no cause events
-is {cmd:r(459)}. Use {opt over()}
+is {cmd:r(459)}; the refusal lists the fitted levels, each in as many digits
+as it takes to be accepted back by {opt bstratum()}. Use {opt over()}
 on the {opt bstrata()} variable for all strata at once. See
 {help finegray_methods##bstrata:Baseline strata}.
 
@@ -223,8 +256,9 @@ the standard error and limits differ. The original estimation results and
 {cmd:[fweight=}{it:exp}{cmd:]}: {helpb bsample} resamples rows, and an
 fweighted fit stores its replication in a weight column rather than in rows, so
 the replicate SD would describe a much smaller design than the fit. The
-analytic {opt ci} is exact under frequency weights -- an fweighted fit is the
-fit of the replicated data -- so use it, or {helpb expand} the data by the
+analytic {opt ci} needs no resampling under frequency weights: an fweighted
+fit is the fit of the replicated data, so the analytic interval equals the one
+from the expanded data, with the same large-sample approximation. Use it, or {helpb expand} the data by the
 weight and bootstrap the expanded fit. {cmd:[pweight=}{it:exp}{cmd:]} fits are
 unaffected.
 
@@ -237,7 +271,7 @@ reproducibility. It requires {opt bootstrap()}, and must be an integer between
 {opt level(#)} sets the confidence level for {opt ci}; it requires {opt ci}. The
 default is {cmd:c(level)}, which is initially 95 and can be changed by
 {helpb set level}. The value must be between 10 and 99.99 inclusive, with at
-most two decimal places -- the same rule {cmd:finegray} itself applies.
+most two decimal places, the same rule {cmd:finegray} itself applies.
 
 {phang}
 {opt saving(filename[, replace])} writes a dataset containing {cmd:time},
@@ -254,23 +288,70 @@ supplied).
 {phang}
 {opt nograph} suppresses the graph (useful with {opt saving()}).
 
+{marker plotopts}{...}
 {phang}
-{it:twoway_options} are any of the options documented in {help twoway_options},
-for example {cmd:title()}, {cmd:xtitle()}, or {cmd:scheme()}. These pass through
-to the CIF plot and override the defaults. In {opt attime()} mode no graph is
-drawn, so these options are ignored with a note. The legend defaults to a
-single
-row; because repeated {cmd:legend()} options merge, you can adjust or suppress
-it from here, for example {cmd:legend(off)}, {cmd:legend(pos(6))}, or
-{cmd:legend(rows(2))}.
+{opt plotopts(line_options)} applies {it:line_options} (see
+{helpb line_options}), such as {cmd:lpattern()}, {cmd:lcolor()}, or
+{cmd:lwidth()}, to every CIF line. The built-in {cmd:lwidth(medthick)} comes
+first, so these options override it. For example, {cmd:plotopts(lpattern(solid))}
+makes the curve solid under a scheme, such as {cmd:sj}, whose line style is
+dashed.
+
+{phang}
+{opt plot#opts(line_options)} applies {it:line_options} to the line of curve
+{it:#} only, after anything in {opt plotopts()}. Curves are numbered 1, 2,
+and so on, in the order of the levels in {cmd:r(levels)}; without {opt over()}
+there is one curve, so only {cmd:plot1opts()} is valid. A {it:#} larger than the number of
+curves is refused with {cmd:r(198)}, as is repeating any of these options.
+
+{phang}
+{opt ciopts(area_options)} applies {it:area_options} (see
+{helpb area_options}), such as {cmd:color()}, {cmd:fcolor()}, or
+{cmd:lcolor()}, to every confidence band. The built-in
+{cmd:color(%30) lwidth(none)} comes first, so these options override it; for
+example, {cmd:ciopts(color(navy%20))} draws a navy band at 20% opacity. Requires
+{opt ci}.
+
+{phang}
+{opt ci#opts(area_options)} applies {it:area_options} to the band of curve
+{it:#} only, after anything in {opt ciopts()}. The numbering and the range rule
+are those of {opt plot#opts()}. Requires {opt ci}.
+
+{phang} {it:twoway_options} are any of the options documented in
+{help twoway_options}, for example {cmd:title()}, {cmd:xtitle()},
+{cmd:note()}, or {cmd:scheme()}. These pass through to the CIF plot and
+override the defaults; their text is read exactly as {cmd:twoway} reads it, so
+SMCL markup in it is honoured and a literal dollar sign, brace or backquote is
+typed as its SMCL character code (see {help smcl}). In {opt attime()} mode no
+graph is drawn, so these options, and the plot options above, are ignored with
+a note.
+
+{pmore}
+The default graph has no note; add one with, for example,
+{cmd:note("at: ccr5=0")}. The legend defaults to a single row; because repeated
+{cmd:legend()} options merge, you can adjust or suppress it from here, for
+example {cmd:legend(off)}, {cmd:legend(pos(6))}, or {cmd:legend(rows(2))}. With
+{opt over()} and {opt ci}, the legend names the curves and states the band
+level in one line of text inside the legend box ({cmd:Shaded: 95% CI}), which
+{cmd:legend(note(""))} removes.
+
+{pmore}
+The y-axis labels have a leading zero (0.1, not .1). The number of decimals
+follows the tick step: {cmd:%3.1f} for steps of 0.1 or 0.2, {cmd:%4.2f} for
+steps of 0.05, 0.02, or 0.25, and in general as many decimals as the ticks
+need, at least one. The step is the one {cmd:twoway} chooses, including under
+your own {cmd:ylabel()} or {cmd:yscale()}, so {cmd:ylabel(0(.05).3)} gets
+{cmd:%4.2f} labels. A {cmd:format()} in your own {cmd:ylabel()}, for example
+{cmd:ylabel(, format(%5.3f))}, replaces the default. Ticks that would need more
+than six decimals keep Stata's default format.
 
 
 {marker remarks}{...}
 {title:Remarks}
 
 {pstd}
-{bf:Left truncation.} Delayed-entry CIF estimates use the ZZF Weight-1 contract
-and move relative to earlier versions and to {helpb stcrreg}. See
+{bf:Left truncation.} Delayed-entry CIF estimates use ZZF Weight 1
+and differ from {helpb stcrreg} and from finegray versions before 1.3.1. See
 {help finegray##lt:Left truncation}.
 
 {pstd}
@@ -324,6 +405,13 @@ a legend. Here on {cmd:webuse hiv_si}, the data of {bf:[ST] stcrreg} example 4.
 {phang2}{cmd:. finegray ccr5, compete(status) cause(2)}{p_end}
 {phang2}{cmd:. finegray_cif, over(ccr5) attime(2 5 10) ci}{p_end}
 {phang2}{cmd:. finegray_cif, over(ccr5) ci}{p_end}
+
+{pstd}
+Solid lines in one color for every curve, the second curve dashed with a
+lighter band, and the profile recorded in a note{p_end}
+{phang2}{cmd:. finegray_cif, over(ccr5) ci plotopts(lpattern(solid) lcolor(navy)) ciopts(color(navy%20))}{p_end}
+{phang2}{cmd:. finegray_cif, over(ccr5) ci plot2opts(lpattern(dash)) ci2opts(color(%15))}{p_end}
+{phang2}{cmd:. finegray_cif, at(ccr5=0) ci scheme(sj) plotopts(lpattern(solid)) note("at: ccr5=0")}{p_end}
 
 {pstd}
 The same on a factor variable with an interaction, holding the other covariate

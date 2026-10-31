@@ -1,0 +1,2587 @@
+*! codescan Version 1.0.0  2026/10/15
+*! Scan wide-format code variables for pattern matches and collapse to patient-level
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass (returns results in r())
+*! Requires: Stata 16.0+
+
+/*
+DESCRIPTION:
+    Scans wide-format code variables (dx1-dx30, proc1-proc20, etc.) for
+    pattern matches using regex or prefix matching. Generates binary
+    indicators for each condition, optionally applies time windows, and
+    collapses to patient-level summaries with date statistics.
+
+    Works with any string code system: ICD, KVA, CPT, ATC, OPCS, etc.
+
+SYNTAX:
+    codescan varlist [if] [in], define(string asis) | codefile(string)
+        [ID(varname) DATE(varname) REFDate(varname)
+         LOOKBack(string) LOOKForward(#) INCLusive
+         EARLIESTdate LATESTdate COUNTdate COUNTRows ALLDates
+         LABel(string asis) COLLapse MERge MODe(string) REPlace NOIsily
+         DETail ALLSlots NODots TOSTRing PREserve FRAME(name) COOCcurrence
+         NOCase GENerate(string)
+         UNMatched(name) MATCHed_code(name) LEVel(#) GRaph
+         EXPort(filename [, replace]) SAVE(filename [, replace])
+         SAVing(filename [, replace]) FORmat(string) COUNTMode]
+
+EXAMPLES:
+    * Row-level indicators
+    codescan dx1-dx30, define(dm2 "E11" | obesity "E66")
+
+    * Exclusion patterns
+    codescan dx1-dx30, define(dm2 "E11" ~ "E116" | htn "I1[0-35]")
+
+    * Load definitions from file
+    codescan dx1-dx30, codefile(code_rules.csv) id(pid) collapse
+
+    * Non-destructive collapse into a frame
+    codescan dx1-dx30, define(dm2 "E11") id(pid) collapse frame(results)
+
+STORED RESULTS:
+    r(N)              - Number of observations (post-collapse if collapsed)
+    r(n_conditions)   - Number of conditions defined
+    r(collapsed)      - 1 if collapse was performed, 0 otherwise
+    r(merged)         - 1 if merge was performed, 0 otherwise
+    r(conditions)     - Space-separated condition names
+    r(newvars)        - Variables present on exit (indicators + retained outputs)
+    r(varlist)        - Variables scanned
+    r(mode)           - Matching mode (regex or prefix)
+    r(define)         - Full define specification string (if used)
+    r(codefile)       - Path to code definitions file (if used)
+    r(id)             - ID variable (if specified)
+    r(date)           - Date variable (if specified)
+    r(lookback)       - Lookback days (if specified; space-separated if multi-window)
+    r(lookforward)    - Lookforward days (if specified)
+    r(refdate)        - Reference date variable (if specified)
+    r(n_excluded_missingdate) - Rows dropped from the time window for a missing
+                        date()/refdate() (if lookback()/lookforward() specified)
+    r(frame)          - Frame name (if frame() specified)
+    r(nocase)         - "nocase" if case-insensitive matching was used
+    r(generate)       - Output-name prefix (if generate() specified)
+    r(mode_count)     - 1 if countmode specified, 0 otherwise
+    r(detail_allslots) - 1 if detail counted every matching slot, 0 if it
+                        attributed each row to its first matching variable
+                        (returned only if detail is specified; then always 1
+                        under countmode)
+    r(summary)        - Matrix, one row per condition, columns:
+                        count          legacy: total_hits under countmode,
+                                       positive_units otherwise
+                        prevalence     % of units with at least one match
+                        total_hits     total matching code slots; missing
+                                       without countmode, which never counts
+                                       repeat hits
+                        positive_units units with at least one match
+    r(codelist)       - Matrix: count, prevalence, total_hits, positive_units
+    r(varcounts)      - Per-variable match counts (if detail specified). Row
+                        totals equal the unit counts only under the default
+                        first-slot attribution; see r(detail_allslots)
+    r(cooccurrence)   - Pairwise co-occurrence matrix (if cooccurrence specified)
+    r(sensitivity)    - Multi-window comparison matrix (if multi-window lookback)
+    r(sensitivity_n)  - Per-window denominators for r(sensitivity): the units
+                        with at least one row in each window (if multi-window
+                        lookback). A denominator that varies across windows means
+                        the population entering each window differs.
+*/
+
+program define codescan, rclass
+    version 16.0
+    local _orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    * Cleanup flags. Initialized here, before capture noisily, so the cleanup
+    * zone can read them even when the error fires during syntax parsing.
+    local _did_preserve      = 0
+    local _internal_preserve = 0
+    local _outputs_created   = 0
+    local _data_collapsed    = 0
+    local _merge_collapsing  = 0
+    local _r_posted          = 0
+    * Native use/save macros are visible through Mata even when the extended
+    * Stata macro functions omit them. Preserve their presence and exact bytes.
+    mata: st_local("_had_fn",strofreal(sum(st_dir("global","macro","*"):=="S_FN")>0))
+    mata: st_local("_had_fndate",strofreal(sum(st_dir("global","macro","*"):=="S_FNDATE")>0))
+    mata: st_local("_caller_fn",st_global("S_FN"))
+    mata: st_local("_caller_fndate",st_global("S_FNDATE"))
+    capture noisily {
+
+    * =========================================================================
+    * SYNTAX PARSING
+    * =========================================================================
+    syntax varlist [if] [in] , [DEFine(string asis) CODEFile(string) ///
+        ID(varname) DATE(varname) REFDate(varname) ///
+        LOOKBack(string) LOOKForward(string) INCLusive ///
+        EARLIESTdate LATESTdate COUNTdate COUNTRows ALLDates ///
+        LABel(string asis) COLLapse MERge MODe(string) REPlace NOIsily ///
+        DETail ALLSlots NODots TOSTRing PREserve FRAME(name) COOCcurrence ///
+        NOCase GENerate(string) ///
+        UNMatched(name) MATCHed_code(name) LEVel(string) ///
+        GRaph EXPort(string asis) SAVE(string asis) SAVing(string asis) ///
+        FORmat(string) COUNTMode]
+
+    * =========================================================================
+    * LOAD OUTPUT-PLANNING HELPERS
+    * =========================================================================
+    capture program list _codescan_plan_outputs
+    local _need_outputs_helper = _rc
+    capture program list _codescan_cleanup_outputs
+    if _rc local _need_outputs_helper = 1
+    if `_need_outputs_helper' {
+        capture findfile _codescan_outputs.ado
+        if _rc == 0 {
+            run "`r(fn)'"
+        }
+        else {
+            display as error "_codescan_outputs.ado not found; reinstall codescan"
+            exit 111
+        }
+    }
+
+    * =========================================================================
+    * ALLDATES SHORTHAND
+    * =========================================================================
+    if "`alldates'" != "" {
+        local earliestdate "earliestdate"
+        local latestdate "latestdate"
+        local countdate "countdate"
+    }
+
+    * =========================================================================
+    * VALIDATE INPUTS
+    * =========================================================================
+
+    * Require exactly one of define()/codefile()
+    if `"`define'"' == "" & "`codefile'" == "" {
+        display as error "define() or codefile() is required"
+        exit 198
+    }
+    if `"`define'"' != "" & "`codefile'" != "" {
+        display as error "define() and codefile() cannot both be specified"
+        exit 198
+    }
+
+    * allslots only changes how detail attributes a row across scan variables,
+    * so it is meaningless — and silently ignorable — without detail.
+    if "`allslots'" != "" & "`detail'" == "" {
+        display as error "allslots requires detail"
+        exit 198
+    }
+
+    * Guard every user-supplied file path before any file operation.
+    if `"`codefile'"' != "" {
+        _codescan_validate_path, path(`"`codefile'"') context(codefile())
+    }
+
+    * Reject a variable that appears more than once in varlist (directly or via
+    * overlapping ranges like dx1-dx5 dx3-dx8). A repeated scan column is read
+    * once per occurrence, so under countmode/countrows/detail its codes are
+    * counted multiple times — a silent inflation with rc=0. Binary indicators
+    * are idempotent, but the count paths are not, so reject the ambiguity.
+    local _dupvars : list dups varlist
+    if `"`_dupvars'"' != "" {
+        display as error "varlist contains repeated variable(s): `_dupvars'"
+        display as error "remove duplicate or overlapping scan variables"
+        exit 198
+    }
+
+    * All varlist variables must be string (numeric is allowed only when
+    * tostring will convert it).  strL is rejected unconditionally: the Mata
+    * scanner reads columns with st_sview(), which cannot form views onto strL
+    * variables (r(3300) with a raw Mata traceback).
+    foreach var of local varlist {
+        capture confirm string variable `var'
+        if _rc {
+            if "`tostring'" == "" {
+                display as error "`var' is not a string variable"
+                display as error "codescan requires string variables; use tostring or the tostring option"
+                exit 109
+            }
+        }
+        else if "`: type `var''" == "strL" {
+            display as error "`var' is a strL variable and cannot be scanned"
+            display as error "convert it to a fixed-width string first, e.g. {bf:compress `var'} or {bf:recast str244 `var'}"
+            exit 109
+        }
+    }
+
+    * Mode validation
+    if "`mode'" == "" local mode "regex"
+    if "`mode'" != "regex" & "`mode'" != "prefix" {
+        display as error "mode() must be {bf:regex} or {bf:prefix}"
+        exit 198
+    }
+
+    * Parse lookback — accepts integers or standard numlists (e.g. 30(30)90)
+    local _n_excl_missdate = 0
+    local has_lookback = (`"`lookback'"' != "")
+    local n_lookback_windows = 0
+    local _lookback_primary = -1
+    if `has_lookback' {
+        * Expand numlist (supports 30(30)90, 90/365, etc.)
+        capture numlist "`lookback'", integer min(1)
+        if _rc {
+            display as error "lookback(): invalid numlist"
+            exit 198
+        }
+        local lookback "`r(numlist)'"
+        local n_lookback_windows : word count `lookback'
+        forvalues _lbi = 1/`n_lookback_windows' {
+            local _lb_val : word `_lbi' of `lookback'
+            if `_lb_val' < 0 {
+                display as error "lookback() must contain non-negative integers"
+                exit 198
+            }
+            local _lookback_`_lbi' = `_lb_val'
+        }
+        local _lookback_primary = `_lookback_1'
+        * A window repeated in lookback() adds a second r(sensitivity) column
+        * carrying the same numbers under the same column name — a matrix a
+        * caller cannot index by name and a table a reader cannot interpret.
+        local _lb_dups : list dups lookback
+        if `"`_lb_dups'"' != "" {
+            display as error "lookback() contains repeated window(s): `_lb_dups'"
+            display as error "  each window must appear once"
+            exit 198
+        }
+        if `n_lookback_windows' > 1 {
+            * Multi-window mode requires collapse
+            if "`collapse'" == "" & "`merge'" == "" {
+                display as error "multi-window lookback() requires collapse or merge"
+                exit 198
+            }
+        }
+    }
+
+    * Time window validation.
+    *
+    * lookforward() is parsed as a string, not as `integer -1', because a
+    * numeric default IS a value the user can type: with `integer -1' an
+    * explicit lookforward(-1) is indistinguishable from "not specified", so it
+    * silently applied NO time window at all and returned rc=0 with the full
+    * cohort — and the range guard below could never fire, because has_lookfwd
+    * was 0 on exactly the input it existed to reject. Parsing the string keeps
+    * "specified" and "value" independent, so every out-of-range value errors.
+    local has_lookfwd = (`"`lookforward'"' != "")
+    local _lookfwd = -1
+    if `has_lookfwd' {
+        capture confirm integer number `lookforward'
+        if _rc {
+            display as error "lookforward() must be a non-negative integer"
+            exit 198
+        }
+        local _lookfwd = `lookforward'
+        if `_lookfwd' < 0 {
+            display as error "lookforward() must be a non-negative integer"
+            exit 198
+        }
+    }
+
+    if (`has_lookback' | `has_lookfwd') & ("`date'" == "" | "`refdate'" == "") {
+        display as error "lookback()/lookforward() require both date() and refdate()"
+        exit 198
+    }
+
+    * Merge validation
+    if "`merge'" != "" & "`id'" == "" {
+        display as error "merge requires id()"
+        exit 198
+    }
+    if "`merge'" != "" & "`collapse'" != "" {
+        display as error "merge and collapse cannot both be specified"
+        exit 198
+    }
+
+    * Level validation. Parsed as a string for the same reason as
+    * lookforward(): with `integer 0' an explicit level(0) read as "not
+    * specified" and was silently ignored, even though 0 is outside the
+    * documented 1-10 range and should be rejected.
+    local has_level = (`"`level'"' != "")
+    local _level = 0
+    if `has_level' {
+        capture confirm integer number `level'
+        if _rc {
+            display as error "level() must be an integer between 1 and 10"
+            exit 198
+        }
+        local _level = `level'
+        if `_level' < 1 | `_level' > 10 {
+            display as error "level() must be between 1 and 10"
+            exit 198
+        }
+        if "`mode'" == "regex" {
+            display as text "(note: level() applies only in mode(prefix); ignored in regex mode)"
+        }
+    }
+
+    * Export validation. export(filename [, replace]) — the file is only
+    * overwritten on explicit authorization; the check runs here, before any
+    * data mutation, so a refusal leaves data and file untouched.
+    local _export_replace = 0
+    local _export_fn ""
+    if `"`export'"' != "" {
+        _codescan_parse_filespec, spec(`"`export'"') context(export()) checkexists
+        local _export_fn `"`r(filename)'"'
+        local _export_replace = r(replace)
+        local _exp_ext = lower(substr(`"`_export_fn'"', -4, .))
+        local _exp_ext5 = lower(substr(`"`_export_fn'"', -5, .))
+        * _exp_ext is a 4-character tail, so testing it against the 5-character
+        * ".xlsx" can never be true; _exp_ext5 is the test that does that work.
+        if "`_exp_ext'" != ".csv" & "`_exp_ext5'" != ".xlsx" {
+            display as error "export() must be a .csv or .xlsx file"
+            exit 198
+        }
+    }
+
+    * Format validation
+    if "`format'" != "" {
+        capture local _fmt_test : display `format' 12.345
+        if _rc {
+            display as error "format(): `format' is not a valid numeric display format"
+            exit 198
+        }
+    }
+    local _prev_fmt = cond("`format'" != "", "`format'", "%9.1f")
+
+    * saving() validation (distinct from save() which saves the define to CSV)
+    local _saving_replace = 0
+    local _saving_fn ""
+    if `"`saving'"' != "" {
+        if "`collapse'" == "" & "`merge'" == "" {
+            display as error "saving() requires collapse or merge"
+            exit 198
+        }
+        * defext(.dta) so the overwrite guard authorizes the file `save' will
+        * actually write. Without it, saving(out) was checked against a file
+        * literally named "out" while the write went to "out.dta": the check
+        * passed, the whole analysis ran, export()/graph committed their files,
+        * and the r(602) arrived from `save' at the very end — an up-front
+        * refusal that was neither up front nor free.
+        _codescan_parse_filespec, spec(`"`saving'"') context(saving()) ///
+            checkexists defext(.dta)
+        local _saving_fn `"`r(filename)'"'
+        local _saving_replace = r(replace)
+        * saving() writes a Stata dataset. Any other extension was honoured
+        * literally, so saving(rules.csv) silently wrote a .dta named .csv.
+        * Refuse the text/spreadsheet extensions a user means for save() or
+        * export(). A denylist, not "any lettered extension": Stata tempfile
+        * names carry hex (St12345.00000d) or .tmp extensions and must pass.
+        local _sv_base = substr(`"`_saving_fn'"', ///
+            max(strrpos(`"`_saving_fn'"', "/"), strrpos(`"`_saving_fn'"', "\")) + 1, .)
+        local _sv_ext = ""
+        if strrpos(`"`_sv_base'"', ".") > 0 {
+            local _sv_ext = strtrim(lower(substr(`"`_sv_base'"', strrpos(`"`_sv_base'"', ".") + 1, .)))
+        }
+        if inlist(`"`_sv_ext'"', "csv", "tsv", "txt", "xlsx", "xls") {
+            display as error `"saving(): `_saving_fn' must be a .dta file; saving() writes the result dataset"'
+            display as error "  to write the rules to a CSV codefile use save(); to export results use export()"
+            exit 198
+        }
+    }
+
+    * Validate date/refdate are numeric
+    if "`date'" != "" {
+        confirm numeric variable `date'
+    }
+    if "`refdate'" != "" {
+        confirm numeric variable `refdate'
+    }
+
+    * F11: daily-date guard. lookback()/lookforward() windows are measured in
+    * days; a %tc/%tC datetime holds milliseconds, so the window comes out
+    * ~86.4 million times too narrow — an opaque r(2000) "no observations", or
+    * worse a silent near-empty cohort when a row happens to coincide with
+    * refdate to the millisecond. Reject datetimes up front with a clear fix.
+    *
+    * The same holds for every other non-daily %t unit — %tw/%tm/%tq/%th/%ty
+    * count weeks..years and %tb counts business days — and the guard must
+    * read the unit after an optional "-" (left-alignment): "%-tc" and "%-tm"
+    * used to slip past a test on the first three characters, so lookback(365)
+    * on a %tm date silently spanned 365 MONTHS at rc=0.
+    foreach _dv in date refdate {
+        local _dvn "``_dv''"
+        if "`_dvn'" != "" {
+            local _dfmt : format `_dvn'
+            local _dunit = substr(subinstr("`_dfmt'", "%-", "%", 1), 1, 3)
+            if "`_dunit'" == "%tc" | "`_dunit'" == "%tC" {
+                display as error "`_dv'() variable `_dvn' is a datetime (`_dfmt'); codescan expects a daily date"
+                display as error "  time windows are measured in days — convert with dofc(): {stata gen day = dofc(`_dvn')}"
+                exit 198
+            }
+            local _dname ""
+            if "`_dunit'" == "%tw" local _dname "weekly"
+            if "`_dunit'" == "%tm" local _dname "monthly"
+            if "`_dunit'" == "%tq" local _dname "quarterly"
+            if "`_dunit'" == "%th" local _dname "half-yearly"
+            if "`_dunit'" == "%ty" local _dname "yearly"
+            if "`_dunit'" == "%tb" local _dname "business-calendar"
+            * Only windows do day arithmetic; earliest/latest/unique-date
+            * summaries stay correct at the variable's own unit, so those
+            * paths keep accepting it.
+            if "`_dname'" != "" & (`has_lookback' | `has_lookfwd') {
+                display as error "`_dv'() variable `_dvn' is a `_dname' date (`_dfmt'); lookback()/lookforward() windows are measured in days"
+                display as error "  convert it to a %td daily date first"
+                exit 198
+            }
+        }
+    }
+
+    * Collapse validation
+    if "`collapse'" != "" & "`id'" == "" {
+        display as error "collapse requires id()"
+        exit 198
+    }
+
+    * Date summary options require date + collapse/merge
+    if ("`earliestdate'" != "" | "`latestdate'" != "" | "`countdate'" != "") {
+        if "`date'" == "" {
+            display as error "earliestdate, latestdate, and countdate require date()"
+            exit 198
+        }
+        if "`collapse'" == "" & "`merge'" == "" {
+            display as error "earliestdate, latestdate, and countdate require collapse or merge"
+            exit 198
+        }
+    }
+
+    * unmatched()/matched_code() are row-level outputs, and collapse keeps only
+    * the variables named in its own expression — so both are built and then
+    * discarded, leaving the caller with neither the variable they asked for nor
+    * any signal that it went away. The help says so; say it at run time too.
+    if "`collapse'" != "" & ("`unmatched'" != "" | "`matched_code'" != "") {
+        display as text "(note: unmatched()/matched_code() are row-level and are not retained after collapse;" ///
+            " use merge to keep them)"
+    }
+
+    * countrows requires collapse or merge
+    if "`countrows'" != "" {
+        if "`collapse'" == "" & "`merge'" == "" {
+            display as error "countrows requires collapse or merge"
+            exit 198
+        }
+    }
+
+    * Inclusive requires lookback or lookforward
+    if "`inclusive'" != "" & !`has_lookback' & !`has_lookfwd' {
+        display as error "inclusive requires lookback() or lookforward()"
+        exit 198
+    }
+
+    * preserve/frame require collapse or merge
+    if "`preserve'" != "" & "`collapse'" == "" & "`merge'" == "" {
+        display as error "preserve requires collapse or merge"
+        exit 198
+    }
+    if "`frame'" != "" & "`collapse'" == "" & "`merge'" == "" {
+        display as error "frame() requires collapse or merge"
+        exit 198
+    }
+    * frame() implies preserve
+    if "`frame'" != "" {
+        local preserve "preserve"
+    }
+    * Validate frame name
+    if "`frame'" != "" {
+        capture confirm name `frame'
+        if _rc {
+            display as error "frame(): `frame' is not a valid frame name"
+            exit 198
+        }
+        * I1: the current frame can be neither dropped (r(119), "may not drop
+        * current frame") nor written into by frame put (r(110)). Both failures
+        * land at commit time, after the scan and every side effect have run,
+        * so the user pays for the whole analysis only to be told the
+        * destination was never reachable. Refuse it here instead.
+        * frame(default) is the usual form, but it is the CURRENT frame that is
+        * illegal, not the name default: dropping default from another frame is
+        * legal and stays legal.
+        if "`frame'" == "`c(frame)'" {
+            display as error "frame(): `frame' is the current frame"
+            display as error "  codescan cannot write its result into the frame it is reading; choose another name"
+            exit 198
+        }
+        * Check if frame already exists
+        capture confirm frame `frame'
+        if !_rc & "`replace'" == "" {
+            display as error "frame `frame' already exists; use replace option"
+            exit 110
+        }
+    }
+
+    * Warn on lookback(0)/lookforward(0) without inclusive (empty window)
+    if `has_lookback' & `_lookback_primary' == 0 & "`inclusive'" == "" & !`has_lookfwd' {
+        display as text "(note: lookback(0) without inclusive excludes refdate, yielding an empty window)"
+    }
+    if `has_lookfwd' & `_lookfwd' == 0 & "`inclusive'" == "" & !`has_lookback' {
+        display as text "(note: lookforward(0) without inclusive excludes refdate, yielding an empty window)"
+    }
+
+    * =========================================================================
+    * PARSE CODEFILE()
+    * =========================================================================
+    local n_conditions = 0
+    local all_names ""
+    local n_labels = 0
+    local _defsrc = cond("`codefile'" != "", "codefile()", "define()")
+
+    capture program list _codescan_parse_define
+    local _need_definitions_helper = _rc
+    capture program list _codescan_apply_generate
+    if _rc local _need_definitions_helper = 1
+    capture program list _codescan_validate_def_regex
+    if _rc local _need_definitions_helper = 1
+    capture program list _codescan_apply_level
+    if _rc local _need_definitions_helper = 1
+    capture program list _codescan_validate_def_prefix
+    if _rc local _need_definitions_helper = 1
+    capture mata: mata which _codescan_regex_literal_dot()
+    if _rc local _need_definitions_helper = 1
+    capture mata: mata which _codescan_define_seps()
+    if _rc local _need_definitions_helper = 1
+    capture mata: mata which _codescan_ws_edge()
+    if _rc local _need_definitions_helper = 1
+    capture mata: mata which _codescan_parse_labels()
+    if _rc local _need_definitions_helper = 1
+    capture mata: mata which _codescan_smcl_literal()
+    if _rc local _need_definitions_helper = 1
+    if `_need_definitions_helper' {
+        capture findfile _codescan_definitions.ado
+        if _rc == 0 {
+            run "`r(fn)'"
+        }
+        else {
+            display as error "_codescan_definitions.ado not found; reinstall codescan"
+            exit 111
+        }
+    }
+
+    * F7: load (and recompile-on-demand) the Mata engine. The scanning engine
+    * lives in _codescan_engine.ado and the regex validator in
+    * _codescan_definitions.ado — both are Mata functions, which mata clear /
+    * discard drop while leaving the ado *programs* probed above (via program
+    * list) in place, so the helper reload never fires and every later call
+    * dies with a cryptic r(3499). The engine is kept in its own file (not
+    * inside this .ado) precisely so we can re-run it here: re-running the
+    * program's own executing .ado does not persist its freshly compiled Mata.
+    * The ping is a no-op scalar function compiled alongside the engine; it
+    * writes into a program-scoped local (no global state to clean up).
+    capture mata: st_local("_codescan_mata_ok", strofreal(_codescan_mata_ready()))
+    if _rc {
+        foreach _mf in _codescan_engine.ado _codescan_definitions.ado {
+            capture findfile `_mf'
+            if _rc == 0 {
+                run "`r(fn)'"
+            }
+            else {
+                display as error "`_mf' not found; reinstall codescan"
+                exit 111
+            }
+        }
+    }
+
+    if "`codefile'" != "" {
+        local _orig_codefile "`codefile'"
+        capture program list _codescan_parse_codefile
+        local _need_codefile_helper = _rc
+        if `_need_codefile_helper' {
+            capture findfile _codescan_codefile.ado
+            if _rc == 0 {
+                run "`r(fn)'"
+            }
+            else {
+                display as error "_codescan_codefile.ado not found; reinstall codescan"
+                exit 111
+            }
+        }
+
+        _codescan_parse_codefile, codefile(`"`codefile'"')
+        local n_conditions = r(n_conditions)
+        local all_names "`r(all_names)'"
+        local n_labels = r(n_labels)
+        local codefile `"`r(resolved_codefile)'"'
+        local _cf_match "`r(match)'"
+        forvalues i = 1/`n_conditions' {
+            local def_name_`i' "`r(def_name_`i')'"
+            local def_pattern_`i' `"`r(def_pattern_`i')'"'
+            local def_excl_`i' `"`r(def_excl_`i')'"'
+        }
+        if `n_labels' > 0 {
+            forvalues i = 1/`n_labels' {
+                local lab_name_`i' "`r(lab_name_`i')'"
+                mata: st_local("lab_label_`i'", st_global("r(lab_label_`i')"))
+            }
+        }
+
+        * A codefile written by save() records the matching options its rules
+        * were authored under. The same pattern under other options is a
+        * different rule (prefix "E1.1" vs regex "E1.1"), so a mismatch would
+        * silently change the cohort: refuse it and name the options to use.
+        if "`_cf_match'" != "" {
+            local _call_match = itrim(strtrim("mode(`mode') `nocase' `nodots'"))
+            if "`_cf_match'" != "`_call_match'" {
+                display as error "codefile(): these rules were saved under {bf:`_cf_match'}; this call uses {bf:`_call_match'}"
+                display as error "  rerun with the same matching options, or edit the file's match column"
+                exit 198
+            }
+        }
+    }
+
+    * =========================================================================
+    * PARSE DEFINE()
+    * =========================================================================
+    else {
+        local _define_arg = subinstr(`"`macval(define)'"', `"""', char(1), .)
+        local _define_arg = subinstr(`"`macval(_define_arg)'"', "(", char(4), .)
+        local _define_arg = subinstr(`"`macval(_define_arg)'"', ")", char(2), .)
+        local _define_arg = subinstr(`"`macval(_define_arg)'"', ",", char(3), .)
+        _codescan_parse_define, define(`macval(_define_arg)')
+        local n_conditions = r(n_conditions)
+        local all_names "`r(all_names)'"
+        forvalues i = 1/`n_conditions' {
+            local def_name_`i' "`r(def_name_`i')'"
+            local def_pattern_`i' `"`r(def_pattern_`i')'"'
+            local def_excl_`i' `"`r(def_excl_`i')'"'
+        }
+    }
+
+    * =========================================================================
+    * APPLY GENERATE PREFIX (F3)
+    * =========================================================================
+    if "`generate'" != "" {
+        local all_names ""
+        forvalues i = 1/`n_conditions' {
+            _codescan_apply_generate, prefix(`macval(generate)') ///
+                name(`macval(def_name_`i')') suffixlen(6)
+            local def_name_`i' "`r(name)'"
+            local all_names "`all_names' `def_name_`i''"
+        }
+        local all_names = trim("`all_names'")
+        * Also update label names
+        forvalues j = 1/`n_labels' {
+            _codescan_apply_generate, prefix(`macval(generate)') ///
+                name(`macval(lab_name_`j')') suffixlen(6)
+            local lab_name_`j' "`r(name)'"
+        }
+    }
+
+    * =========================================================================
+    * REGEX PRE-VALIDATION (R1) — structural check + compile-probe
+    * =========================================================================
+    * Stata's regexm() is lenient and silently returns 0 on invalid patterns —
+    * a false-zero cohort with no error. _codescan_validate_def_regex first runs
+    * a structural delimiter check (clear "unmatched ')'" / "unclosed '['"
+    * messages) and then a ustrregexm() compile-probe that rejects every other
+    * malformed pattern (bad quantifiers, groups, alternations). See
+    * _codescan_definitions.ado.
+    if "`mode'" == "regex" {
+        forvalues i = 1/`n_conditions' {
+            local _pat_arg `"`macval(def_pattern_`i')'"'
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', `"""', char(1), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', "(", char(4), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', ")", char(2), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', ",", char(3), .)
+            local _excl_arg `"`macval(def_excl_`i')'"'
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', `"""', char(1), .)
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', "(", char(4), .)
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', ")", char(2), .)
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', ",", char(3), .)
+            _codescan_validate_def_regex, ///
+                name(`macval(def_name_`i')') ///
+                pattern(`macval(_pat_arg)') ///
+                exclusion(`macval(_excl_arg)')
+            * Regex whitespace is matched literally and never trimmed (" *I21"
+            * is a real pattern). Note edge whitespace that looks accidental,
+            * at most once per condition: pattern first, then exclusion.
+            local _ws_kind "pattern"
+            mata: st_local("_ws_edge", _codescan_ws_edge(st_local("def_pattern_`i'")))
+            if "`_ws_edge'" == "" {
+                local _ws_kind "exclusion"
+                mata: st_local("_ws_edge", _codescan_ws_edge(st_local("def_excl_`i'")))
+            }
+            if "`_ws_edge'" != "" {
+                display as text "(note: regex `_ws_kind' for `def_name_`i'' `_ws_edge' with a space, which must match literally; remove it if unintended)"
+            }
+        }
+    }
+    else {
+        forvalues i = 1/`n_conditions' {
+            local _pat_arg `"`macval(def_pattern_`i')'"'
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', `"""', char(1), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', "(", char(4), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', ")", char(2), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', ",", char(3), .)
+            local _excl_arg `"`macval(def_excl_`i')'"'
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', `"""', char(1), .)
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', "(", char(4), .)
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', ")", char(2), .)
+            local _excl_arg = subinstr(`"`macval(_excl_arg)'"', ",", char(3), .)
+            _codescan_validate_def_prefix, ///
+                name(`macval(def_name_`i')') ///
+                pattern(`macval(_pat_arg)') ///
+                exclusion(`macval(_excl_arg)')
+        }
+    }
+
+    * =========================================================================
+    * LEVEL() — truncate patterns to N characters (C4)
+    * =========================================================================
+    if `has_level' & "`mode'" == "prefix" {
+        forvalues i = 1/`n_conditions' {
+            local _pat_arg `"`macval(def_pattern_`i')'"'
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', `"""', char(1), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', "(", char(4), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', ")", char(2), .)
+            local _pat_arg = subinstr(`"`macval(_pat_arg)'"', ",", char(3), .)
+            _codescan_apply_level, pattern(`macval(_pat_arg)') level(`_level')
+            local def_pattern_`i' `"`r(pattern)'"'
+        }
+    }
+
+    * =========================================================================
+    * NODOTS + PREFIX: REJECT A PROVABLY DEAD PATTERN
+    * =========================================================================
+    * nodots strips every period from the data before matching, and prefix mode
+    * compares literal characters — so a prefix containing "." cannot match any
+    * value, ever. The result is a silent zero cohort carrying only the generic
+    * "matched 0 observations" note, which reads like a real (empty) finding.
+    * Every other provably dead pattern in this package errors up front
+    * (unclosed "[", empty alternation branch, zero-width assertion); this one
+    * is the same class and gets the same treatment. Checked AFTER level(),
+    * because level() truncation can itself remove the offending period.
+    * In mode(regex) a bare "." is the any-character metacharacter and stays
+    * legal; only a REQUIRED literal period (an escaped "\." or the class "[.]")
+    * is dead, and it is refused below for the same reason.
+    if "`mode'" == "regex" & "`nodots'" != "" {
+        forvalues i = 1/`n_conditions' {
+            foreach _nd_kind in pattern excl {
+                local _nd_val `"`def_`_nd_kind'_`i''"'
+                mata: st_local("_nd_dead", ///
+                    strofreal(_codescan_regex_literal_dot(st_local("_nd_val"))))
+                if `_nd_dead' {
+                    local _nd_lbl = cond("`_nd_kind'" == "excl", "exclusion", "pattern")
+                    display as error "`_defsrc': `_nd_lbl' for `def_name_`i'' requires a literal period (\. or [.]) but nodots strips periods from the data"
+                    display as error "  it can never match a stripped value; write it undotted (E110, not E11\.0)"
+                    exit 198
+                }
+            }
+        }
+    }
+    if "`mode'" == "prefix" & "`nodots'" != "" {
+        forvalues i = 1/`n_conditions' {
+            foreach _nd_kind in pattern excl {
+                local _nd_val `"`def_`_nd_kind'_`i''"'
+                if strpos(`"`macval(_nd_val)'"', ".") > 0 {
+                    local _nd_lbl = cond("`_nd_kind'" == "excl", "exclusion", "pattern")
+                    display as error "`_defsrc': `_nd_lbl' for `def_name_`i'' contains a period but nodots strips periods from the data"
+                    display as error "  a prefix with a period can never match a stripped value; write it undotted (E110, not E11.0)"
+                    exit 198
+                }
+            }
+        }
+    }
+
+    * =========================================================================
+    * VALIDATE CONDITION NAMES
+    * =========================================================================
+    * Valid Stata names, <=26 chars (or <=26 after prefix), unique, no collisions
+    forvalues i = 1/`n_conditions' {
+        local nm "`def_name_`i''"
+        capture confirm name `nm'
+        if _rc {
+            display as error "`_defsrc': `nm' is not a valid Stata name"
+            exit 198
+        }
+        if strlen("`nm'") > 26 {
+            display as error "`_defsrc': `nm' exceeds 26 characters (need room for _first/_count/_nrows suffix)"
+            exit 198
+        }
+        * Check uniqueness (case-insensitive: DM2 and dm2 make distinct Stata
+        * variables but are almost always a typo — F10)
+        forvalues j = 1/`=`i'-1' {
+            if strlower("`nm'") == strlower("`def_name_`j''") {
+                display as error "`_defsrc': duplicate condition name `nm' (names must be unique ignoring case)"
+                exit 198
+            }
+        }
+        * Check name does not collide with input variables
+        foreach v of local varlist {
+            if "`nm'" == "`v'" {
+                display as error "`_defsrc': condition name `nm' conflicts with a varlist variable"
+                exit 198
+            }
+        }
+        if "`nm'" == "`id'" | "`nm'" == "`date'" | "`nm'" == "`refdate'" {
+            display as error "`_defsrc': condition name `nm' conflicts with id, date, or refdate variable"
+            exit 198
+        }
+        if `"`export'"' != "" {
+            * Every column the export dataset creates (see the export block near
+            * the end of this file). Kept as a single list so it cannot drift
+            * behind the export gens the way it did when total_hits/positive_units
+            * were added: `list in' has no arg-count limit and reads as one set.
+            local _reserved_cols condition label matches total_hits positive_units prevalence pattern exclusion
+            local _nm_reserved : list nm in _reserved_cols
+            if `_nm_reserved' {
+                display as error "`_defsrc': condition name `nm' conflicts with a reserved export column name"
+                exit 198
+            }
+        }
+    }
+
+    * Validate every created output up front so replace cannot clobber scan
+    * inputs before the row scanner runs.
+    _codescan_plan_outputs, conditions("`all_names'") scanvars("`varlist'") ///
+        protected("`id' `date' `refdate'") ///
+        unmatched("`unmatched'") ///
+        matched_code("`matched_code'") `collapse' `merge' `earliestdate' ///
+        `latestdate' `countdate' `countrows' `replace'
+    local _n_outputs = r(n_outputs)
+    local _outputs "`r(outputs)'"
+    forvalues i = 1/`_n_outputs' {
+        local _output_`i' "`r(output_`i')'"
+    }
+    local _outputs_created = 0
+
+    * =========================================================================
+    * PARSE LABEL()
+    * =========================================================================
+    * Note: codefile labels already populated above; label() can override them
+    if `"`macval(label)'"' != "" {
+        * Split in Mata: the text is free text, and any Stata-level scan of it
+        * re-expands a backtick or $ inside it (compound-quoted text used to die
+        * with r(132), and `name' or $name in a label was expanded or broke the
+        * parse). _codescan_parse_labels appends lab_name_#/lab_label_# after
+        * the codefile labels already counted in n_labels.
+        mata: st_local("_lab_rc", strofreal(_codescan_parse_labels(st_local("label"))))
+        if `_lab_rc' exit `_lab_rc'
+
+        * Validate label names match condition names (with generate-prefix fallback)
+        forvalues j = 1/`n_labels' {
+            local found = 0
+            forvalues k = 1/`n_conditions' {
+                if "`lab_name_`j''" == "`def_name_`k''" {
+                    local found = 1
+                }
+            }
+            if !`found' & "`generate'" != "" {
+                local _lab_pref "`generate'`lab_name_`j''"
+                forvalues k = 1/`n_conditions' {
+                    if "`_lab_pref'" == "`def_name_`k''" {
+                        local found = 1
+                        local lab_name_`j' "`_lab_pref'"
+                    }
+                }
+            }
+            if !`found' {
+                display as error `"label(): `lab_name_`j'' does not match any condition in `_defsrc'"'
+                exit 198
+            }
+        }
+    }
+
+    * =========================================================================
+    * SAVE DEFINE TO CSV (W3)
+    * =========================================================================
+    * Validated here, before any work, so a bad filename or an unauthorized
+    * overwrite costs the caller nothing. The file itself is NOT written here:
+    * a definition CSV left behind by a call that then failed (an empty
+    * analytical sample, a failing graph/export/saving) reads as a completed
+    * operation to any workflow that treats artifact presence as success. The
+    * write is deferred to the late side-effect zone with the other external
+    * outputs; see SAVE DEFINE TO CSV -- COMMIT below.
+    if `"`save'"' != "" {
+        _codescan_parse_filespec, spec(`"`save'"') context(save()) checkexists
+        local _save_fn `"`r(filename)'"'
+        local _save_replace = r(replace)
+        local _save_ext = lower(substr(`"`_save_fn'"', -4, .))
+        if "`_save_ext'" != ".csv" {
+            display as error "save() requires a .csv file extension"
+            exit 198
+        }
+        if "`codefile'" != "" {
+            display as error "save() cannot be combined with codefile(); codefile already provides a file"
+            exit 198
+        }
+    }
+
+    * Distinct output options must not resolve to the same file. Each target is
+    * preflighted before any exists, so allowing an alias here would let the
+    * later writer silently replace the earlier writer's different payload.
+    local _output_options ""
+    foreach _outopt in export saving save {
+        if `"`_`_outopt'_fn'"' != "" {
+            mata: st_local("_output_abs", ///
+                pathresolve(pwd(), st_local("_`_outopt'_fn")))
+            local _output_key `"`_output_abs'"'
+            if "`c(os)'" == "Windows" {
+                local _output_key = strlower(`"`_output_key'"')
+            }
+            foreach _prior of local _output_options {
+                if `"`_output_key'"' == `"`_output_key_`_prior''"' {
+                    display as error "`_prior'() and `_outopt'() resolve to the same output file"
+                    display as error `"  choose distinct targets: `_output_abs'"'
+                    exit 198
+                }
+            }
+            local _output_key_`_outopt' `"`_output_key'"'
+            local _output_options "`_output_options' `_outopt'"
+        }
+    }
+
+    * Two different path strings can still name one file: a symlinked
+    * directory, or a case-insensitive filesystem (macOS, Windows shares). The
+    * string comparison above cannot see that, so the later writer silently
+    * replaced the earlier one's payload at rc=0. Stata has no realpath, so ask
+    * the filesystem instead, before any work:
+    *   - a target that does not exist yet gets an empty marker file; if a
+    *     later target that did not exist before now does, they are one file;
+    *   - two targets that both already existed (overwrite authorized) are
+    *     compared by checksum and length.
+    * Every marker is erased again here, so a refusal leaves nothing behind.
+    local _n_outopt : word count `_output_options'
+    if `_n_outopt' > 1 {
+        foreach _outopt of local _output_options {
+            capture confirm file `"`_`_outopt'_fn'"'
+            local _pre_`_outopt' = (_rc == 0)
+        }
+        local _alias_markers ""
+        local _alias_pair ""
+        local _alias_rc = 0
+        tempname _alias_fh
+        forvalues _ai = 1/`_n_outopt' {
+            local _oa : word `_ai' of `_output_options'
+            if `_pre_`_oa'' {
+                capture checksum `"`_`_oa'_fn'"'
+                if _rc continue
+                local _ck_`_oa' "`r(checksum)'_`r(filelen)'"
+                forvalues _aj = 1/`=`_ai'-1' {
+                    local _ob : word `_aj' of `_output_options'
+                    if `_pre_`_ob'' & "`_ck_`_ob''" == "`_ck_`_oa''" {
+                        local _alias_pair "`_ob' `_oa'"
+                    }
+                }
+            }
+            else {
+                capture file open `_alias_fh' using `"`_`_oa'_fn'"', write
+                local _alias_rc = _rc
+                if `_alias_rc' == 0 {
+                    file close `_alias_fh'
+                    local _alias_markers "`_alias_markers' `_oa'"
+                    * A later target that did not exist before and exists now
+                    * is this marker seen through another name.
+                    forvalues _aj = `=`_ai'+1'/`_n_outopt' {
+                        local _ob : word `_aj' of `_output_options'
+                        if !`_pre_`_ob'' & "`_alias_pair'" == "" {
+                            capture confirm file `"`_`_ob'_fn'"'
+                            if _rc == 0 local _alias_pair "`_oa' `_ob'"
+                        }
+                    }
+                }
+            }
+            if "`_alias_pair'" != "" | `_alias_rc' continue, break
+        }
+        foreach _ob of local _alias_markers {
+            capture erase `"`_`_ob'_fn'"'
+        }
+        if `_alias_rc' {
+            display as error `"`_oa'(): cannot create `_`_oa'_fn'"'
+            exit `_alias_rc'
+        }
+        if "`_alias_pair'" != "" {
+            local _ob : word 1 of `_alias_pair'
+            local _oa : word 2 of `_alias_pair'
+            display as error "`_ob'() and `_oa'() name the same output file"
+            display as error `"  `_`_ob'_fn' and `_`_oa'_fn' resolve to one file (a symlink or a case-insensitive filesystem); choose distinct targets"'
+            exit 198
+        }
+    }
+
+    * =========================================================================
+    * USER PRESERVE (for non-destructive collapse)
+    * =========================================================================
+    if "`preserve'" != "" {
+        preserve
+        local _did_preserve = 1
+    }
+
+    * =========================================================================
+    * MARK SAMPLE & TIME WINDOW
+    * =========================================================================
+    * Note: cannot use marksample — string asis puts quotes in `0' which
+    * breaks marksample's parser. Use mark for if/in only.
+    * Do NOT markout the varlist: empty strings in code variables are expected.
+    * Mark BEFORE tostring so an if-expression that references a scan variable
+    * is evaluated against the data as the user sees it at call time (numeric),
+    * not after tostring has recast it to string.
+    tempvar touse
+    mark `touse' `if' `in'
+
+    * =========================================================================
+    * TOSTRING (auto-convert numeric variables)
+    * =========================================================================
+    local scan_varlist ""
+    local _scan_index = 0
+    foreach var of local varlist {
+        local ++_scan_index
+        capture confirm string variable `var'
+        if _rc {
+            noisily display as text "(note: converting `var' from numeric to string)"
+            tempvar _scan_string_`_scan_index'
+            * Exact text, not `tostring, force': its %12.0g default wrote
+            * 1234567890123 as "1.23457e+12" and float 401.9 as "401.8999939",
+            * so the code silently failed its pattern at rc=0. The helper
+            * writes the shortest text that reads back as the stored value and
+            * blanks every missing (. and .a-.z, which would otherwise
+            * stringify to ".a".."z" and match under nodots/nocase).
+            _codescan_tostring `var', generate(`_scan_string_`_scan_index'')
+            local scan_varlist "`scan_varlist' `_scan_string_`_scan_index''"
+        }
+        else {
+            local scan_varlist "`scan_varlist' `var'"
+        }
+    }
+    local scan_varlist = trim("`scan_varlist'")
+
+    * Exclude missing id values from collapse/merge to prevent phantom grouping
+    if "`collapse'" != "" | "`merge'" != "" {
+        quietly replace `touse' = 0 if missing(`id')
+    }
+
+    local include_ref = ("`inclusive'" != "" | (`has_lookback' & `has_lookfwd'))
+
+    if `has_lookback' | `has_lookfwd' {
+        * Rows with a missing date()/refdate() cannot be placed in the time
+        * window and are dropped from every condition. In row-level mode this
+        * silently zeroes a genuinely-matching code, so report the count (and
+        * expose it via r(n_excluded_missingdate)) rather than failing quietly.
+        quietly count if `touse' & (missing(`date') | missing(`refdate'))
+        local _n_excl_missdate = r(N)
+        if `_n_excl_missdate' > 0 {
+            display as text "(note: `_n_excl_missdate' row" cond(`_n_excl_missdate' == 1, "", "s") " excluded from the time window for missing date()/refdate())"
+        }
+        quietly replace `touse' = 0 if missing(`date') | missing(`refdate')
+    }
+
+    if `has_lookback' & `has_lookfwd' {
+        * Both: [refdate - lookback, refdate + lookforward] — always inclusive
+        quietly replace `touse' = 0 if `date' < `refdate' - `_lookback_primary'
+        quietly replace `touse' = 0 if `date' > `refdate' + `_lookfwd'
+    }
+    else if `has_lookback' {
+        * Lookback only
+        quietly replace `touse' = 0 if `date' < `refdate' - `_lookback_primary'
+        if `include_ref' {
+            quietly replace `touse' = 0 if `date' > `refdate'
+        }
+        else {
+            quietly replace `touse' = 0 if `date' >= `refdate'
+        }
+    }
+    else if `has_lookfwd' {
+        * Lookforward only
+        quietly replace `touse' = 0 if `date' > `refdate' + `_lookfwd'
+        if `include_ref' {
+            quietly replace `touse' = 0 if `date' < `refdate'
+        }
+        else {
+            quietly replace `touse' = 0 if `date' <= `refdate'
+        }
+    }
+
+    quietly count if `touse'
+    * error 2000 prints "no observations" itself; a display before it showed the
+    * user the same line twice.
+    if r(N) == 0 error 2000
+    local N = r(N)
+
+    * =========================================================================
+    * NODOTS — handled inline in Mata scanner (no temp variables needed)
+    * =========================================================================
+    local nvars_scan : word count `varlist'
+
+    * =========================================================================
+    * DETAIL SETUP — per-variable match tracking
+    * =========================================================================
+    if "`detail'" != "" {
+        tempname varcounts
+        matrix `varcounts' = J(`n_conditions', `nvars_scan', 0)
+    }
+
+    * =========================================================================
+    * TRANSACTIONAL SNAPSHOT FOR IN-PLACE REPLACEMENT
+    * =========================================================================
+    * Under replace, a planned output name may already exist in the caller's
+    * data. Dropping it outright leaves nothing to roll back to when a later
+    * side effect (graph, export, saving, frame) fails: the caller's variable is
+    * gone for good, and the error-path cleanup then drops it a second time from
+    * the restored data. Take an internal snapshot so the cleanup zone's restore
+    * is a complete, metadata-exact rollback — variable order, types, formats,
+    * labels, value labels, sort order, characteristics, and observation order.
+    *
+    * Only needed when no user preserve is already active (which is itself a
+    * snapshot) and a collision actually exists. When the planned outputs are all
+    * new, the existing drop-what-we-created cleanup is already a correct
+    * rollback and costs no memory.
+    if "`replace'" != "" & !`_did_preserve' {
+        local _collides = 0
+        foreach _onm of local _outputs {
+            capture confirm variable `_onm'
+            if _rc == 0 local _collides = 1
+        }
+        if `_collides' {
+            preserve
+            local _internal_preserve = 1
+        }
+    }
+    * In-place collapse consumes the caller's rows. When a fallible side effect
+    * (graph, export(), saving(), save()) runs after it, a failure would leave
+    * the caller holding the collapsed table with a nonzero rc. Snapshot first
+    * so the cleanup zone restores the pre-call data, as merge already does,
+    * and the original rc still propagates. COMMIT discards the snapshot.
+    if "`collapse'" != "" & !`_did_preserve' & !`_internal_preserve' {
+        if "`graph'" != "" | `"`export'"' != "" | `"`saving'"' != "" | ///
+            `"`save'"' != "" {
+            preserve
+            local _internal_preserve = 1
+        }
+    }
+
+    * =========================================================================
+    * CREATE ROW-LEVEL INDICATORS (Mata-accelerated)
+    * =========================================================================
+    local _outputs_created = 1
+    quietly {
+        * Drop/create indicator variables
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            if "`replace'" != "" {
+                capture drop `name'
+                if "`collapse'" != "" | "`merge'" != "" {
+                    if "`earliestdate'" != "" capture drop `name'_first
+                    if "`latestdate'" != ""   capture drop `name'_last
+                    if "`countdate'" != ""    capture drop `name'_count
+                    if "`countrows'" != ""   capture drop `name'_nrows
+                }
+            }
+            if "`countmode'" != "" {
+                gen long `name' = 0
+            }
+            else {
+                gen byte `name' = 0
+            }
+        }
+
+        * Pass condition info to Mata via locals
+        local _mata_ncond "`n_conditions'"
+        local _mata_mode "`mode'"
+        local _mata_scanvars "`scan_varlist'"
+        local _mata_touse "`touse'"
+        local _mata_detail "`detail'"
+        local _mata_allslots "`allslots'"
+        local _mata_nocase "`nocase'"
+        local _mata_nodots "`nodots'"
+        local _mata_countmode "`countmode'"
+        forvalues i = 1/`n_conditions' {
+            local _mata_name_`i' "`def_name_`i''"
+            local _mata_pat_`i' `"`def_pattern_`i''"'
+            local _mata_excl_`i' `"`def_excl_`i''"'
+        }
+
+        * P1: Create matched_code before Mata call so Mata can populate it.
+        *
+        * Width tracks the WIDEST scan column, floored at the documented str244.
+        * A fixed str244 silently truncated any longer code on the way in — the
+        * Mata scanner writes through st_sview(), which clips to the variable's
+        * declared width and reports nothing, so a str300 scan column returned a
+        * 244-character stub at rc=0. Capped at str2045, the fixed-string limit;
+        * strL scan columns are already rejected up front.
+        if "`matched_code'" != "" {
+            if "`replace'" != "" capture drop `matched_code'
+            local _mc_width = 244
+            foreach _mcv of local scan_varlist {
+                local _mct : type `_mcv'
+                if substr("`_mct'", 1, 3) == "str" {
+                    local _mcw = real(substr("`_mct'", 4, .))
+                    if !missing(`_mcw') & `_mcw' > `_mc_width' local _mc_width = `_mcw'
+                }
+            }
+            if `_mc_width' > 2045 local _mc_width = 2045
+            gen str`_mc_width' `matched_code' = ""
+            local _mata_matched_code "`matched_code'"
+        }
+
+        * Call Mata scanner
+        if "`detail'" != "" {
+            local _mata_vcname "`varcounts'"
+        }
+        tempname _match_counts
+        local _mata_mc_name "`_match_counts'"
+        mata: _codescan_mata_scan()
+
+        * Noisily display and zero-match note (from Mata-accumulated counts).
+        * Empty conditions are collected and reported in ONE summary note.
+        local _zero_names ""
+        local _n_zero 0
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            local _n_matched = el(`_match_counts', 1, `i')
+
+            if "`noisily'" != "" {
+                noisily display as text "  `name': " as result `_n_matched' ///
+                    as text " matches across `nvars_scan' variables"
+            }
+
+            if `_n_matched' == 0 {
+                local _zero_names "`_zero_names' `name'"
+                local ++_n_zero
+            }
+        }
+        local _zero_names = strtrim("`_zero_names'")
+        if `_n_zero' == 1 {
+            noisily display as text "(note: condition `_zero_names' matched 0 observations)"
+        }
+        else if `_n_zero' > 1 {
+            * One note, wrapped at word boundaries (Stata's own wrap at the line
+            * width would split a long condition name mid-word).
+            local _zl "(note: `_n_zero' conditions matched 0 observations:"
+            foreach _zn of local _zero_names {
+                if strlen("`_zl'") + 1 + strlen("`_zn'") > 76 {
+                    noisily display as text "`_zl'"
+                    local _zl "  `_zn'"
+                }
+                else local _zl "`_zl' `_zn'"
+            }
+            noisily display as text "`_zl')"
+        }
+
+        * R1: Warn on overlapping conditions (single Mata pass via cross product)
+        if "`cooccurrence'" == "" & `n_conditions' > 1 {
+            tempname _overlap_cooc
+            local _mata_cooc_matname "`_overlap_cooc'"
+            local _mata_cooc_names "`all_names'"
+            local _mata_cooc_touse "`touse'"
+            local _mata_cooc_countmode "`countmode'"
+            mata: _codescan_mata_cooccurrence()
+            forvalues _oi = 1/`n_conditions' {
+                forvalues _oj = `=`_oi'+1'/`n_conditions' {
+                    local _on1 "`def_name_`_oi''"
+                    local _on2 "`def_name_`_oj''"
+                    local _overlap = el(`_overlap_cooc', `_oi', `_oj')
+                    if `_overlap' > 0 {
+                        local _cnt1 = el(`_overlap_cooc', `_oi', `_oi')
+                        local _cnt2 = el(`_overlap_cooc', `_oj', `_oj')
+                        local _smaller = min(`_cnt1', `_cnt2')
+                        if `_smaller' > 0 & `_overlap' / `_smaller' > 0.5 {
+                            local _opct = round(`_overlap' / `_smaller' * 100, 1)
+                            noisily display as text ///
+                                "(note: `_on1' and `_on2' overlap in " ///
+                                as result `_overlap' as text " obs, " ///
+                                as result "`_opct'" as text "% of smaller group)"
+                        }
+                    }
+                }
+            }
+        }
+
+        * I4: Unmatched code report — flag rows with no condition matches.
+        *
+        * 1 = analyzed and nothing matched; 0 = analyzed and something matched;
+        * . = NOT ANALYZED.
+        *
+        * The flag used to be initialized to 0 for every row and set to 1 only
+        * inside the final touse, so every row excluded from the analysis —
+        * if/in, a missing id() under collapse/merge, a missing date, or a row
+        * outside the requested time window — was indistinguishable from a row
+        * that genuinely matched a condition. "unmatched == 0" therefore
+        * conflated "matched" with "never looked at". Rows outside the analysis
+        * sample now carry missing, so the three states are distinct.
+        if "`unmatched'" != "" {
+            if "`replace'" != "" capture drop `unmatched'
+            gen byte `unmatched' = .
+            replace `unmatched' = 1 if `touse'
+            forvalues i = 1/`n_conditions' {
+                replace `unmatched' = 0 if `def_name_`i'' > 0 & `touse'
+            }
+            label variable `unmatched' "No condition matched (. = outside analysis sample)"
+        }
+
+        * F6: matched_code — label (P1: capture moved to Mata scanner)
+        if "`matched_code'" != "" {
+            label variable `matched_code' "First matched code"
+        }
+    }
+
+    * =========================================================================
+    * MULTI-WINDOW SENSITIVITY ANALYSIS (W4, Mata-optimized)
+    * =========================================================================
+    * Scans secondary-window observations in ONE supplementary Mata pass
+    * instead of N-1 save/scan/restore cycles. Per-window counts are
+    * computed in Mata (patient-level for collapse/merge, row-level otherwise).
+    if `n_lookback_windows' > 1 {
+        tempname sensitivity
+        matrix `sensitivity' = J(`n_conditions', `n_lookback_windows', .)
+        * Column names are rebuilt during the display section below (using the
+        * final window order); this initialization is intentionally provisional.
+        local _sens_cnames ""
+
+        * First window: use match counts already accumulated by primary scan
+        forvalues i = 1/`n_conditions' {
+            local _prim_n_`i' = el(`_match_counts', 1, `i')
+        }
+
+        * Pre-compute ALL secondary window touse masks
+        quietly {
+            forvalues _wi = 2/`n_lookback_windows' {
+                local _lb_wi = `_lookback_`_wi''
+                local _sens_cnames "`_sens_cnames' `_lb_wi'd"
+                tempvar _stouse_`_wi'
+                mark `_stouse_`_wi'' `if' `in'
+                if "`id'" != "" replace `_stouse_`_wi'' = 0 if missing(`id')
+                replace `_stouse_`_wi'' = 0 if missing(`date') | missing(`refdate')
+                if `has_lookfwd' {
+                    replace `_stouse_`_wi'' = 0 if `date' < `refdate' - `_lb_wi'
+                    replace `_stouse_`_wi'' = 0 if `date' > `refdate' + `_lookfwd'
+                }
+                else {
+                    replace `_stouse_`_wi'' = 0 if `date' < `refdate' - `_lb_wi'
+                    if `include_ref' {
+                        replace `_stouse_`_wi'' = 0 if `date' > `refdate'
+                    }
+                    else {
+                        replace `_stouse_`_wi'' = 0 if `date' >= `refdate'
+                    }
+                }
+            }
+
+            * Union touse: observations in ANY secondary window but NOT primary
+            tempvar _utouse
+            gen byte `_utouse' = 0
+            forvalues _wi = 2/`n_lookback_windows' {
+                replace `_utouse' = 1 if `_stouse_`_wi'' & !`touse'
+            }
+            count if `_utouse'
+            local _n_supp = r(N)
+        }
+
+        * Supplementary scan: match codes in secondary-only observations
+        if `_n_supp' > 0 {
+            quietly {
+                forvalues i = 1/`n_conditions' {
+                    tempvar _uind_`i'
+                    gen byte `_uind_`i'' = 0
+                }
+            }
+            local _mata_touse "`_utouse'"
+            local _mata_mc_name ""
+            forvalues i = 1/`n_conditions' {
+                local _mata_name_`i' "`_uind_`i''"
+            }
+            local _mata_detail ""
+            local _mata_allslots ""
+            local _mata_countmode ""
+            * matched_code is a primary-scan output; the supplementary scan
+            * must not populate it for secondary-window-only rows (those lie
+            * outside the primary analysis window).
+            local _mata_matched_code ""
+            quietly mata: _codescan_mata_scan()
+        }
+
+        * Count per-window matches via Mata
+        local _sens_ind_names "`all_names'"
+        local _sens_supp_names ""
+        if `_n_supp' > 0 {
+            forvalues i = 1/`n_conditions' {
+                local _sens_supp_names "`_sens_supp_names' `_uind_`i''"
+            }
+            local _sens_supp_names = trim("`_sens_supp_names'")
+        }
+        local _sens_ncond "`n_conditions'"
+        local _sens_nwindows "`n_lookback_windows'"
+        local _sens_primary_touse "`touse'"
+        forvalues _wi = 2/`n_lookback_windows' {
+            local _sens_touse_`_wi' "`_stouse_`_wi''"
+        }
+        local _sens_do_collapse = ("`collapse'" != "" | "`merge'" != "")
+        local _sens_id "`id'"
+        tempname _sens_counts _sens_ns
+        local _sens_counts_name "`_sens_counts'"
+        local _sens_ns_name "`_sens_ns'"
+        mata: _codescan_mata_sensitivity_count()
+
+        * Extract per-window results from Mata
+        forvalues _wi = 2/`n_lookback_windows' {
+            local _sens_N_`_wi' = el(`_sens_ns', 1, `_wi')
+            forvalues i = 1/`n_conditions' {
+                local _sens_ct_`_wi'_`i' = el(`_sens_counts', `i', `_wi')
+            }
+        }
+
+        * Clean up supplementary variables
+        if `_n_supp' > 0 {
+            forvalues i = 1/`n_conditions' {
+                quietly drop `_uind_`i''
+            }
+        }
+        quietly drop `_utouse'
+        forvalues _wi = 2/`n_lookback_windows' {
+            quietly drop `_stouse_`_wi''
+        }
+
+        * Restore Mata locals for potential later use
+        local _mata_touse "`touse'"
+        forvalues i = 1/`n_conditions' {
+            local _mata_name_`i' "`def_name_`i''"
+        }
+        local _mata_detail "`detail'"
+        local _mata_allslots "`allslots'"
+        local _mata_countmode "`countmode'"
+        local _mata_matched_code "`matched_code'"
+
+        local _has_sensitivity = 1
+    }
+    else {
+        local _has_sensitivity = 0
+    }
+
+    * Preserve the caller's row ordering across merge's internal bysort/collapse.
+    * The caller's sort marker is state too: restoring only the row ORDER left
+    * `: sortedby' empty after every merge, so a following `by pid:' failed
+    * r(5) on data that was still in pid order. Record it here and re-declare
+    * it (up to the first variable this call replaced) once the order is back.
+    if "`merge'" != "" {
+        local _merge_sortedby : sortedby
+        tempvar _merge_input_order
+        quietly gen long `_merge_input_order' = _n
+    }
+
+    * =========================================================================
+    * PREPARE DATE VARIABLES (PRE-COLLAPSE/MERGE)
+    * =========================================================================
+    * Only collapse consumes these tempvars; the merge path builds its own
+    * m*-prefixed date summaries below (collapse and merge are mutually
+    * exclusive), so preparing them under merge is wasted work and an
+    * unnecessary reorder of the data.
+    if "`collapse'" != "" & "`date'" != "" {
+        local datefmt : format `date'
+
+        quietly {
+            forvalues i = 1/`n_conditions' {
+                local name "`def_name_`i''"
+
+                if "`earliestdate'" != "" | "`latestdate'" != "" {
+                    tempvar date_`i'
+                    gen double `date_`i'' = `date' if `name' > 0 & `touse'
+                }
+
+                if "`countdate'" != "" {
+                    tempvar hasmatch_`i' tag_`i'
+                    bysort `id' `date': egen byte `hasmatch_`i'' = max((`name' > 0) * `touse')
+                    by `id' `date': gen byte `tag_`i'' = `hasmatch_`i'' & `touse' & sum(`touse') == 1 & !missing(`date')
+                }
+            }
+        }
+    }
+
+    * =========================================================================
+    * PREPARE ROW-COUNT VARIABLES (PRE-COLLAPSE/MERGE)
+    * =========================================================================
+    if ("`collapse'" != "" | "`merge'" != "") & "`countrows'" != "" {
+        quietly {
+            forvalues i = 1/`n_conditions' {
+                local name "`def_name_`i''"
+                tempvar rowmatch_`i'
+                if "`countmode'" != "" {
+                    gen long `rowmatch_`i'' = `name' if `touse'
+                }
+                else {
+                    gen byte `rowmatch_`i'' = (`name' > 0 & `touse')
+                }
+            }
+        }
+    }
+
+    * =========================================================================
+    * COLLAPSE
+    * =========================================================================
+    if "`collapse'" != "" {
+        * Build collapse expression
+        local collapse_expr ""
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            if "`countmode'" != "" {
+                local collapse_expr "`collapse_expr' (sum) `name'"
+            }
+            else {
+                local collapse_expr "`collapse_expr' (max) `name'"
+            }
+
+            if "`earliestdate'" != "" {
+                local collapse_expr "`collapse_expr' (min) `name'_first=`date_`i''"
+            }
+            if "`latestdate'" != "" {
+                local collapse_expr "`collapse_expr' (max) `name'_last=`date_`i''"
+            }
+            if "`countdate'" != "" {
+                local collapse_expr "`collapse_expr' (sum) `name'_count=`tag_`i''"
+            }
+            if "`countrows'" != "" {
+                local collapse_expr "`collapse_expr' (sum) `name'_nrows=`rowmatch_`i''"
+            }
+        }
+
+        collapse `collapse_expr' if `touse', by(`id')
+
+        * Post-collapse formatting
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            if "`countmode'" == "" {
+                recast byte `name'
+            }
+
+            if "`earliestdate'" != "" {
+                format `name'_first `datefmt'
+            }
+            if "`latestdate'" != "" {
+                format `name'_last `datefmt'
+            }
+            if "`countdate'" != "" {
+                recast long `name'_count
+            }
+            if "`countrows'" != "" {
+                recast long `name'_nrows
+            }
+        }
+
+        quietly count
+        local N_collapsed = r(N)
+        * The caller's row-level data no longer exists. Recorded for the cleanup
+        * zone, which must not treat "drop the outputs" as a rollback from here
+        * on — there is nothing left to roll back TO.
+        local _data_collapsed = 1
+    }
+
+    * =========================================================================
+    * MERGE — non-destructive patient-level indicators (U1)
+    * =========================================================================
+    if "`merge'" != "" {
+        * Compute patient-level indicators via tempfile + merge back
+        local merge_expr ""
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            if "`countmode'" != "" {
+                local merge_expr "`merge_expr' (sum) `name'"
+            }
+            else {
+                local merge_expr "`merge_expr' (max) `name'"
+            }
+        }
+
+        * Also handle date summaries for merge
+        if "`date'" != "" {
+            local datefmt : format `date'
+            forvalues i = 1/`n_conditions' {
+                local name "`def_name_`i''"
+                if "`earliestdate'" != "" {
+                    tempvar mdate_`i'
+                    quietly gen double `mdate_`i'' = `date' if `name' > 0 & `touse'
+                    local merge_expr "`merge_expr' (min) `name'_first=`mdate_`i''"
+                }
+                if "`latestdate'" != "" {
+                    if "`earliestdate'" == "" {
+                        tempvar mdate_`i'
+                        quietly gen double `mdate_`i'' = `date' if `name' > 0 & `touse'
+                    }
+                    local merge_expr "`merge_expr' (max) `name'_last=`mdate_`i''"
+                }
+                if "`countdate'" != "" {
+                    tempvar mhasmatch_`i' mtag_`i'
+                    quietly bysort `id' `date': egen byte `mhasmatch_`i'' = max((`name' > 0) * `touse')
+                    quietly by `id' `date': gen byte `mtag_`i'' = `mhasmatch_`i'' & `touse' & sum(`touse') == 1 & !missing(`date')
+                    local merge_expr "`merge_expr' (sum) `name'_count=`mtag_`i''"
+                }
+            }
+        }
+
+        * Row-count summaries for merge
+        if "`countrows'" != "" {
+            forvalues i = 1/`n_conditions' {
+                local name "`def_name_`i''"
+                local merge_expr "`merge_expr' (sum) `name'_nrows=`rowmatch_`i''"
+            }
+        }
+
+        * Collapse to patient level via tempfile, then merge back
+        tempfile _merge_save
+        quietly save `_merge_save'
+        * I2: from here until the `use' below, the caller's rows are gone from
+        * memory and survive only in `_merge_save'. The collapse path sets
+        * _data_collapsed for the same reason; this window needs its own flag
+        * because its rows ARE recoverable, so the cleanup zone should restore
+        * them rather than treat the collapsed table as the final product.
+        local _merge_collapsing = 1
+        quietly collapse `merge_expr' if `touse', by(`id')
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            if "`countmode'" == "" {
+                recast byte `name'
+            }
+            if "`date'" != "" {
+                if "`earliestdate'" != "" format `name'_first `datefmt'
+                if "`latestdate'" != ""   format `name'_last `datefmt'
+                if "`countdate'" != ""    recast long `name'_count
+            }
+            if "`countrows'" != "" recast long `name'_nrows
+        }
+        tempfile _merge_tf
+        quietly save `_merge_tf'
+        quietly use `_merge_save', clear
+        local _merge_collapsing = 0
+
+        * Drop the row-level indicators we created, merge patient-level ones
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            quietly drop `name'
+            if "`replace'" != "" {
+                if "`earliestdate'" != "" capture drop `name'_first
+                if "`latestdate'" != ""   capture drop `name'_last
+                if "`countdate'" != ""    capture drop `name'_count
+                if "`countrows'" != ""   capture drop `name'_nrows
+            }
+        }
+        quietly merge m:1 `id' using `_merge_tf', nogenerate keep(master match)
+
+        quietly {
+            tempvar _uniq_id
+            bysort `id': gen byte `_uniq_id' = (`touse' & sum(`touse') == 1)
+            count if `_uniq_id' == 1
+        }
+        local N_unique_ids = r(N)
+    }
+
+    * =========================================================================
+    * CO-OCCURRENCE MATRIX (P1: Mata-accelerated)
+    * =========================================================================
+    if "`cooccurrence'" != "" {
+        tempname cooc
+        local _mata_cooc_matname "`cooc'"
+        local _mata_cooc_names "`all_names'"
+        local _mata_cooc_countmode "`countmode'"
+        if "`collapse'" != "" {
+            local _mata_cooc_touse ""
+        }
+        else if "`merge'" != "" {
+            * Patient-level co-occurrence: restrict to one row per patient
+            tempvar _cooc_tag
+            quietly bysort `id': gen byte `_cooc_tag' = (`touse' & sum(`touse') == 1)
+            local _mata_cooc_touse "`_cooc_tag'"
+        }
+        else {
+            local _mata_cooc_touse "`touse'"
+        }
+        mata: _codescan_mata_cooccurrence()
+        matrix rownames `cooc' = `all_names'
+        matrix colnames `cooc' = `all_names'
+    }
+
+    * =========================================================================
+    * ROW-LEVEL INDICATORS: MISSING OUTSIDE THE ANALYSIS SAMPLE
+    * =========================================================================
+    * The indicators were created as 0 on every row so the scanner, the overlap
+    * check, the sensitivity counts and co-occurrence could read them directly.
+    * Left that way, a row excluded by if/in or by the time window read as
+    * "analyzed, no match": `summarize dm2' then divided by _N rather than r(N),
+    * and the variable contradicted unmatched() and merge, which both mark an
+    * unanalyzed row missing. Every consumer above has run, so set the row-level
+    * result to its three-state form here. collapse/merge replace these
+    * variables with person-level values and need no step.
+    if "`collapse'" == "" & "`merge'" == "" {
+        forvalues i = 1/`n_conditions' {
+            quietly replace `def_name_`i'' = . if !`touse'
+        }
+    }
+
+    * =========================================================================
+    * RESOLVE DISPLAY LABELS (I1)
+    * =========================================================================
+    * One resolution, reused by every presentation path (variable labels, the
+    * console table, the detail table, the graph, and the label column of the
+    * export). Resolving per-path is how the console and the workbook drifted
+    * back to raw names while the variable label was correct.
+    *
+    * Precedence: label() beats a codefile label, because codefile labels are
+    * appended to lab_*_ first and the last matching entry wins here.
+    * Fallback: the condition's machine name.
+    *
+    * The machine name stays the identity everywhere a program reads results —
+    * r(conditions), matrix row/column names, and the export's condition column.
+    * Labels are presentation only, so relabeling never breaks a do-file.
+    forvalues i = 1/`n_conditions' {
+        local _cs_dlab_`i' `"`def_name_`i''"'
+        forvalues j = 1/`n_labels' {
+            if "`lab_name_`j''" == "`def_name_`i''" {
+                if `"`macval(lab_label_`j')'"' != "" {
+                    local _cs_dlab_`i' `"`macval(lab_label_`j')'"'
+                }
+            }
+        }
+    }
+
+    * =========================================================================
+    * APPLY LABELS
+    * =========================================================================
+    forvalues i = 1/`n_conditions' {
+        local name "`def_name_`i''"
+        local lbl ""
+
+        forvalues j = 1/`n_labels' {
+            if "`lab_name_`j''" == "`name'" {
+                local lbl `"`macval(lab_label_`j')'"'
+            }
+        }
+
+        if `"`macval(lbl)'"' != "" {
+            label variable `name' `"`macval(lbl)'"'
+            if "`earliestdate'" != "" {
+                label variable `name'_first `"Earliest `macval(lbl)' Date"'
+            }
+            if "`latestdate'" != "" {
+                label variable `name'_last `"Latest `macval(lbl)' Date"'
+            }
+            if "`countdate'" != "" {
+                label variable `name'_count `"`macval(lbl)' Date Count"'
+            }
+            if "`countrows'" != "" {
+                label variable `name'_nrows `"`macval(lbl)' Row Count"'
+            }
+        }
+        else {
+            label variable `name' `"`name'"'
+            if "`earliestdate'" != "" {
+                label variable `name'_first `"`name': earliest date"'
+            }
+            if "`latestdate'" != "" {
+                label variable `name'_last `"`name': latest date"'
+            }
+            if "`countdate'" != "" {
+                label variable `name'_count `"`name': unique dates"'
+            }
+            if "`countrows'" != "" {
+                label variable `name'_nrows `"`name': row count"'
+            }
+        }
+    }
+
+    * =========================================================================
+    * DISPLAY RESULTS
+    * =========================================================================
+    local nvars : word count `varlist'
+    if "`collapse'" != "" {
+        local N_display = `N_collapsed'
+    }
+    else if "`merge'" != "" {
+        local N_display = `N_unique_ids'
+    }
+    else {
+        local N_display = `N'
+    }
+
+    * Name the analysis unit so "Prevalence" is never read as person-level in
+    * row-level mode: row-level prevalence is the share of observations
+    * (encounters) with a match, not the share of persons.
+    if "`collapse'" != "" | "`merge'" != "" {
+        local _unit_lbl "`id' values"
+        local _hdr_unit = "`id' value" + cond(`N_display' == 1, "", "s")
+    }
+    else {
+        local _unit_lbl "observations"
+        local _hdr_unit = "observation" + cond(`N_display' == 1, "", "s")
+    }
+
+    * Counts are formatted then trimmed, as in codescan_describe: a fixed
+    * %10.0fc padded "N = 4" out to "N =          4" mid-sentence.
+    local _hdr_N = strtrim(string(`N_display', "%15.0fc"))
+    display as text _n "codescan: `n_conditions' condition" ///
+        cond(`n_conditions' > 1, "s", "") ", `nvars' variable" ///
+        cond(`nvars' > 1, "s", "") ", N = " as result "`_hdr_N'" ///
+        as text " `_hdr_unit'"
+
+    if `has_lookback' & `has_lookfwd' {
+        display as text "Window: `_lookback_primary' days before to `_lookfwd' days after `refdate' (inclusive)"
+    }
+    else if `has_lookback' {
+        local incl_txt = cond(`include_ref', " (inclusive)", "")
+        display as text "Window: `_lookback_primary' days before `refdate'`incl_txt'"
+    }
+    else if `has_lookfwd' {
+        local incl_txt = cond(`include_ref', " (inclusive)", "")
+        display as text "Window: `_lookfwd' days after `refdate'`incl_txt'"
+    }
+
+    display as text ""
+    if "`countmode'" != "" {
+        display as text "  Condition" _col(24) %9s "Hits" _col(36) %9s "Units>0" ///
+            _col(48) %10s "Prevalence"
+        display as text "  {hline 56}"
+    }
+    else {
+        display as text "  Condition" _col(24) %9s "Matches" ///
+            _col(36) %10s "Prevalence"
+        display as text "  {hline 44}"
+    }
+
+    * Columns: 1 count, 2 prevalence, 3 total_hits, 4 positive_units. Column 1
+    * stays where it was — under countmode it is the hit total, otherwise the
+    * matched unit count.
+    tempname summary
+    matrix `summary' = J(`n_conditions', 4, .)
+    local rnames ""
+
+    forvalues i = 1/`n_conditions' {
+        local name "`def_name_`i''"
+        * Console label (I1). The Condition column is 21 display columns wide;
+        * a longer label is truncated with a trailing "~" rather than allowed to
+        * push the numeric columns out of alignment. ustrlen()/usubstr() so a
+        * multibyte label is cut on a character, not inside one.
+        local _dlab `"`macval(_cs_dlab_`i')'"'
+        if ustrlen(`"`macval(_dlab)'"') > 21 {
+            local _dlab = usubstr(`"`macval(_dlab)'"', 1, 20) + "~"
+        }
+        * The label is free text: escape SMCL braces after truncating, so
+        * {bf:x} prints as typed and the 21-column cut counts visible text.
+        mata: st_local("_dlab", _codescan_smcl_literal(st_local("_dlab")))
+        if "`countmode'" != "" & "`merge'" != "" {
+            * merge+countmode: compute from patient-level (one row per patient).
+            * Patients with no in-window rows come back from the merge with a
+            * MISSING count; missing > 0 is true in Stata, so screen it out or
+            * they are counted as matches (inflating Obs>0 past 100%).
+            quietly {
+                tempvar _cmtag
+                bysort `id': gen byte `_cmtag' = (_n == 1)
+                count if `_cmtag' == 1 & `name' > 0 & !missing(`name')
+                local n_match = r(N)
+                summarize `name' if `_cmtag' == 1, meanonly
+                local n_total_match = r(sum)
+                drop `_cmtag'
+            }
+        }
+        else if "`countmode'" != "" {
+            * Rows outside the sample are missing, and missing > 0 is true.
+            quietly count if `name' > 0 & !missing(`name')
+            local n_match = r(N)
+            quietly summarize `name', meanonly
+            local n_total_match = r(sum)
+        }
+        else if "`merge'" != "" {
+            * For merge: count unique IDs with condition = 1
+            quietly {
+                tempvar _cnt_tag
+                bysort `id': gen byte `_cnt_tag' = (_n == 1) if `name' == 1
+                count if `_cnt_tag' == 1
+                local n_match = r(N)
+                drop `_cnt_tag'
+            }
+        }
+        else {
+            quietly count if `name' == 1
+            local n_match = r(N)
+        }
+        local pct = `n_match' / `N_display' * 100
+
+        * Compound quotes around the label: it is free text, so a double quote
+        * inside it would terminate a plain-quoted argument and abort the whole
+        * table with r(132) — an error message that names neither label() nor
+        * the condition it came from.
+        if "`countmode'" != "" {
+            display as text `"  `macval(_dlab)'"' _col(24) as result %9.0fc `n_total_match' ///
+                _col(36) as result %9.0fc `n_match' ///
+                _col(48) as result `_prev_fmt' `pct' as text "%"
+        }
+        else {
+            display as text `"  `macval(_dlab)'"' _col(24) as result %9.0fc `n_match' ///
+                _col(36) as result `_prev_fmt' `pct' as text "%"
+        }
+
+        if "`countmode'" != "" {
+            matrix `summary'[`i', 1] = `n_total_match'
+            matrix `summary'[`i', 3] = `n_total_match'
+        }
+        else {
+            matrix `summary'[`i', 1] = `n_match'
+            * Binary mode records only whether a unit matched, never how many
+            * times, so there is no hit total to report. Missing says that;
+            * copying n_match here would assert one hit per unit.
+            matrix `summary'[`i', 3] = .
+        }
+        matrix `summary'[`i', 2] = `pct'
+        matrix `summary'[`i', 4] = `n_match'
+        local rnames "`rnames' `name'"
+    }
+
+    * I3: name the two quantities countmode reports. "Hits" and "Units>0" differ
+    * whenever a unit carries the same condition more than once, and prevalence
+    * is built from the latter — so a table showing only the hit total invites
+    * reading a hit count as a case count.
+    if "`countmode'" != "" {
+        * Report footnotes are one SMCL paragraph each, wrapped by Stata at
+        * the line width, never split by hand.
+        display as text _n "{p 2 2 2}Hits = total matching code slots; Units>0 = `_unit_lbl'" ///
+            " with at least one hit. Prevalence is built from Units>0.{p_end}"
+    }
+
+    matrix colnames `summary' = count prevalence total_hits positive_units
+    matrix rownames `summary' = `rnames'
+    if "`merge'" != "" {
+        * Keys ahead of the input-order tiebreak reproduce exactly the input
+        * order (it was already sorted by them) and re-declare the marker;
+        * dropping the tempvar at exit truncates sortedby back to the keys.
+        * A key this call replaced no longer orders the data, so the marker
+        * stops there, as Stata's own drop would have done.
+        local _msb_keys ""
+        foreach _msb of local _merge_sortedby {
+            local _msb_out : list _msb in _outputs
+            if `_msb_out' continue, break
+            local _msb_keys "`_msb_keys' `_msb'"
+        }
+        quietly sort `_msb_keys' `_merge_input_order'
+    }
+
+
+    * Multi-window sensitivity display (W4)
+    if `_has_sensitivity' {
+        * Now build the sensitivity matrix using N_display
+        local _sens_cnames "`_lookback_1'd"
+        forvalues i = 1/`n_conditions' {
+            if "`collapse'" != "" | "`merge'" != "" {
+                * For collapsed data: primary window count from summary
+                matrix `sensitivity'[`i', 1] = `summary'[`i', 2]
+            }
+            else {
+                * Unreachable in practice: multi-window lookback() requires
+                * collapse or merge (validated above). Kept as a defensive
+                * row-level fallback should that constraint ever be relaxed.
+                matrix `sensitivity'[`i', 1] = `_prim_n_`i'' / `N_display' * 100
+            }
+        }
+        forvalues _wi = 2/`n_lookback_windows' {
+            local _lb_wi = `_lookback_`_wi''
+            if `_wi' > 1 local _sens_cnames "`_sens_cnames' `_lb_wi'd"
+            forvalues i = 1/`n_conditions' {
+                if `_sens_N_`_wi'' > 0 {
+                    matrix `sensitivity'[`i', `_wi'] = `_sens_ct_`_wi'_`i'' / `_sens_N_`_wi'' * 100
+                }
+                else {
+                    matrix `sensitivity'[`i', `_wi'] = .
+                }
+            }
+        }
+        matrix rownames `sensitivity' = `all_names'
+        matrix colnames `sensitivity' = `_sens_cnames'
+
+        * Per-window denominators (I2).
+        *
+        * Each window's denominator is the number of IDs with at least one row
+        * inside that window, so widening the window changes the denominator as
+        * well as the numerator. A prevalence that rises with window length can
+        * therefore reflect population ENTRY rather than sensitivity to
+        * ascertainment length — the two are indistinguishable from the
+        * percentages alone, and the counts were previously computed and thrown
+        * away. Return and display them so the reader can tell which is which.
+        tempname sensitivity_n
+        matrix `sensitivity_n' = J(1, `n_lookback_windows', .)
+        matrix `sensitivity_n'[1, 1] = `N_display'
+        forvalues _wi = 2/`n_lookback_windows' {
+            matrix `sensitivity_n'[1, `_wi'] = `_sens_N_`_wi''
+        }
+        matrix rownames `sensitivity_n' = N
+        matrix colnames `sensitivity_n' = `_sens_cnames'
+
+        display as text _n "  Multi-window sensitivity (prevalence %):"
+        display as text _col(20) _continue
+        forvalues _wi = 1/`n_lookback_windows' {
+            local _lb_wi = `_lookback_`_wi''
+            display as text %9s "`_lb_wi'd" _continue
+        }
+        display ""
+        forvalues i = 1/`n_conditions' {
+            display as text "  `def_name_`i''" _col(20) _continue
+            forvalues _wi = 1/`n_lookback_windows' {
+                display as result `_prev_fmt' el(`sensitivity', `i', `_wi') _continue
+            }
+            display ""
+        }
+        * The denominator row: the IDs eligible in each window.
+        local _sens_rule = 18 + 9 * `n_lookback_windows'
+        display as text "  {hline `_sens_rule'}"
+        display as text "  N" _col(20) _continue
+        forvalues _wi = 1/`n_lookback_windows' {
+            display as result %9.0fc el(`sensitivity_n', 1, `_wi') _continue
+        }
+        display ""
+        if "`collapse'" != "" | "`merge'" != "" local _sens_unit "`id' values"
+        else local _sens_unit "observations"
+        display as text "{p 2 3 2}(N is the number of `_sens_unit' with at least" ///
+            " one row in the window; a denominator that changes across windows" ///
+            " means the population entering each window differs, not only the" ///
+            " ascertainment length.){p_end}"
+    }
+
+    * Detail display: per-variable match contribution
+    if "`detail'" != "" {
+        display as text _n "  Per-variable match contribution:"
+        * F12: name the unit. r(varcounts) is accumulated during the row-level
+        * scan, so under collapse/merge these totals are row-level and will not
+        * equal the patient-level "Matches" column in the summary above.
+        if "`collapse'" != "" | "`merge'" != "" {
+            display as text "{p 2 3 2}(row-level contributions; the summary" ///
+                " above is patient-level){p_end}"
+        }
+        if "`allslots'" != "" | "`countmode'" != "" {
+            display as text "{p 2 3 2}(every matching slot counted; a row with" ///
+                " the same condition in two variables adds to both){p_end}"
+            if "`allslots'" == "" {
+                display as text "{p 2 3 2}(countmode always counts every slot," ///
+                    " so allslots would change nothing here){p_end}"
+            }
+        }
+        else {
+            * I5: name the attribution rule where the numbers are read, not only
+            * in the help. Reordering varlist moves rows between columns here
+            * while leaving the cohort untouched.
+            display as text "{p 2 3 2}(each row counted once per condition," ///
+                " against the FIRST matching variable in varlist order; add" ///
+                " allslots to count every matching slot instead){p_end}"
+        }
+        forvalues i = 1/`n_conditions' {
+            * Escape SMCL braces so the label prints literally.
+            mata: st_local("name", _codescan_smcl_literal(st_local("_cs_dlab_`i'")))
+            display as text `"  `macval(name)': "' _continue
+            local first = 1
+            local j = 0
+            foreach var of local varlist {
+                local ++j
+                local vc = el(`varcounts', `i', `j')
+                if `vc' > 0 {
+                    if !`first' display as text ", " _continue
+                    display as result `vc' as text " in `var'" _continue
+                    local first = 0
+                }
+            }
+            if `first' {
+                display as text "no matches" _continue
+            }
+            display ""
+        }
+
+        matrix rownames `varcounts' = `all_names'
+        local vnames ""
+        foreach var of local varlist {
+            local vnames "`vnames' `var'"
+        }
+        local vnames = trim("`vnames'")
+        matrix colnames `varcounts' = `vnames'
+    }
+
+    * Co-occurrence display
+    if "`cooccurrence'" != "" {
+        * Size each column from its own condition name (minimum 9) so a name
+        * of 9+ characters cannot run into its neighbour; the row-label
+        * column widens for the longest name.
+        local cooc_c0 = 24
+        forvalues j = 1/`n_conditions' {
+            local cooc_w`j' = max(9, ustrlen("`def_name_`j''") + 2)
+            local cooc_c0 = max(`cooc_c0', ustrlen("`def_name_`j''") + 5)
+        }
+        display as text _n "  Co-occurrence:"
+        display as text _col(`cooc_c0') _continue
+        forvalues j = 1/`n_conditions' {
+            display as text %`cooc_w`j''s "`def_name_`j''" _continue
+        }
+        display ""
+        forvalues i = 1/`n_conditions' {
+            display as text "  `def_name_`i''" _col(`cooc_c0') _continue
+            forvalues j = 1/`n_conditions' {
+                display as result %`cooc_w`j''.0fc el(`cooc', `i', `j') _continue
+            }
+            display ""
+        }
+    }
+
+    * =========================================================================
+    * STATUS LINES
+    * =========================================================================
+    * House style for every status/confirmation line: unindented, one
+    * parenthesised lowercase sentence, a second clause after "; ", the group
+    * set off from the report by one blank line. Lines are buffered in _st_*
+    * and printed only after every side effect (export, saving, save(),
+    * frame) has succeeded, so a failed write never follows a claim. Under preserve or
+    * frame() the caller's data is restored, so the line says where the
+    * result went instead of claiming the data in memory was collapsed.
+    local _st_n = 0
+    if "`collapse'" != "" | "`merge'" != "" {
+        if "`collapse'" != "" {
+            local _hdr_Nk = strtrim(string(`N_collapsed', "%15.0fc"))
+        }
+        else {
+            local _hdr_Nk = strtrim(string(`N_unique_ids', "%15.0fc"))
+        }
+        if "`preserve'" == "" {
+            if "`collapse'" != "" local _st_what "data collapsed to"
+            else local _st_what "patient-level indicators merged for"
+            local _st_tail ""
+        }
+        else {
+            if "`collapse'" != "" local _st_what "results collapsed to"
+            else local _st_what "patient-level indicators merged for"
+            if "`frame'" != "" local _st_tail " in frame `frame'; data in memory unchanged"
+            else local _st_tail "; data in memory unchanged"
+        }
+        local ++_st_n
+        local _st_pl = cond("`_hdr_Nk'" == "1", "", "s")
+        local _st_`_st_n' `"(`_st_what' `_hdr_Nk' unique `id' value`_st_pl'`_st_tail')"'
+    }
+
+    * =========================================================================
+    * RETURN RESULTS (posted before graph/export/saving so r() survives side-effect failures)
+    * =========================================================================
+
+    * Build list of created variables
+    local newvars "`all_names'"
+    if "`collapse'" != "" | "`merge'" != "" {
+        forvalues i = 1/`n_conditions' {
+            local name "`def_name_`i''"
+            if "`earliestdate'" != "" local newvars "`newvars' `name'_first"
+            if "`latestdate'" != ""   local newvars "`newvars' `name'_last"
+            if "`countdate'" != ""    local newvars "`newvars' `name'_count"
+            if "`countrows'" != ""   local newvars "`newvars' `name'_nrows"
+        }
+    }
+    if "`unmatched'" != "" & "`collapse'" == "" {
+        local newvars "`newvars' `unmatched'"
+    }
+    if "`matched_code'" != "" & "`collapse'" == "" {
+        local newvars "`newvars' `matched_code'"
+    }
+
+    * I2: Build codelist matrix
+    tempname codelist
+    matrix `codelist' = J(`n_conditions', 4, .)
+    local cl_rnames ""
+    forvalues i = 1/`n_conditions' {
+        matrix `codelist'[`i', 1] = `summary'[`i', 1]
+        matrix `codelist'[`i', 2] = `summary'[`i', 2]
+        matrix `codelist'[`i', 3] = `summary'[`i', 3]
+        matrix `codelist'[`i', 4] = `summary'[`i', 4]
+        local cl_rnames "`cl_rnames' `def_name_`i''"
+    }
+    matrix rownames `codelist' = `cl_rnames'
+    matrix colnames `codelist' = count prevalence total_hits positive_units
+
+    * Clear optional results from any earlier codescan invocation before
+    * publishing this call's contract. Without this, results such as
+    * r(varcounts) and r(detail_allslots) can survive when their option is
+    * omitted on the next successful call.
+    return clear
+    return scalar N = `N_display'
+    return scalar n_conditions = `n_conditions'
+    return scalar collapsed = ("`collapse'" != "")
+    return scalar merged = ("`merge'" != "")
+    return scalar mode_count = ("`countmode'" != "")
+    return local conditions "`all_names'"
+    return local newvars "`newvars'"
+    return local varlist "`varlist'"
+    return local mode "`mode'"
+    if "`nocase'" != ""                return local nocase "nocase"
+    * I5: r(varcounts) means different things under the two attribution rules,
+    * and the matrix itself cannot say which produced it.
+    *
+    * countmode counts every slot whether or not allslots was typed: the
+    * first-slot early exit in _codescan_mata_scan is gated on !is_count, so
+    * under countmode it never fires and varcounts tallies every matching slot.
+    * Returning ("allslots" != "") therefore reported first-slot attribution for
+    * a matrix built by the all-slots rule — proven identical to the explicit
+    * allslots run — so a caller that read 0 and summed a row to recover the
+    * matched-unit count got the slot total instead. Report the rule that
+    * actually produced the matrix.
+    if "`detail'" != "" {
+        return scalar detail_allslots = ("`allslots'" != "" | "`countmode'" != "")
+    }
+    if "`generate'" != ""              return local generate "`generate'"
+    if `"`define'"' != ""              return local define `"`define'"'
+    if "`_orig_codefile'" != ""         return local codefile "`_orig_codefile'"
+    if "`id'" != ""                    return local id "`id'"
+    if "`date'" != ""                  return local date "`date'"
+    if `has_lookback' & `n_lookback_windows' == 1 {
+        return scalar lookback = `_lookback_primary'
+    }
+    else if `has_lookback' {
+        return local lookback "`lookback'"
+    }
+    if `has_lookfwd'                   return scalar lookforward = `_lookfwd'
+    if `has_lookback' | `has_lookfwd'  return local refdate "`refdate'"
+    if `has_lookback' | `has_lookfwd'  return scalar n_excluded_missingdate = `_n_excl_missdate'
+    if "`frame'" != ""                 return local frame "`frame'"
+    * , copy — keep local tempname matrices alive for the export block below.
+    return matrix summary = `summary', copy
+    return matrix codelist = `codelist', copy
+    if "`detail'" != ""                return matrix varcounts = `varcounts', copy
+    if "`cooccurrence'" != ""          return matrix cooccurrence = `cooc', copy
+    if `_has_sensitivity'              return matrix sensitivity = `sensitivity', copy
+    if `_has_sensitivity'              return matrix sensitivity_n = `sensitivity_n', copy
+    local _r_posted = 1
+
+    * =========================================================================
+    * GRAPH — prevalence bar chart (O1)
+    * =========================================================================
+    if "`graph'" != "" {
+        tempfile _graph_save
+        quietly save `_graph_save'
+        capture noisily {
+            quietly {
+                clear
+                set obs `n_conditions'
+                * I1: the bar labels are presentation, so they carry the human
+                * label when there is one. The declared width is a floor, not
+                * a cap: `replace' widens a string variable to fit, so a label
+                * longer than 80 characters reaches the artifact whole.
+                gen str80 condition = ""
+                gen double prevalence = .
+                forvalues i = 1/`n_conditions' {
+                    replace condition = `"`macval(_cs_dlab_`i')'"' in `i'
+                    replace prevalence = `summary'[`i', 2] in `i'
+                }
+                gsort -prevalence
+                gen int order = _n
+                tempname _glab
+                forvalues _gi = 1/`=_N' {
+                    local _gcond = condition[`_gi']
+                    * Graph text interprets SMCL too; escape the braces so
+                    * the bar label shows the text as typed.
+                    mata: st_local("_gcond", _codescan_smcl_literal(st_local("_gcond")))
+                    * Compound quotes: a label is free text and may contain a
+                    * double quote, which plain quotes would let terminate the
+                    * argument early.
+                    label define `_glab' `_gi' `"`macval(_gcond)'"', add
+                }
+                label values order `_glab'
+            }
+            graph hbar prevalence, over(order) ///
+                ytitle("Prevalence (%)") ///
+                title("Condition Prevalence") ///
+                blabel(bar, format(`_prev_fmt'))
+        }
+        local _graph_rc = _rc
+        capture quietly use `_graph_save', clear
+        local _graph_restore_rc = _rc
+        if `_graph_restore_rc' & `_graph_rc' == 0 exit `_graph_restore_rc'
+        if `_graph_rc' exit `_graph_rc'
+    }
+
+    * =========================================================================
+    * EXPORT — save results to file (O2)
+    * =========================================================================
+    if `"`export'"' != "" {
+        local _exp_ext = lower(substr(`"`_export_fn'"', -4, .))
+        tempfile _export_save
+        quietly save `_export_save'
+        capture noisily {
+            quietly {
+            clear
+            set obs `n_conditions'
+            * condition stays the machine name — it is what a downstream merge
+            * or reshape keys on. label (I1) carries the human text alongside
+            * it, so relabeling a condition never moves the join key.
+            gen str32 condition = ""
+            gen str80 label = ""
+            gen long matches = .
+            gen long total_hits = .
+            gen long positive_units = .
+            gen double prevalence = .
+            gen str244 pattern = ""
+            gen str244 exclusion = ""
+            forvalues i = 1/`n_conditions' {
+                replace condition = "`def_name_`i''" in `i'
+                replace label = `"`macval(_cs_dlab_`i')'"' in `i'
+                replace matches = `summary'[`i', 1] in `i'
+                replace total_hits = `summary'[`i', 3] in `i'
+                replace positive_units = `summary'[`i', 4] in `i'
+                replace prevalence = `summary'[`i', 2] in `i'
+                replace pattern = `"`def_pattern_`i''"' in `i'
+                replace exclusion = `"`def_excl_`i''"' in `i'
+            }
+            * I3: matches is the legacy column and keeps its legacy meaning —
+            * the hit total under countmode, the matched-unit count otherwise.
+            * The two named columns say which is which without reading the call.
+            label variable matches "Legacy count: total_hits under countmode, else positive_units"
+            label variable total_hits "Total matching code slots (countmode only)"
+            label variable positive_units "Units with at least one match"
+            format prevalence `_prev_fmt'
+            }
+            if "`_exp_ext'" == ".csv" {
+                * A CSV cell is text, so format() can reach it only as the
+                * written digits. It was silently ignored here (33.33333333333333
+                * under format(%9.2f)). An explicit format() is honoured;
+                * without one the CSV keeps full precision rather than
+                * rounding every export to the %9.1f display default.
+                if "`format'" != "" {
+                    tempvar _prev_txt
+                    gen str244 `_prev_txt' = strtrim(string(prevalence, "`_prev_fmt'"))
+                    drop prevalence
+                    rename `_prev_txt' prevalence
+                    order prevalence, after(positive_units)
+                }
+                quietly export delimited using `"`_export_fn'"', replace
+            }
+            else {
+                quietly export excel using `"`_export_fn'"', firstrow(variables) replace
+                * Add co-occurrence as second sheet if available
+                if "`cooccurrence'" != "" {
+                    quietly {
+                        clear
+                        local _ncond = `n_conditions'
+                        set obs `_ncond'
+                        gen str32 condition = ""
+                        forvalues i = 1/`_ncond' {
+                            replace condition = "`def_name_`i''" in `i'
+                        }
+                        forvalues j = 1/`_ncond' {
+                            gen double `def_name_`j'' = .
+                            forvalues i = 1/`_ncond' {
+                                replace `def_name_`j'' = el(`cooc', `i', `j') in `i'
+                            }
+                        }
+                    }
+                    quietly export excel using `"`_export_fn'"', firstrow(variables) ///
+                        sheet("cooccurrence") sheetmodify
+                }
+            }
+        }
+        local _export_rc = _rc
+        capture quietly use `_export_save', clear
+        local _export_restore_rc = _rc
+        if `_export_restore_rc' & `_export_rc' == 0 exit `_export_restore_rc'
+        if `_export_rc' exit `_export_rc'
+        local ++_st_n
+        local _st_`_st_n' `"(results exported to `_export_fn')"'
+    }
+
+    * =========================================================================
+    * INTERNAL SCAFFOLDING TEMPVARS (F1, I3)
+    * =========================================================================
+    * codescan's own tempvars must not reach any deliverable. A plain `save'
+    * would write touse and the merge/collapse scaffolding to disk (proven:
+    * merge+saving leaked __00000X columns), and `frame put *' copies them into
+    * the output frame. The frame copy is transient — Stata drops tempvars from
+    * every frame when the defining program ends — but that is undocumented
+    * behaviour to lean an output contract on, and it does nothing for `save',
+    * which commits to disk first. Both writers drop the list explicitly.
+    * This list must track every tempvar that can still be live at output time:
+    *   touse                         marksample (always)
+    *   _scan_string_*                numeric scan vars under tostring
+    *   _merge_input_order/_uniq_id   merge scaffolding
+    *   _cooc_tag                     merge patient-level co-occurrence tag
+    *   rowmatch_* mdate_* mtag_*     merge row-count/date summaries
+    *   mhasmatch_*
+    local _save_temps `touse' `_merge_input_order' `_uniq_id' `_cooc_tag'
+    forvalues i = 1/`_scan_index' {
+        local _save_temps `_save_temps' `_scan_string_`i''
+    }
+    forvalues i = 1/`n_conditions' {
+        local _save_temps `_save_temps' `rowmatch_`i'' `mdate_`i'' `mhasmatch_`i'' `mtag_`i''
+    }
+
+    * =========================================================================
+    * SAVING() — save result dataset to file (before restore)
+    * =========================================================================
+    if `"`saving'"' != "" {
+        local _save_drop ""
+        foreach _v of local _save_temps {
+            capture confirm variable `_v'
+            if !_rc local _save_drop `_save_drop' `_v'
+        }
+        if "`_save_drop'" != "" quietly drop `_save_drop'
+        if `_saving_replace' {
+            quietly save `"`_saving_fn'"', replace
+        }
+        else {
+            quietly save `"`_saving_fn'"'
+        }
+        local ++_st_n
+        local _st_`_st_n' `"(dataset saved to `_saving_fn')"'
+    }
+
+    * =========================================================================
+    * SAVE DEFINE TO CSV -- COMMIT (W3)
+    * =========================================================================
+    * The write half of the save() option, deferred from option validation so no
+    * definition CSV survives a call that failed. Placed after graph/export/
+    * saving so it commits only once every other fallible external output has
+    * succeeded. A tempfile round-trip rather than preserve/restore: the caller's
+    * own preserve may already be active here, and Stata allows one per program.
+    if `"`save'"' != "" {
+        tempfile _savedef_data
+        quietly save `_savedef_data'
+        capture noisily {
+            quietly {
+                clear
+                set obs `n_conditions'
+                gen str32 name = ""
+                gen str244 pattern = ""
+                gen str244 exclusion = ""
+                gen str80 label = ""
+                * The matching options travel with the rules: codefile()
+                * refuses a later call whose options differ, because the same
+                * pattern under other options is a different cohort.
+                gen str40 match = itrim(strtrim("mode(`mode') `nocase' `nodots'"))
+                forvalues i = 1/`n_conditions' {
+                    local _sv_nm "`def_name_`i''"
+                    * Strip generate() prefix if present
+                    if "`generate'" != "" {
+                        local _sv_nm = substr("`_sv_nm'", strlen("`generate'") + 1, .)
+                    }
+                    replace name = "`_sv_nm'" in `i'
+                    replace pattern = `"`def_pattern_`i''"' in `i'
+                    replace exclusion = `"`def_excl_`i''"' in `i'
+                    forvalues j = 1/`n_labels' {
+                        if "`lab_name_`j''" == "`def_name_`i''" {
+                            replace label = `"`macval(lab_label_`j')'"' in `i'
+                        }
+                    }
+                }
+                export delimited using `"`_save_fn'"', replace
+            }
+        }
+        local _savedef_rc = _rc
+        capture quietly use `_savedef_data', clear
+        local _savedef_restore_rc = _rc
+        if `_savedef_restore_rc' & `_savedef_rc' == 0 exit `_savedef_restore_rc'
+        if `_savedef_rc' exit `_savedef_rc'
+        local ++_st_n
+        local _st_`_st_n' `"(define() saved to `_save_fn')"'
+    }
+
+    * =========================================================================
+    * FRAME OUTPUT + RESTORE
+    * =========================================================================
+    if "`preserve'" != "" {
+        if "`frame'" != "" {
+            if "`replace'" != "" {
+                capture confirm frame `frame'
+                if !_rc {
+                    capture frame drop `frame'
+                    local _frdrop_rc = _rc
+                    if `_frdrop_rc' {
+                        display as error "frame(): cannot replace frame `frame' (r(`_frdrop_rc'))"
+                        exit `_frdrop_rc'
+                    }
+                }
+            }
+            * I3: `frame put *' copies every variable, tempvars included. Drop
+            * the scaffolding first so the output frame carries only the
+            * deliverable, rather than relying on Stata's end-of-program
+            * tempvar sweep to tidy the frame afterwards. Safe here: the
+            * caller's data is restored from the snapshot on the next line.
+            local _frame_drop ""
+            foreach _v of local _save_temps {
+                capture confirm variable `_v'
+                if !_rc local _frame_drop `_frame_drop' `_v'
+            }
+            if "`_frame_drop'" != "" quietly drop `_frame_drop'
+            frame put *, into(`frame')
+        }
+        restore
+        local _did_preserve = 0
+        * After restore, indicators no longer exist in memory — and neither does
+        * anything for the cleanup zone to drop.
+        local _outputs_created = 0
+        return local newvars ""
+    }
+
+    if "`_st_n'" != "" & "`_st_n'" != "0" {
+        display ""
+        forvalues _sk = 1/`_st_n' {
+            * {p 0 1 2}: wraps at word boundaries with a 1-space hanging
+            * indent, so a line near the width never strands a lone ")".
+            * Braces are escaped so file paths display literally.
+            mata: st_local("_st_line", _codescan_smcl_literal(st_local("_st_`_sk'")))
+            display as text `"{p 0 1 2}`macval(_st_line)'{p_end}"'
+        }
+    }
+
+    * =========================================================================
+    * COMMIT
+    * =========================================================================
+    * Every fallible side effect has succeeded, so the in-place result is final:
+    * discard the internal snapshot without restoring it.
+    if `_internal_preserve' {
+        restore, not
+        local _internal_preserve = 0
+    }
+
+    } // end capture noisily
+    local rc = _rc
+    if `rc' {
+        * Roll back. A snapshot — the user's preserve or our internal one — is a
+        * complete rollback on its own.
+        local _rolled_back = 0
+        if `_did_preserve' | `_internal_preserve' {
+            capture restore
+            if _rc == 0 local _rolled_back = 1
+        }
+        * I2: the merge path replaces the caller's rows with the collapsed
+        * patient-level table between `save `_merge_save'' and the `use' that
+        * brings them back. An error inside that window with no snapshot active
+        * would reach the output drop below with collapsed data in memory,
+        * where dropping the planned outputs restores nothing and destroys the
+        * only surviving product. The row-level snapshot is still on disk, so
+        * roll back to it and let the normal drop run against the caller's own
+        * rows. If even that fails, nothing in memory is the caller's data, so
+        * route through the collapsed guard and drop nothing.
+        if !`_rolled_back' & `_merge_collapsing' {
+            capture quietly use `_merge_save', clear
+            if _rc {
+                local _data_collapsed = 1
+            }
+            else {
+                local _merge_collapsing = 0
+            }
+        }
+        * Drop the planned outputs ONLY when no snapshot rolled the data back.
+        * After a successful restore the data IS the caller's pre-call data, and
+        * the planned output names may name the caller's OWN pre-existing
+        * variables — dropping them there is the C1 data-loss defect, not
+        * cleanup. Reached only when nothing collided, in which case every
+        * planned name was created by this run and is ours to remove.
+        *
+        * ...and never after collapse consumed the data. Dropping outputs is a
+        * rollback only while the caller's pre-call data is still there to roll
+        * back to. Once collapse has run without a snapshot, it is not: the rows
+        * are already gone, so the drop cannot restore anything and instead
+        * destroys the run's only surviving product, handing back a dataset
+        * holding nothing but id(). A requested fallible side effect (graph,
+        * export(), saving(), save()) now takes an internal snapshot before the
+        * collapse, so that case rolls back above; this guard covers only an
+        * unexpected failure after a snapshot-free collapse. preserve and
+        * frame() restore in full as before.
+        local _outputs_gone = `_rolled_back'
+        if !`_rolled_back' & !`_data_collapsed' & "`_outputs'" != "" & `_outputs_created' {
+            capture noisily _codescan_cleanup_outputs, outputs("`_outputs'") ///
+                scanvars("`varlist'") protected("`id' `date' `refdate'")
+            if _rc == 0 local _outputs_gone = 1
+        }
+        * r() was posted before the late outputs so the analysis survives a
+        * failed graph/export/save/saving. Once the rollback has removed the
+        * outputs, the data-state results must say so: no new variables, no
+        * collapse or merge left in memory, no frame written. The analytic
+        * payload (r(N), r(summary), ...) is kept.
+        if `_r_posted' & `_outputs_gone' {
+            return local newvars ""
+            return scalar collapsed = 0
+            return scalar merged = 0
+            return local frame ""
+        }
+    }
+    if `_had_fn' mata: st_global("S_FN",st_local("_caller_fn"))
+    else capture macro drop S_FN
+    if `_had_fndate' mata: st_global("S_FNDATE",st_local("_caller_fndate"))
+    else capture macro drop S_FNDATE
+    set varabbrev `_orig_varabbrev'
+    if `rc' exit `rc'
+end

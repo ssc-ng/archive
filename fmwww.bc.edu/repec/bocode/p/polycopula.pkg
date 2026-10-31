@@ -1,0 +1,25 @@
+d 'POLYCOPULA': module to compute Copula-based association for ordinal variables:  Gaussian (polychoric), Frank, Clayton and Gumbel
+d
+d      The polychoric correlation is the parameter of a Gaussian
+d copula linking the latent variables behind two ordinal variables.
+d When	  polytest or the polycorr fit tests reject latent
+d normality, the polychoric correlation can misstate the strength
+d of association.    polycopula fits, for every pair, the same
+d two-step model with the Gaussian copula replaced by:	      o
+d Frank: symmetric, no tail dependence;        o Clayton:
+d lower-tail dependence;	o Gumbel: upper-tail dependence. 
+d
+d KW: Copula-based association
+d KW: ordinal variables
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261030
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f polycopula.ado
+f polycopula.sthlp
+f polycopula_examples.do
+f polycopula_cert.do

@@ -1,0 +1,345 @@
+{smcl}
+{vieweralsosee "codescan" "help codescan"}{...}
+{vieweralsosee "[D] tostring" "help tostring"}{...}
+{viewerjumpto "Syntax" "codescan_describe##syntax"}{...}
+{viewerjumpto "Description" "codescan_describe##description"}{...}
+{viewerjumpto "Variable lists" "codescan_describe##varlists"}{...}
+{viewerjumpto "Options" "codescan_describe##options"}{...}
+{viewerjumpto "Remarks" "codescan_describe##remarks"}{...}
+{viewerjumpto "Examples" "codescan_describe##examples"}{...}
+{viewerjumpto "Stored results" "codescan_describe##results"}{...}
+{viewerjumpto "Author" "codescan_describe##author"}{...}
+
+{title:Title}
+
+{p2colset 5 28 30 2}{...}
+{p2col:{cmd:codescan_describe} {hline 2}}Describe the code inventory in wide-format variables{p_end}
+{p2colreset}{...}
+
+
+{marker syntax}{...}
+{title:Syntax}
+
+{p 8 27 2}
+{cmd:codescan_describe}
+{varlist}
+{ifin}
+[{cmd:,} {it:options}]
+
+
+{synoptset 26 tabbed}{...}
+{synopthdr}
+{synoptline}
+{synopt:{opt t:op(#)}}report the top {it:#} codes; default is {cmd:top(20)}{p_end}
+{synopt:{opt nod:ots}}strip dots before tabulating{p_end}
+{synopt:{opt tostr:ing}}convert numeric code variables to string{p_end}
+{synopt:{opt save(filename [, replace])}}write a draft codefile CSV{p_end}
+{synoptline}
+{p2colreset}{...}
+
+
+{marker description}{...}
+{title:Description}
+
+{pstd}
+{cmd:codescan_describe} is the exploratory companion to {helpb codescan}. It answers a basic
+but important question before you write any scan
+rules: {it:What codes are actually present in these variables?}
+
+{pstd}
+The command pools nonempty values across all specified wide-format code
+variables (for example {cmd:dx1} through {cmd:dx30}), counts how often each
+unique code appears, and then summarizes the inventory by the first character
+of each code. The output has up to three panels:
+
+{phang2}1. A {bf:top-code table} showing the most common codes ranked by
+frequency, with percent and cumulative percent columns.{p_end}
+
+{phang2}2. A {bf:chapter summary} grouping all codes by their first character
+(for ICD-10 these correspond roughly to diagnosis chapters), with code count
+and entry count per group.{p_end}
+
+{phang2}3. {bf:Suggested patterns}, shown when there are at least two
+chapters: a ready-to-edit {cmd:define()} entry for each of the five largest chapters, with
+its code and entry counts. These are the same rules {cmd:save()} writes.{p_end}
+
+{pstd}
+This quickly shows whether your data are dominated by diagnosis chapters,
+procedure prefixes, medication classes, or some other coding scheme — and
+which prefixes deserve attention when you write {helpb codescan} rules.
+
+{pstd}
+Because it accumulates frequencies variable by variable using a Mata hash
+map, {cmd:codescan_describe} avoids the memory blow-up that often comes with
+reshaping very wide code data to long form just for reconnaissance.
+
+
+{marker varlists}{...}
+{title:Variable lists}
+
+{pstd}
+The {varlist} after {cmd:codescan_describe} is a normal Stata varlist. Use
+explicit names for a short list, a hyphen range when the variables are adjacent
+in the dataset order, or a wildcard when the variable prefix is consistent.
+
+{phang2}{cmd:. codescan_describe dx1 dx2 dx3}{p_end}
+{phang2}{cmd:. codescan_describe dx1-dx30}{p_end}
+{phang2}{cmd:. codescan_describe dx*}{p_end}
+{phang2}{cmd:. codescan_describe dx1-dx30 proc1-proc20}{p_end}
+
+{pstd}
+The output pools nonempty code values across all listed variables and excludes
+the bare {cmd:.} placeholder. That is the right behavior when you are asking
+"what codes exist anywhere in these slots?"
+If you later need to see which variable contributed matches to a scan rule, run
+{helpb codescan} with the {cmd:detail} option.
+
+
+{marker options}{...}
+{title:Options}
+
+{phang}
+{opt t:op(#)} specifies how many codes to display in the ranked table. The
+value must be a positive integer. The default is {cmd:top(20)}. Use a large
+value such as {cmd:top(100)} if you want to inspect rare codes as well.
+
+{phang}
+{opt nod:ots} strips periods from each code value before tabulating. This is
+useful when dotted and undotted forms should be treated as the same code — for
+example, {cmd:E11.0} and {cmd:E110} would be counted together. The original
+data are never modified.
+
+{phang}
+{opt tostr:ing} converts numeric variables in {varlist} to string before
+tabulating. Use this when code variables were inadvertently imported as
+numeric rather than text. Each value is written as the shortest decimal text
+that reads back as the stored number: integers in full, never in scientific
+notation ({cmd:1234567890123}, not {cmd:1.23457e+12}), and a {cmd:float}
+holding 250.01 as {cmd:250.01}, not {cmd:250.0099945}. Missing values,
+including {cmd:.a}-{cmd:.z}, count as empty. This is the same conversion
+{helpb codescan} applies, so both commands see the same codes. The original
+numeric variables are restored afterward. Variables must be fixed-width strings ({cmd:str#}); {cmd:strL}
+variables are rejected — convert them first with {helpb compress} or
+{helpb recast}.
+
+{phang}
+{opt save(filename [, replace])} writes a draft CSV codefile based on the chapter summary. The
+file contains the columns {cmd:name}, {cmd:pattern}, {cmd:exclusion}, {cmd:label}, and
+{cmd:match}. Each row is a
+first-character chapter such as {cmd:chapter_E}. If no codes remain, the file
+contains the header and no data rows. Punctuation chapter characters
+are converted to valid, unique Stata names. Each {cmd:pattern} is the chapter's
+leading character. When that character is a regex metacharacter it is
+regex-escaped (a {cmd:.} chapter is written {cmd:\.}, a {cmd:$} chapter {cmd:\$}),
+and a space chapter is written as the class {cmd:[ ]}, because
+{cmd:mode(prefix)} trims a bare space to an empty prefix. Such a pattern is a regex, and in {cmd:mode(prefix)}
+it would match nothing, so whenever the draft contains one, every row's
+{cmd:match} column is {cmd:mode(regex)} and {helpb codescan} refuses to read the
+draft under other matching options rather than return an empty cohort. A draft
+whose chapters are all ordinary characters (letters, digits) leaves {cmd:match}
+empty and is accepted under any matching options. Open it in a spreadsheet
+and refine into real scan rules before using with {helpb codescan:codescan, codefile()}. The
+filename must end in {cmd:.csv}; quotes, shell metacharacters, and control
+characters inside the filename are rejected, as is a directory that does not
+exist ({cmd:r(603)}); these checks run before anything is displayed. An
+existing file is never overwritten: {cmd:save()} refuses the write unless {cmd:replace} is specified as
+a suboption, as in {cmd:save(draft.csv, replace)}.
+
+
+{marker remarks}{...}
+{title:Remarks}
+
+{pstd}
+{bf:When to use this command.} Run {cmd:codescan_describe} as the very
+first step in a comorbidity or code-scanning workflow. It tells you which
+code families dominate, how many unique codes exist, and how the entry volume
+is distributed across chapters — all without requiring any rule definitions.
+
+{pstd}
+{bf:Interpreting the output.} The top-code table shows the most common individual
+codes, so a single code appearing in many rows will rank high. The chapter
+summary shows volume by first character, which is useful for deciding which
+character-level groups to target in {cmd:define()} or {cmd:codefile()} rules.
+
+{pstd}
+{bf:Building a starter codefile.} The {cmd:save()} option creates a draft
+codefile with one row per chapter (first character). This is a starting
+point, not a finished definition file: open it in a spreadsheet, rename the
+conditions, refine the patterns, and add exclusion patterns as needed before
+passing it to {helpb codescan:codescan, codefile()}.
+
+{pstd}
+{bf:Programmatic use.} The same information printed to the Results window is
+also returned in matrices. {cmd:r(top_codes)} uses code values as row names
+when they are safe row names and bounded aliases otherwise; it has columns
+{cmd:frequency}, {cmd:percent}, and {cmd:cumul_pct}. {cmd:r(chapters)} uses
+first characters as row names when possible and aliases otherwise; it has
+columns {cmd:codes} and {cmd:entries}. The exact identity for every row is
+always available in the matching {cmd:r(top_code_#)} or {cmd:r(chapter_#)}
+macro. This makes it possible to audit a new dataset automatically before
+deciding whether an existing code dictionary is still appropriate.
+
+{pstd}
+{bf:Edge cases.} If {cmd:if} or {cmd:in} removes every observation, the
+command exits with error {cmd:r(2000)}. If observations remain but every
+scanned code slot is empty, the command succeeds and reports zero unique
+codes. In that case {cmd:r(top_codes)} and {cmd:r(chapters)} are still
+returned as single-row zero-filled matrices, so downstream code does not need
+special-case handling. If {cmd:save()} is specified, a header-only draft CSV is
+still written.
+
+
+{marker examples}{...}
+{title:Examples}
+
+{pstd}
+The following setup is copy-paste runnable after {cmd:net install}:
+
+{phang2}{cmd:. clear}{p_end}
+{phang2}{cmd:. input str6 dx1 str6 dx2}{p_end}
+{phang2}{cmd:      "E110" "I10"}{p_end}
+{phang2}{cmd:      "E119" "Z00"}{p_end}
+{phang2}{cmd:      "I50"  ""}{p_end}
+{phang2}{cmd:      ""     ""}{p_end}
+{phang2}{cmd:. end}{p_end}
+
+{pstd}
+{bf:Example 1: Inspect the code inventory}
+
+{pstd}
+See which codes appear across both diagnosis slots and how they rank by
+frequency:
+
+{phang2}{cmd:. codescan_describe dx1 dx2}{p_end}
+
+{pstd}
+The output shows one table of the top codes (ranked by frequency, with percent
+and cumulative percent), a second table grouping all codes by their first
+character, and suggested {cmd:define()} entries for the largest chapters.
+
+{pstd}
+Technical users can inspect the returned matrix
+directly: {cmd:. matrix list r(top_codes)}. The table is stored in
+{cmd:r(top_codes)}.
+
+{pstd}
+{bf:Example 2: Show more codes and ignore dots}
+
+{pstd}
+Increase the number of ranked codes shown and merge dotted and undotted forms:
+
+{phang2}{cmd:. codescan_describe dx1 dx2, top(10) nodots}{p_end}
+
+{pstd}
+{bf:Example 3: Draft a starter codefile from the chapter summary}
+
+{pstd}
+Write a CSV template you can open in a spreadsheet, refine, and later pass
+to {helpb codescan:codescan, codefile()}:
+
+{phang2}{cmd:. codescan_describe dx1 dx2, save(chapter_rules.csv)}{p_end}
+
+{pstd}
+{bf:Example 4: Restrict to a subset of observations}
+
+{pstd}
+Use {cmd:if} or {cmd:in} to inspect codes for a subset of patients or
+encounters:
+
+{phang2}{cmd:. codescan_describe dx1 dx2 if dx1 != ""}{p_end}
+
+{pstd}
+{bf:Example 5: Convert numeric codes before tabulating}
+
+{pstd}
+If your code variables were imported as numeric rather than string, add
+{cmd:tostring} so that {cmd:codescan_describe} can inspect them. Build a small
+numeric example, including a missing value:
+
+{phang2}{cmd:. clear}{p_end}
+{phang2}{cmd:. input icd9_1 icd9_2}{p_end}
+{phang2}{cmd:      25000  4019}{p_end}
+{phang2}{cmd:      25000      .}{p_end}
+{phang2}{cmd:      4019   25001}{p_end}
+{phang2}{cmd:. end}{p_end}
+{phang2}{cmd:. codescan_describe icd9_1 icd9_2, tostring}{p_end}
+
+{pstd}
+The codes are tabulated as {cmd:25000}, {cmd:25001}, and {cmd:4019}. The
+original numeric variables are unchanged. Numeric missing values — including
+the extended missings {cmd:.a} through {cmd:.z} — are treated as absent codes
+and never appear as the code values {cmd:.} or {cmd:.a} in the table.
+
+
+{marker results}{...}
+{title:Stored results}
+
+{pstd}
+{cmd:codescan_describe} stores the following in {cmd:r()}:
+
+{synoptset 24 tabbed}{...}
+{p2col 5 24 28 2: Scalars}{p_end}
+{synopt:{cmd:r(n_unique)}}unique nonempty, non-{cmd:.} codes found{p_end}
+{synopt:{cmd:r(n_entries)}}nonempty, non-{cmd:.} entries scanned{p_end}
+{synopt:{cmd:r(n_vars)}}number of variables scanned{p_end}
+
+{p2col 5 24 28 2: Macros}{p_end}
+{synopt:{cmd:r(varlist)}}scanned variables{p_end}
+{synopt:{cmd:r(top_code_#)}}exact code for each top-code row{p_end}
+{synopt:{cmd:r(chapter_#)}}exact leading character for each chapter row{p_end}
+
+{p2col 5 24 28 2: Matrices}{p_end}
+{synopt:{cmd:r(top_codes)}}the displayed top codes{p_end}
+{synopt:{cmd:r(chapters)}}first-character summary{p_end}
+
+{pstd}
+The columns of {cmd:r(top_codes)} are {cmd:frequency}, {cmd:percent}, and
+{cmd:cumul_pct}; the columns of {cmd:r(chapters)} are {cmd:codes} and
+{cmd:entries}. Both matrices use the code value (or the leading character) as
+the row name whenever it can be one.
+
+{pstd}
+Not every code can. Stata caps a matrix row name at 32 characters, and a name
+is also unusable if it begins or ends with a space, or contains a double quote,
+a dollar sign, a backquote, or a colon — all of which occur in fixed-width
+registry extracts — or if Stata would read it as operator or factor-variable
+syntax, as it does {cmd:E11.A}, {cmd:i.x}, {cmd:1[A}, and {cmd:A#B}. Each
+candidate name is tried on a scratch matrix and kept only if it reads back
+unchanged. Such a row receives a bounded, collision-free alias
+({cmd:_cs_code_1} in {cmd:r(top_codes)}, {cmd:_cs_chapter_1} in
+{cmd:r(chapters)}) rather than a silently mangled name. An interior space is
+fine and is left alone, so a code such as {cmd:A B} keeps its own row name.
+
+{pstd}
+Because of that aliasing, {bf:read the identity from the macros}, not from the
+row names. {cmd:r(top_code_#)} and {cmd:r(chapter_#)} always hold the exact
+value for row {it:#}, byte for byte -- including codes that are not valid UTF-8,
+such as Latin-1 registry extracts -- in the same order as the matrix rows,
+whether or not that row was aliased. The displayed tables show such bytes as the
+Unicode replacement character.
+
+{pstd}
+Both matrices, the displayed tables, and the {cmd:save()} draft codefile are
+ordered by descending count with ties broken {bf:alphabetically} by code (or by
+leading character), so repeated runs over the same data return byte-identical
+results. Because the order is fixed, {cmd:top()} always reports the same set of
+codes even when frequencies tie at the cutoff.
+
+
+{marker author}{...}
+{title:Author}
+
+{pstd}Timothy P Copeland, Karolinska Institutet{p_end}
+
+{pstd}Report bugs and suggestions at{break}
+{browse "https://github.com/tpcopeland/Stata-Tools":https://github.com/tpcopeland/Stata-Tools}{p_end}
+
+{pstd}Check GitHub for the most up-to-date release; it may be newer than the version installed here.{p_end}
+
+
+{title:Also see}
+
+{psee}
+Online: {helpb codescan}
+
+{hline}

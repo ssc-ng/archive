@@ -1,0 +1,611 @@
+*! codescan_describe Version 1.0.0  2026/10/15
+*! Tabulate unique codes across wide-format variables
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass (returns results in r())
+*! Requires: Stata 16.0+
+
+/*
+DESCRIPTION:
+    Exploratory complement to codescan. Tabulates the unique codes present
+    across wide-format code variables (dx1-dx30, proc1-proc20, etc.),
+    showing the top-N codes by frequency and a chapter summary grouped by
+    first character. Answers "what codes are in my data?" before defining
+    conditions for scanning.
+
+SYNTAX:
+    codescan_describe varlist [if] [in] [, Top(integer 20) NODots TOSTRing
+        SAVE(filename [, replace])]
+
+STORED RESULTS:
+    r(n_unique)   - Number of unique codes found
+    r(n_entries)  - Total non-empty code entries across all variables
+    r(n_vars)     - Number of variables scanned
+    r(varlist)    - Variables scanned
+    r(top_codes)  - Matrix: frequency, percent, cumulative percent per code
+    r(chapters)   - Matrix: code count, entry count per first-character chapter
+    r(top_code_#) - Exact code value for each displayed r(top_codes) row
+    r(chapter_#)  - Exact leading character for each r(chapters) row
+*/
+
+program define codescan_describe, rclass
+    version 16.0
+    local _orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    local _did_preserve = 0
+    local _return_ready = 0
+    local _side_rc = 0
+    capture noisily {
+
+    syntax varlist [if] [in] [, Top(integer 20) NODots TOSTRing SAVE(string asis)]
+
+    * save(filename [, replace]) — refuse an existing file unless authorized.
+    * Checked here, before any work, so a refusal costs the caller nothing.
+    local _save_fn ""
+    local _save_replace = 0
+    if `"`save'"' != "" {
+        _codescan_parse_filespec, spec(`"`save'"') context(save()) ///
+            checkexists checkdir
+        local _save_fn `"`r(filename)'"'
+        local _save_replace = r(replace)
+        local _save_ext = lower(substr(`"`_save_fn'"', -4, .))
+        if "`_save_ext'" != ".csv" {
+            display as error "save() requires a .csv file extension"
+            exit 198
+        }
+    }
+
+    * Validate top
+    if `top' < 1 {
+        display as error "top() must be a positive integer"
+        exit 198
+    }
+
+    * Reject a variable that appears more than once in varlist (directly or via
+    * overlapping ranges like dx1-dx5 dx3-dx8). A repeated scan column would be
+    * tabulated once per occurrence, double-counting its codes and entries.
+    local _dupvars : list dups varlist
+    if `"`_dupvars'"' != "" {
+        display as error "varlist contains repeated variable(s): `_dupvars'"
+        display as error "remove duplicate or overlapping scan variables"
+        exit 198
+    }
+
+    * Validate string variables (before tostring, to catch missing option early).
+    * strL is rejected unconditionally: the Mata tabulator reads columns with
+    * st_sview(), which cannot form views onto strL variables.
+    foreach var of local varlist {
+        capture confirm string variable `var'
+        if _rc {
+            if "`tostring'" == "" {
+                display as error "`var' is not a string variable"
+                display as error "codescan_describe requires string variables; use tostring or the tostring option"
+                exit 109
+            }
+        }
+        else if "`: type `var''" == "strL" {
+            display as error "`var' is a strL variable and cannot be scanned"
+            display as error "convert it to a fixed-width string first, e.g. {bf:compress `var'} or {bf:recast str244 `var'}"
+            exit 109
+        }
+    }
+
+    marksample touse, novarlist
+
+    quietly count if `touse'
+    if r(N) == 0 error 2000
+
+    local nvars : word count `varlist'
+
+    * Auto-convert numeric variables if tostring specified
+    if "`tostring'" != "" {
+        preserve
+        local _did_preserve = 1
+        foreach var of local varlist {
+            capture confirm string variable `var'
+            if _rc {
+                noisily display as text "(note: converting `var' from numeric to string)"
+                * Exact text via the shared helper (codescan uses the same
+                * one, so both commands see the same code). `tostring, force'
+                * wrote 1234567890123 as "1.23457e+12" and float 401.9 as
+                * "401.8999939", inventorying codes that do not exist. The
+                * helper also blanks . and .a-.z, which would otherwise count
+                * as entries ".a".."z". Safe to replace in place: preserved.
+                tempvar _ts_str
+                _codescan_tostring `var', generate(`_ts_str')
+                drop `var'
+                rename `_ts_str' `var'
+            }
+        }
+    }
+
+    * Tabulate via single Mata pass (hash map over all vars, no tempfile I/O)
+    local _desc_scanvars "`varlist'"
+    local _desc_touse "`touse'"
+    local _desc_nodots "`nodots'"
+    local _desc_top "`top'"
+    tempname _desc_tc _desc_ch
+    local _desc_tc_name "`_desc_tc'"
+    local _desc_ch_name "`_desc_ch'"
+    mata: _codescan_describe_tabulate()
+
+    if "`tostring'" != "" {
+        restore
+        local _did_preserve = 0
+    }
+
+    local total_codes = `_desc_total_codes'
+    local total_entries = `_desc_total_entries'
+    local show = `_desc_show'
+    local n_chapters = `_desc_n_chapters'
+
+    tempname top_codes chapters
+    if `total_codes' == 0 {
+        display as text _n "codescan_describe: `nvars' variable" ///
+            cond(`nvars' > 1, "s", "") ", 0 unique codes, 0 total entries"
+        matrix `top_codes' = J(1, 3, 0)
+        matrix colnames `top_codes' = frequency percent cumul_pct
+        matrix rownames `top_codes' = none
+        matrix `chapters' = J(1, 2, 0)
+        matrix colnames `chapters' = codes entries
+        matrix rownames `chapters' = none
+    }
+    else {
+    * Display header. Counts are formatted then trimmed: a fixed-width
+    * %10.0fc padded "7 total entries" out to "         7 total entries".
+    local _hdr_codes = strtrim(string(`total_codes', "%15.0fc"))
+    local _hdr_entries = strtrim(string(`total_entries', "%15.0fc"))
+    display as text _n "codescan_describe: `nvars' variable" ///
+        cond(`nvars' > 1, "s", "") ", " as result "`_hdr_codes'" ///
+        as text " unique code" cond(`total_codes' == 1, "", "s") ", " ///
+        as result "`_hdr_entries'" ///
+        as text " total entr" cond(`total_entries' == 1, "y", "ies")
+
+    * Display top-N codes
+    display as text ""
+    display as text "  Code" _col(20) %9s "Frequency" _col(32) %10s "Percent" _col(44) %10s "Cumul %"
+    display as text "  {hline 52}"
+
+    local _cum_pct = 0
+    forvalues i = 1/`show' {
+        local freq = `_desc_freq_`i''
+        local pct = `freq' / `total_entries' * 100
+        local _cum_pct = `_cum_pct' + `pct'
+        display as text "  " as result ///
+            ustrunescape("`_desc_code_hex_`i''") _col(20) as result %9.0fc `freq' ///
+            _col(32) as result %9.1f `pct' as text "%" ///
+            _col(44) as result %9.1f `_cum_pct' as text "%"
+    }
+    if `total_codes' > `top' {
+        local _n_more = `total_codes' - `top'
+        display as text "  ... (`_n_more' more code" ///
+            cond(`_n_more' == 1, "", "s") ")"
+    }
+
+    * Build r(top_codes) matrix from Mata-returned locals
+    matrix `top_codes' = J(`show', 3, .)
+    local _tc_rnames ""
+    * Trial matrix for the row-name round trip below.
+    tempname _rn_probe
+    matrix `_rn_probe' = J(1, 1, 0)
+    local _tc_cum = 0
+    forvalues i = 1/`show' {
+        local _tc_freq = `_desc_freq_`i''
+        local _tc_pct = `_tc_freq' / `total_entries' * 100
+        local _tc_cum = `_tc_cum' + `_tc_pct'
+        matrix `top_codes'[`i', 1] = `_tc_freq'
+        matrix `top_codes'[`i', 2] = `_tc_pct'
+        matrix `top_codes'[`i', 3] = `_tc_cum'
+        * Preserve the exact displayed value in r(top_code_#), and use a
+        * deterministic, collision-free alias whenever the value cannot be a row
+        * name. "Cannot be a row name" is decided by _codescan_rowname_safe()
+        * (see the Mata block below), not by length alone: a code well inside
+        * the 32-character limit can still fail to survive the macro-expanded
+        * "matrix rownames" round trip — a leading space, a ":", a "$" — and
+        * Stata answers that by silently substituting its positional default
+        * (r1, r2, ...) at rc=0, so " PAD" and ":Q1" came back as "PAD" and
+        * "Q1". Testing only the length let every one of those through.
+        * The static screen cannot know every name Stata's matrix-stripe
+        * parser reads as operator or factor syntax: "E11.A", "i.x" and "1[A"
+        * abort "matrix rownames" with r(198), and "A#B" is silently rewritten
+        * to "c.A#c.B". So a screened name is also tried on a 1x1 matrix and
+        * kept only if the stripe reads back as exactly that name.
+        local _tc_rowname "_cs_code_`i'"
+        if `_desc_code_safe_`i'' {
+            capture matrix rownames `_rn_probe' = `"`macval(_desc_code_`i')'"'
+            local _rn_ok = (_rc == 0)
+            if `_rn_ok' {
+                mata: st_local("_rn_ok", strofreal(st_matrixrowstripe( ///
+                    st_local("_rn_probe")) == ("", st_local("_desc_code_`i'"))))
+            }
+            if `_rn_ok' local _tc_rowname `"`macval(_desc_code_`i')'"'
+        }
+        * A short code can itself equal an alias selected for an earlier long
+        * code, so check every proposed row name, not only generated aliases.
+        local _tc_alias_dup = 1
+        local _tc_alias_try = 0
+        while `_tc_alias_dup' {
+            local _tc_alias_dup = 0
+            forvalues _tc_prev = 1/`=`i'-1' {
+                if `"`macval(_tc_rowname)'"' == `"`macval(_tc_rname_`_tc_prev')'"' {
+                    local _tc_alias_dup = 1
+                }
+            }
+            if `_tc_alias_dup' {
+                local ++_tc_alias_try
+                local _tc_rowname "_cs_code_`i'_`_tc_alias_try'"
+            }
+        }
+        local _tc_rname_`i' `"`macval(_tc_rowname)'"'
+        local _tc_rnames `"`_tc_rnames' `"`_tc_rowname'"'"'
+    }
+    matrix rownames `top_codes' = `_tc_rnames'
+    matrix colnames `top_codes' = frequency percent cumul_pct
+
+    * Chapter summary
+    display as text _n "  By first character:"
+    display as text "  Char" _col(12) %9s "Codes" _col(24) %9s "Entries"
+    display as text "  {hline 34}"
+
+    forvalues i = 1/`n_chapters' {
+        local nc = `_desc_ch_codes_`i''
+        local ne = `_desc_ch_entries_`i''
+        display as text "  " as result ///
+            ustrunescape("`_desc_ch_hex_`i''") _col(12) as result %9.0fc `nc' ///
+            _col(24) as result %9.0fc `ne'
+    }
+
+    * Build r(chapters) matrix.
+    *
+    * Same row-name hazard as r(top_codes) above, and it used to have no escape
+    * hatch at all: a leading character of " " or ":" is a perfectly ordinary
+    * chapter in fixed-width registry data, but neither survives as a row name,
+    * so r(chapters) came back labelled r1 and r3 and the caller could not tell
+    * which chapter either row described. Alias the unusable ones and publish
+    * the exact character in r(chapter_#), mirroring r(top_code_#).
+    matrix `chapters' = J(`n_chapters', 2, .)
+    local _ch_rnames ""
+    forvalues i = 1/`n_chapters' {
+        matrix `chapters'[`i', 1] = `_desc_ch_codes_`i''
+        matrix `chapters'[`i', 2] = `_desc_ch_entries_`i''
+        local _ch_rowname "_cs_chapter_`i'"
+        if `_desc_ch_safe_`i'' {
+            capture matrix rownames `_rn_probe' = `"`macval(_desc_ch_`i')'"'
+            local _rn_ok = (_rc == 0)
+            if `_rn_ok' {
+                mata: st_local("_rn_ok", strofreal(st_matrixrowstripe( ///
+                    st_local("_rn_probe")) == ("", st_local("_desc_ch_`i'"))))
+            }
+            if `_rn_ok' local _ch_rowname `"`macval(_desc_ch_`i')'"'
+        }
+        * No collision loop here, unlike r(top_codes). A chapter is always ONE
+        * character (usubstr(code, 1, 1)) and the chapters are distinct by
+        * construction, so a chapter can never equal a 13-character
+        * _cs_chapter_# alias and two aliases differ by index. The top-codes
+        * loop needs its check because a short code CAN equal an alias picked
+        * for a longer one; that cannot happen here.
+        local _ch_rnames `"`_ch_rnames' `"`_ch_rowname'"'"'
+    }
+    matrix rownames `chapters' = `_ch_rnames'
+    matrix colnames `chapters' = codes entries
+
+    * Draft-rule names must remain valid Stata names even when a chapter starts
+    * with punctuation. strtoname() can map different punctuation to the same
+    * name, so suffix collisions deterministically.
+    forvalues i = 1/`n_chapters' {
+        * A backtick survives strtoname(), but is still a macro delimiter rather
+        * than a usable Stata name when the generated CSV is later parsed.
+        * Map that one lexer control character to an underscore before the
+        * collision suffix below; all other values retain strtoname()'s mapping.
+        if "`_desc_ch_hex_`i''" == "\u0060" {
+            local _rule_name "chapter__"
+        }
+        else {
+            local _rule_name = strtoname("chapter_" + ///
+                ustrunescape("`_desc_ch_hex_`i''"))
+        }
+        local _rule_dup = 0
+        forvalues j = 1/`=`i'-1' {
+            if "`_rule_name'" == "`_desc_rule_name_`j''" local _rule_dup = 1
+        }
+        if `_rule_dup' local _rule_name "`_rule_name'_`i'"
+        local _desc_rule_name_`i' "`_rule_name'"
+    }
+
+    * Pattern suggestion
+    if `n_chapters' >= 2 {
+        display as text _n "  Suggested patterns:"
+        local _n_suggest = min(5, `n_chapters')
+        forvalues i = 1/`_n_suggest' {
+            local nc = `_desc_ch_codes_`i''
+            local ne = `_desc_ch_entries_`i''
+            display as text "    define(`_desc_rule_name_`i'' " as result ///
+                char(34) + ustrunescape("`_desc_ch_pat_hex_`i''") + char(34) ///
+                as text ") — `nc' code" cond(`nc' == 1, "", "s") ///
+                ", `ne' entr" cond(`ne' == 1, "y", "ies")
+        }
+    }
+    }
+
+    local _return_ready = 1
+
+    * Save draft codefile from chapter summary
+    if `"`save'"' != "" {
+        capture noisily {
+            preserve
+            local _did_preserve = 1
+            quietly {
+                clear
+                set obs `n_chapters'
+                gen str32 name = ""
+                gen str244 pattern = ""
+                gen str244 exclusion = ""
+                gen str80 label = ""
+                * A metacharacter or space chapter is written as a regex
+                * (escaped, or "[ ]" for a space: prefix mode trims a bare " "),
+                * and such a pattern means something else in mode(prefix). The
+                * match column then records mode(regex), so codefile() refuses
+                * the draft under other options instead of matching nothing.
+                * A draft of plain leading characters leaves it empty and works
+                * under any matching options.
+                gen str40 match = ""
+                if `_desc_draft_regex' replace match = "mode(regex)"
+                * The pattern is the chapter's own leading character, regex-
+                * escaped (a "." chapter must not become match-everything), and
+                * stored from the raw local through Mata: the hex transport
+                * used for display turns a non-UTF-8 byte into U+FFFD, a
+                * pattern that matches nothing in the data it came from.
+                if `n_chapters' > 0 {
+                    forvalues i = 1/`n_chapters' {
+                        replace name = "`_desc_rule_name_`i''" in `i'
+                        mata: st_sstore(`i', "pattern", st_local("_desc_ch_pat_`i'"))
+                    }
+                }
+                keep name pattern exclusion label match
+                export delimited using `"`_save_fn'"', replace
+            }
+            restore
+            local _did_preserve = 0
+            noisily display as text ///
+                `"(draft codefile saved to `_save_fn'; edit condition names and patterns before use)"'
+        }
+        local _side_rc = _rc
+    }
+
+    } // end capture noisily
+    local rc = _rc
+    if `_did_preserve' capture restore
+    set varabbrev `_orig_varabbrev'
+
+    * Publish the full analytical payload after cleanup, including when an
+    * optional save() side effect failed.
+    if `rc' == 0 & `_return_ready' {
+        if `_side_rc' local rc = `_side_rc'
+        return clear
+        return scalar n_unique = `total_codes'
+        return scalar n_entries = `total_entries'
+        return scalar n_vars = `nvars'
+        return local varlist "`varlist'"
+        return matrix top_codes = `top_codes', copy
+        return matrix chapters = `chapters', copy
+        * Posted from the raw Mata-written locals, byte for byte. The hex
+        * round trip used for display is not exact for bytes that are invalid
+        * UTF-8 (Latin-1 registry extracts): it returned U+FFFD, a "code" that
+        * does not exist in the data. Staging the value in a string scalar and
+        * returning it as an expression keeps quotes and backticks out of
+        * macro parsing entirely.
+        tempname _rawval
+        if `show' > 0 {
+            forvalues i = 1/`show' {
+                mata: st_strscalar("`_rawval'", st_local("_desc_code_`i'"))
+                return local top_code_`i' = scalar(`_rawval')
+            }
+        }
+        * The exact leading character for each r(chapters) row, in row order.
+        * The row NAME may be an alias when the character cannot be one, so
+        * this is the only place the chapter identity is always recoverable.
+        if `n_chapters' > 0 {
+            forvalues i = 1/`n_chapters' {
+                mata: st_strscalar("`_rawval'", st_local("_desc_ch_`i'"))
+                return local chapter_`i' = scalar(`_rawval')
+            }
+        }
+    }
+    if `rc' exit `rc'
+end
+
+* =============================================================================
+* MATA: Single-pass hash-map tabulation (replaces foreach/contract/append loop)
+* =============================================================================
+
+mata:
+// Can this string survive the round trip into a Stata matrix row name?
+//
+// Row names are set by macro-expanding a quoted name list into `matrix
+// rownames', and a name that cannot survive that expansion is NOT rejected —
+// Stata silently substitutes its positional default (r1, r2, ...), so the row
+// stops identifying anything at rc=0. Census over printable ASCII 32-126, each
+// character tested alone and as a leading character:
+//
+//   (space)  leading/trailing whitespace is stripped; an all-space name
+//            collapses to the positional default
+//   "        terminates the quoted name
+//   $        is macro-expanded away at expansion time
+//   `        opens a macro reference (r(132), too few quotes)
+//   :        is parsed as the equation-name separator
+//
+// Every other printable character round-trips verbatim, and an INTERIOR space
+// is safe — only leading/trailing whitespace is stripped — so codes such as
+// "A B", "A/B" and "A-B" keep their own names and are deliberately untouched.
+// The 32-character cap is Stata's documented row-name limit.
+real scalar _codescan_rowname_safe(string scalar s)
+{
+    if (s == "") return(0)
+    if (strtrim(s) != s) return(0)
+    if (strlen(s) > 32) return(0)
+    if (strpos(s, char(34)) > 0) return(0)
+    if (strpos(s, "$") > 0) return(0)
+    if (strpos(s, char(96)) > 0) return(0)
+    if (strpos(s, ":") > 0) return(0)
+    return(1)
+}
+
+void _codescan_describe_tabulate()
+{
+    string rowvector scanvars
+    string colvector col
+    real colvector   touse
+    string scalar    touse_name, val, ch
+    real scalar      N, nvars, i, j, total_entries, strip_dots, top_n, show
+    real scalar      n_unique, n_chapters, si, ci
+    real rowvector   cv, prev
+
+    scanvars   = tokens(st_local("_desc_scanvars"))
+    touse_name = st_local("_desc_touse")
+    strip_dots = (st_local("_desc_nodots") != "")
+    top_n      = strtoreal(st_local("_desc_top"))
+    nvars      = cols(scanvars)
+    N          = st_nobs()
+    touse      = st_data(., touse_name)
+
+    transmorphic freq_map
+    freq_map = asarray_create()
+    asarray_notfound(freq_map, 0)
+
+    total_entries = 0
+
+    for (j = 1; j <= nvars; j++) {
+        st_sview(col, ., scanvars[j])
+
+        for (i = 1; i <= N; i++) {
+            if (!touse[i]) continue
+            val = col[i]
+            if (val == "" || val == ".") continue
+            if (strip_dots) {
+                val = subinstr(val, ".", "", .)
+                if (val == "") continue
+            }
+            asarray(freq_map, val, asarray(freq_map, val) + 1)
+            total_entries = total_entries + 1
+        }
+    }
+
+    string colvector keys
+    keys = asarray_keys(freq_map)
+    n_unique = rows(keys)
+
+    st_local("_desc_total_entries", strofreal(total_entries))
+    st_local("_desc_total_codes", strofreal(n_unique))
+
+    st_local("_desc_draft_regex", "0")
+    if (n_unique == 0) {
+        st_local("_desc_show", "0")
+        st_local("_desc_n_chapters", "0")
+        return
+    }
+
+    // Build frequency vector and sort descending
+    real colvector freqs
+    freqs = J(n_unique, 1, 0)
+    for (i = 1; i <= n_unique; i++) {
+        freqs[i] = asarray(freq_map, keys[i])
+    }
+    // ── DETERMINISTIC ORDER ──
+    // asarray_keys() returns keys in hash order, not insertion or sort order,
+    // and order() imposes no tiebreak of its own. Ordering on frequency alone
+    // therefore hands back a DIFFERENT permutation on every run of the same
+    // command over the same data whenever two codes tie — which moves the
+    // console table, the rownames and cumul_pct column of r(top_codes), and
+    // (via the chapter block below) the row order, rule names, and collision
+    // suffixes of the save() draft codefile. With ties straddling the top-N
+    // cutoff the reported SET of codes changes too, not just its order.
+    //
+    // Fix: sort the keys alphabetically first, then order on (-frequency,
+    // alphabetical rank). The second key is 1..n and therefore distinct, so the
+    // comparison is a strict total order and no tie is ever left for the sort
+    // algorithm to resolve. Repeating the frequency column as its own tiebreak
+    // would NOT work — a duplicated key breaks nothing.
+    real colvector alpha, sort_idx
+    string colvector skeys
+    real colvector sfreqs
+    alpha   = order(keys, 1)
+    skeys   = keys[alpha]
+    sfreqs  = freqs[alpha]
+    sort_idx = order((-sfreqs, (1::n_unique)), (1, 2))
+
+    // Return top-N codes via locals
+    show = (top_n < n_unique ? top_n : n_unique)
+    st_local("_desc_show", strofreal(show))
+    for (i = 1; i <= show; i++) {
+        si = sort_idx[i]
+        st_local("_desc_code_" + strofreal(i), skeys[si])
+        st_local("_desc_code_hex_" + strofreal(i), ustrtohex(skeys[si]))
+        st_local("_desc_freq_" + strofreal(i), strofreal(sfreqs[si]))
+        st_local("_desc_code_safe_" + strofreal(i),
+                 strofreal(_codescan_rowname_safe(skeys[si])))
+    }
+
+    // Chapter summary: group by first character
+    transmorphic ch_map
+    ch_map = asarray_create()
+    asarray_notfound(ch_map, J(1, 2, 0))
+
+    for (i = 1; i <= n_unique; i++) {
+        ch = usubstr(keys[i], 1, 1)
+        prev = asarray(ch_map, ch)
+        asarray(ch_map, ch, (prev[1] + 1, prev[2] + freqs[i]))
+    }
+
+    string colvector ch_keys
+    ch_keys = asarray_keys(ch_map)
+    n_chapters = rows(ch_keys)
+    st_local("_desc_n_chapters", strofreal(n_chapters))
+
+    // Sort chapters by entries descending, alphabetical within a tie. Same
+    // hash-order hazard as the code list above, and it reaches further: the
+    // chapter order fixes the row order — and therefore the chapter_X rule
+    // names and their _i collision suffixes — of the save() draft codefile.
+    real colvector ch_entries, ch_alpha, ch_sort
+    string colvector sch_keys
+    real colvector sch_entries
+    ch_entries = J(n_chapters, 1, 0)
+    for (i = 1; i <= n_chapters; i++) {
+        cv = asarray(ch_map, ch_keys[i])
+        ch_entries[i] = cv[2]
+    }
+    ch_alpha    = order(ch_keys, 1)
+    sch_keys    = ch_keys[ch_alpha]
+    sch_entries = ch_entries[ch_alpha]
+    ch_sort     = order((-sch_entries, (1::n_chapters)), (1, 2))
+
+    for (i = 1; i <= n_chapters; i++) {
+        ci = ch_sort[i]
+        cv = asarray(ch_map, sch_keys[ci])
+        st_local("_desc_ch_" + strofreal(i), sch_keys[ci])
+        st_local("_desc_ch_hex_" + strofreal(i), ustrtohex(sch_keys[ci]))
+        st_local("_desc_ch_codes_" + strofreal(i), strofreal(cv[1]))
+        st_local("_desc_ch_entries_" + strofreal(i), strofreal(cv[2]))
+        st_local("_desc_ch_safe_" + strofreal(i),
+                 strofreal(_codescan_rowname_safe(sch_keys[ci])))
+        st_local("_desc_ch_pat_" + strofreal(i),
+                 _codescan_regex_escape1(sch_keys[ci]))
+        st_local("_desc_ch_pat_hex_" + strofreal(i),
+                 ustrtohex(_codescan_regex_escape1(sch_keys[ci])))
+        if (_codescan_regex_escape1(sch_keys[ci]) != sch_keys[ci]) {
+            st_local("_desc_draft_regex", "1")
+        }
+    }
+}
+
+// The draft-codefile pattern for one chapter character. codescan reads a
+// codefile in regex mode, so an unescaped metacharacter chapter is either
+// invalid ("(", "*") or silently broader than the chapter ("." matches every
+// code). Escaping makes the rule mean "codes beginning with this character".
+// A space chapter is written "[ ]": mode(prefix) trims a bare " " to an
+// empty prefix, and in regex a bare leading space draws the whitespace note.
+string scalar _codescan_regex_escape1(string scalar c)
+{
+    if (c == " ") return("[ ]")
+    if (strlen(c) == 1 & strpos("\^$.|?*+()[]{}", c) > 0) return("\" + c)
+    return(c)
+}
+end

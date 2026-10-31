@@ -67,6 +67,7 @@ p episens module for basic sensitivity analysis of epidemiological results
 p episensrri module for basic sensitivity analysis for unmeasured confounders
 p epitable module to more easily create table 2 and table 3 for epidemiological studies
 p epiweek module to create epidemiological week and equivalent epidemiological year
+p eplot module to draw forest plots and coefficient plots from data, stored estimates, matrices or frames
 p epresent module to present non-linear relationships in regression models with log or logit-link
 p epsigr module to save graph in EPSF format in UNIX environment
 p eqprhistogram module for equal probability histogram

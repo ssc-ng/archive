@@ -1,4 +1,4 @@
-*! _finegray_check_data Version 1.3.2  2026/09/08
+*! _finegray_check_data Version 1.3.8  2026/10/07
 *! Verify that post-estimation commands still see the finegray estimation data
 *! Author: Timothy P Copeland, Karolinska Institutet
 *! Program class: internal
@@ -93,12 +93,23 @@ program define _finegray_check_data
             exit 301
         }
 
+        * A fit saved before joint-row identity checks has no e(rowsig).  Say so
+        * FIRST: every recomputing route must refit such estimates, and the
+        * empty-sample and signature messages below would send the user to
+        * repair state that cannot be repaired.  This reads only e().
+        if `"`e(rowsig)'"' == "" | missing(e(rowsig_n)) | `"`e(rowsigvars)'"' == "" {
+            display as error "this fit predates joint-row estimation-data identity checks"
+            display as error "re-run finegray before recomputing from the estimation data"
+            exit 301
+        }
+
         * EXISTENCE only, not type: a weight expression may read a STRING
         * variable -- [pw = real(strvar)] -- and strvar is in the signature
         * because the rebuilt weight depends on it.  A type change is still
         * refused, by the signature comparison below: _datasignature checksums
         * a string variable differently from the numeric one it replaced.
-        foreach _v of local _sigvars {
+        local _rowvars `"`e(rowsigvars)'"'
+        foreach _v of local _rowvars {
             capture confirm variable `_v'
             if _rc {
                 display as error "estimation variable `_v' no longer exists"
@@ -136,6 +147,30 @@ program define _finegray_check_data
             exit 459
         }
 
+        * A per-column signature cannot establish the original row association;
+        * e(rowsig) (checked above) does, over e(rowsigvars).
+        capture mata: _finegray_numeric_ok()
+        if _rc {
+            capture findfile _finegray_mata.ado
+            if _rc {
+                display as error "_finegray_mata.ado not found; reinstall finegray"
+                exit 111
+            }
+            local _fg_ms0 = c(matastrict)
+            capture noisily run "`r(fn)'"
+            local _fg_lrc = _rc
+            mata: mata set matastrict `_fg_ms0'
+            if `_fg_lrc' exit `_fg_lrc'
+        }
+        tempvar _fg_one
+        quietly generate byte `_fg_one' = e(sample)
+        mata: _finegray_wsig("`_fg_one'", "`_fg_one'", "`_rowvars'")
+        if `"`_fg_wsig'"' != `"`e(rowsig)'"' | `_fg_wsig_n' != e(rowsig_n) {
+            display as error "the estimation data no longer reproduce the fitted observation tuples"
+            display as error "re-run finegray before this post-estimation command"
+            exit 459
+        }
+
         * The package-owned _fg_* design columns are DERIVED from the raw factor
         * variables, so they are not in the data signature: dropping them is
         * supported, and the consumers that need them rebuild them on demand.
@@ -153,7 +188,8 @@ program define _finegray_check_data
         if `"`_fvsem'"' != "" {
             local _nb_terms ""
             foreach _t of local _fvsem {
-                if regexm("`_t'", "[0-9]+b\.") continue
+                if regexm("`_t'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                    regexm("`_t'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
                 local _nb_terms "`_nb_terms' `_t'"
             }
             local _covcols "`e(designvars)'"

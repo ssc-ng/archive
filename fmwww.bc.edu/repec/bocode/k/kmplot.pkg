@@ -1,0 +1,42 @@
+d 'KMPLOT': module to draw Kaplan-Meier survival, cumulative failure and competing-risks cumulative incidence curves with risk tables
+d
+d  kmplot draws publication-ready Kaplan-Meier survival and
+d cumulative failure curves from stset data, and Aalen-Johansen
+d cumulative incidence curves when a competing event is given with
+d compete(). Curves can be stratified with by(), drawn with
+d log-log, log or plain confidence intervals as bands or lines, and
+d annotated with median survival lines, censoring marks and a
+d log-rank p-value. An optional number-at-risk table below the plot
+d counts people or sums the stset weight, can show cumulative
+d events, and can mask small cells for disclosure control. Options
+d cover percent scale, truncation of the plot at tmax(), fixed-time
+d (landmark) estimates, custom titles, colors and line patterns,
+d and export of the graph, the plotted curve data and the
+d risk-table counts. The default palette is Okabe-Ito, chosen for
+d readers with color-vision deficiency. Medians, landmark estimates
+d with confidence limits, the risk-table counts and the log-rank
+d p-value are returned in r(). 
+d
+d KW: Kaplan-Meier
+d KW: survival curves
+d KW: cumulative failure
+d KW: cumulative incidence
+d KW: Aalen-Johansen
+d KW: competing risks
+d KW: number at risk
+d KW: risk table
+d KW: log-rank test
+d KW: graphics
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261030
+d
+d Author: Timothy P Copeland, Karolinska Institutet
+d Support: email timothy.copeland@@ki.se
+d
+f kmplot.ado
+f kmplot.sthlp
+f ../_/_kmplot_risktable.ado
+f ../_/_kmplot_times.ado
+f ../_/_kmplot_cif.ado

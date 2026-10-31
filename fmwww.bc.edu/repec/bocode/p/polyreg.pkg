@@ -1,0 +1,33 @@
+d 'POLYREG': module to perform-regression on a polychoric index with bootstrap inference that accounts for the estimated index (generated-regressor correction)
+d
+d      Wealth or socioeconomic-status indices built by polychoric
+d principal component analysis are routinely used as regressors.
+d The	 usual practice computes the index once and then treats it
+d as data. This ignores the sampling error in the index weights   
+d (loadings and thresholds), so the reported standard errors are
+d too small (the generated-regressor problem; Pagan 1984; Murphy   
+d and Topel 1985).    polyreg builds the index with polyindex and
+d fits the outcome model.  It then bootstraps the whole procedure,
+d optionally by    cluster. In every replication, the polychoric
+d correlations, thresholds and eigenvectors are re-estimated, the
+d index is    recomputed (and, with quantiles(), regrouped), and
+d the outcome model is re-fitted. The bootstrap covariance matrix
+d of the    outcome-model coefficients is posted in e(V). For the
+d index terms, the display compares bootstrap standard errors with
+d the naive    (robust or cluster) standard errors and reports
+d their ratio. 
+d
+d KW: polychoric index
+d KW: bootstrap inference 
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261030
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f polyreg.ado
+f polyreg.sthlp
+f polyreg_example.do
+f polyreg_cert.do

@@ -1,4 +1,4 @@
-d 'FINEGRAY': module for fast Fine-Gray competing risks regression
+d 'FINEGRAY': module for fast Fine-Gray competing risks regression with delayed-entry weighting
 d
 d  finegray fits the Fine and Gray (1999) subdistribution hazard
 d model for competing risks data, reporting subdistribution hazard
@@ -13,11 +13,10 @@ d margins support, sampling and frequency weights, mi estimate, and
 d robust, nuisance-adjusted or cluster-robust standard errors.
 d Postestimation provides finegray_predict (linear predictor,
 d cumulative incidence, Schoenfeld residuals, baseline hazard),
-d finegray_cif (cumulative incidence at chosen covariate profiles,
-d with analytic or bootstrap confidence limits), and
-d finegray_phtest (proportional subdistribution hazards
-d diagnostic). Methods and formulas are documented in help
-d finegray_methods. 
+d finegray_cif (cumulative incidence curves and values at chosen
+d covariate profiles, with analytic or bootstrap confidence
+d limits), and finegray_phtest (proportional subdistribution
+d hazards diagnostic). 
 d
 d KW: competing risks
 d KW: Fine-Gray
@@ -31,7 +30,7 @@ d KW: st
 d
 d Requires: Stata version 16
 d
-d Distribution-Date: 20260909
+d Distribution-Date: 20261030
 d
 d Author: Timothy P Copeland, Karolinska Institutet
 d Support: email timothy.copeland@@ki.se
@@ -44,6 +43,7 @@ f ../_/_finegray_check_data.ado
 f ../_/_finegray_check_level.ado
 f ../_/_finegray_display.ado
 f ../_/_finegray_fv_design.ado
+f ../_/_finegray_graph_text.ado
 f ../_/_finegray_mata.ado
 f ../_/_finegray_resolve_baseline.ado
 f ../_/_finegray_weight_groups.ado

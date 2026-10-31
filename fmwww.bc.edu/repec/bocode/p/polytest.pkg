@@ -1,0 +1,22 @@
+d 'POLYTEST': module to provide tests of the latent-normality assumption behind tetrachoric, polychoric and polyserial correlations
+d
+d      The pairwise goodness-of-fit tests reported by polycorr
+d cannot test normality for a 2x2 table. Such a table has three
+d free cell    probabilities and three parameters (two thresholds
+d and the tetrachoric correlation), so it fits exactly. polytest
+d adds two tests    that cover this case and polyserial pairs. 
+d
+d KW: polyserial test
+d KW: triplet test
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261030
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f polytest.ado
+f polytest.sthlp
+f polytest_example.do
+f polytest_cert.do

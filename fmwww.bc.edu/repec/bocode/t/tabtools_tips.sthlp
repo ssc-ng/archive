@@ -1,0 +1,367 @@
+{smcl}
+{viewerjumpto "Syntax" "tabtools_tips##syntax"}{...}
+{viewerjumpto "Options" "tabtools_tips##options"}{...}
+{viewerjumpto "Description" "tabtools_tips##description"}{...}
+{viewerjumpto "Quick reference" "tabtools_tips##quick"}{...}
+{viewerjumpto "Choosing commands" "tabtools_tips##choose"}{...}
+{viewerjumpto "Examples" "tabtools_tips##examples"}{...}
+{viewerjumpto "Author" "tabtools_tips##author"}{...}
+{vieweralsosee "tabtools" "help tabtools"}{...}
+{vieweralsosee "table1_tc" "help table1_tc"}{...}
+{vieweralsosee "desctab" "help desctab"}{...}
+{vieweralsosee "regtab" "help regtab"}{...}
+{vieweralsosee "effecttab" "help effecttab"}{...}
+{vieweralsosee "survtab" "help survtab"}{...}
+{vieweralsosee "stratetab" "help stratetab"}{...}
+{vieweralsosee "comptab" "help comptab"}{...}
+{vieweralsosee "hrcomptab" "help hrcomptab"}{...}
+{vieweralsosee "puttab" "help puttab"}{...}
+{vieweralsosee "stacktab" "help stacktab"}{...}
+{title:tabtools tips}
+
+{marker syntax}{...}
+{title:Syntax}
+
+{p 8 16 2}
+{cmd:tabtools_tips} [{cmd:,} {opt open}]
+
+{marker options}{...}
+{title:Options}
+
+{synoptset 18 tabbed}{...}
+{synopt:{opt open}}open this help topic in the Viewer{p_end}
+{synoptline}
+
+
+{pstd}
+{it:Detailed option contracts}{p_end}
+
+{phang}
+{opt open} open the tips help file directly instead of printing the compact command-line index{p_end}
+
+{marker description}{...}
+{title:Description}
+
+{pstd}
+{cmd:tabtools_tips} is the quick-reference and worked-recipe guide for the {helpb tabtools}
+suite. Type {cmd:tabtools_tips} for a compact index, or {cmd:tabtools_tips, open} to open
+this help file from the command line. {p_end}
+
+{marker quick}{...}
+{hline}
+{title:Quick reference}
+
+{pstd}
+Common option combinations for each command. {p_end}
+
+{marker choose}{...}
+{title:Choosing commands}
+
+{pstd}{bf:Dedicated builders:} use {bf:table1_tc}, {bf:desctab},
+{bf:crosstab}, {bf:survtab}, {bf:stratetab},
+{bf:regtab}, and {bf:effecttab} when the command owns the
+analysis-to-table contract for your workflow.{p_end}
+
+{pstd}{bf:Combining/styling tables:} use {bf:puttab} to style one raw
+in-memory table (dataset/frame/matrix), {bf:comptab} to combine rows from
+{bf:regtab}/{bf:effecttab} {it:frames}, {bf:hrcomptab} to attach model rows to a
+{bf:stratetab} rates scaffold, and {bf:stacktab} to assemble sheets
+{it:already exported} to a workbook. Pipeline: {cmd:puttab} emits styled blocks
+{c -}> {cmd:stacktab} assembles them.{p_end}
+
+{hline}
+{title:table1_tc}
+
+{phang2}{cmd:table1_tc, by(group) vars(age contn \ sex bin \ race cat) xlsx(t1.xlsx) sheet("Table 1") title("Baseline")}{p_end}
+{phang2}{cmd:table1_tc, by(group) vars(...) xlsx(t1.xlsx) sheet("T1") title("T1") smd}
+{it:// add SMD column}{p_end}
+{phang2}{cmd:table1_tc, by(group) vars(...) xlsx(t1.xlsx) sheet("T1") title("T1") boldp(0.05) highlight(0.05)}
+{it:// bold + highlight significant rows}{p_end}
+{phang2}{cmd:table1_tc, by(group) vars(...) wt(iptw) xlsx(t1.xlsx) sheet("Weighted") title("IPTW-Weighted")}
+{it:// weighted statistics, unweighted N}{p_end}
+
+{hline}
+{title:desctab}
+
+{phang2}{cmd:desctab price mpg weight rep78, by(foreign) xlsx(desc.xlsx) sheet("Descriptive")}{p_end}
+{phang2}{cmd:desctab, by(foreign) vars(price contn \ mpg conts \ rep78 cat) smd test}{p_end}
+
+{hline}
+{title:regtab}
+
+{phang2}{cmd:collect: logit outcome i.treatment age sex}{p_end}
+{phang2}{cmd:regtab, xlsx(models.xlsx) sheet("Logistic") coef("OR") noint}{p_end}
+{phang2}{cmd:regtab, xlsx(models.xlsx) sheet("Logistic") coef("OR") digits(3) footnote("OR = odds ratio") zebra}{p_end}
+{phang2}{cmd:regtab, xlsx(models.xlsx) sheet("CDISC") cdisc}
+{it:// CDISC formatting: 4dp, Estimate, includes N}{p_end}
+
+{hline}
+{title:effecttab}
+
+{phang2}{cmd:collect: margins treatment}{p_end}
+{phang2}{cmd:effecttab, xlsx(effects.xlsx) sheet("Margins") type(margins) effect("Pr(Y)")}{p_end}
+{phang2}{cmd:effecttab, xlsx(effects.xlsx) sheet("ATE") effect("ATE") clean footnote("ATE = average treatment effect")}{p_end}
+
+{hline}
+{title:stratetab}
+
+{phang2}{cmd:stratetab, using(rate_ssri_relapse rate_ssri_edss4 ///}{p_end}
+{phang3}{cmd:rate_snri_relapse rate_snri_edss4) xlsx(rates.xlsx) outcomes(2) ///}{p_end}
+{phang3}{cmd:outlabels("Relapse \ EDSS 4") explabels("SSRI \ SNRI")}{p_end}
+{phang2}{cmd:stratetab, ... rateratio ratiodigits(2)} {it:// add incidence rate ratios}{p_end}
+{phang2}{cmd:stratetab, ... footnote("Rates per 1,000 PY") zebra}{p_end}
+
+{hline}
+{title:hrcomptab}
+
+{phang2}{cmd:stratetab, using(edss4_tv edss6_tv recurring_tv edss4_dose edss6_dose recurring_dose)}
+{cmd:outcomes(3) frame(rates, replace)}{p_end}
+{phang2}{cmd:regtab, frame(bin_models, replace) noint coef("HR")}
+{it:// after collect: stcox ... for binary exposure models}{p_end}
+{phang2}{cmd:regtab, frame(dose_models, replace) noint coef("HR")}
+{it:// after collect: stcox ... for dose-category models}{p_end}
+{phang2}{cmd:hrcomptab rates, modelframes(bin_models dose_models) rows(1 \ 3/5)}
+{cmd:xlsx(table2.xlsx) sheet("Table 2") effect("aHR")}{p_end}
+
+{hline}
+{title:survtab}
+
+{phang2}{cmd:stset time, failure(event)}{p_end}
+{phang2}{cmd:survtab, times(1 3 5) by(treatment) xlsx(surv.xlsx) title("Table 2. Survival")}{p_end}
+{phang2}{cmd:survtab, times(1 3 5) by(treatment) median riskset difference}
+{it:// add median, n-at-risk, between-group difference}{p_end}
+{phang2}{cmd:survtab, times(1 3 5) by(treatment) rmst(5) reverse}
+{it:// RMST + cumulative incidence}{p_end}
+
+{hline}
+{title:crosstab}
+
+{phang2}{cmd:crosstab exposure outcome, or label xlsx(cross.xlsx) title("Exposure vs Outcome")}{p_end}
+{phang2}{cmd:crosstab smoking cancer, rr rd trend} {it:// risk ratio, risk diff, trend test}{p_end}
+{phang2}{cmd:crosstab exposure outcome, exact or} {it:// force Fisher's exact test}{p_end}
+
+{hline}
+{title:comptab}
+
+{phang2}{cmd:regtab, xlsx(comp.xlsx) sheet("S1") frame(f1)}{p_end}
+{phang2}{cmd:regtab, xlsx(comp.xlsx) sheet("S2") frame(f2)}{p_end}
+{phang2}{cmd:comptab f1 f2, rows(1 \ 1) xlsx(comp.xlsx) sheet("Combined")}
+{it:// combine rows from regtab frames}{p_end}
+
+{hline}
+{title:puttab}
+
+{phang2}{cmd:collapse (mean) price mpg (count) n=price, by(foreign)}{p_end}
+{phang2}{cmd:puttab foreign price mpg n using parts.xlsx, sheet("ByOrigin") varlabels digits(1) zebra}
+{it:// data source}{p_end}
+{phang2}{cmd:regress price mpg weight}{p_end}
+{phang2}{cmd:matrix T = r(table)'}{p_end}
+{phang2}{cmd:puttab using parts.xlsx, sheet("Coefs") matrix(T) title("OLS") digits(3)}
+{it:// matrix source}{p_end}
+{phang2}{cmd:puttab using parts.xlsx, sheet("Top10") frame(top) headershade} {it:// frame source}{p_end}
+
+{hline}
+{title:stacktab}
+
+{phang2}{cmd:stacktab using parts.xlsx, sheet("Composite") blocks(sheet(Model A) \ sheet(Model B))}
+{it:// vstack two block sheets}{p_end}
+{phang2}{cmd:stacktab using parts.xlsx, sheet("Table 2")}
+{cmd:blocks(sheet(Primary) rows(1/4) cols(A-C) \ sheet(Dose) rows(1/3) cols(A-C))}
+{cmd:columnmerge(B+C as "aHR (95% CI)")}
+{it:// merge est + CI}{p_end}
+{phang2}{cmd:stacktab using parts.xlsx, sheet("SideBySide")}
+{cmd:blocks(sheet(A) rows(2/3) cols(A-C) \ sheet(B) rows(2/3) cols(A-C)) layout(hstack)}
+{it:// side by side}{p_end}
+{hline}
+{title:tabtools set/get}
+
+{phang2}{cmd:tabtools set font Calibri}{p_end}
+{phang2}{cmd:tabtools set fontsize 11}{p_end}
+{phang2}{cmd:tabtools set borderstyle thin}{p_end}
+{phang2}{cmd:tabtools get} {it:// view current defaults}{p_end}
+{phang2}{cmd:tabtools set clear} {it:// reset to command defaults}{p_end}
+
+{marker examples}{...}
+{marker recipes}{...}
+{hline}
+{title:Examples and Recipes}
+
+{pstd}
+These worked recipes are intentionally compact here: the individual command
+help files carry full option tables and stored-result contracts. Recipes that
+open with {cmd:sysuse}/{cmd:webuse} are runnable as shown; others are workflow sketches
+that use illustrative research variable and dataset names ({cmd:edss4_tv},
+{cmd:sim_results_long.dta}, ...) for you to substitute. {p_end}
+
+{title:1. Basic Table 1 with SMD}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:table1_tc, by(foreign) vars(price contn \ mpg contn \ weight contn \ rep78 cat \ headroom conts)}
+{cmd:xlsx(table1.xlsx) sheet("Table 1") title("Table 1. Vehicle Characteristics by Origin")}
+{cmd:smd boldp(0.05) zebra}{p_end}
+{phang2}{cmd:local methods = r(methods)}{p_end}
+
+{title:2. IPTW-weighted Table 1}
+{phang2}{cmd:webuse cattaneo2, clear}{p_end}
+{phang2}{cmd:logit mbsmoke mage medu mmarried fbaby}{p_end}
+{phang2}{cmd:predict double ps, pr}{p_end}
+{phang2}{cmd:gen double iptw = cond(mbsmoke==1, 1/ps, 1/(1-ps))}{p_end}
+{phang2}{cmd:table1_tc, by(mbsmoke) vars(mage contn \ medu contn \ mmarried bin \ fbaby bin)}
+{cmd:wt(iptw) xlsx(balance.xlsx) sheet("IPTW Weighted") title("After IPTW") smd}{p_end}
+
+{title:3. Logistic regression table}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:gen byte expensive = (price > 6000)}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: logistic expensive mpg weight i.foreign}{p_end}
+{phang2}{cmd:regtab, xlsx(regression.xlsx) sheet("Logistic")}
+{cmd:title("Table 2. Predictors of High Price") noint boldp(0.05) zebra}{p_end}
+
+{title:4. Mixed-effects Weibull model with median hazard ratio}
+{phang2}{cmd:webuse catheter, clear}{p_end}
+{phang2}{cmd:stset time, failure(infect)}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: mestreg age female || patient:, distribution(weibull)}{p_end}
+{phang2}{cmd:regtab, xlsx(survival.xlsx) sheet("Weibull MHR") title("Table 3. Catheter Infection Model") relabel noint}{p_end}
+
+{title:5. Treatment effects with margins}
+{phang2}{cmd:webuse cattaneo2, clear}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: teffects ipw (bweight) (mbsmoke mage medu mmarried fbaby), ate}{p_end}
+{phang2}{cmd:effecttab, xlsx(effects.xlsx) sheet("ATE") effect("ATE")}
+{cmd:title("Average Treatment Effect on Birthweight") clean}{p_end}
+
+{title:6. Multi-model manuscript workflow}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:generate byte expensive = price > 6000}{p_end}
+{phang2}{cmd:tabtools set font Arial}{p_end}
+{phang2}{cmd:tabtools set fontsize 9}{p_end}
+{phang2}{cmd:tabtools set borderstyle academic}{p_end}
+{phang2}{cmd:table1_tc, by(foreign) vars(price contn \ mpg contn \ weight contn \ rep78 cat)}
+{cmd:xlsx(manuscript.xlsx) sheet("Table 1") title("Table 1. Baseline Characteristics") smd}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: logistic expensive mpg weight i.foreign}{p_end}
+{phang2}{cmd:regtab, xlsx(manuscript.xlsx) sheet("Table 2") title("Table 2. Predictors of High Price") noint}{p_end}
+{phang2}{cmd:tabtools set clear}{p_end}
+
+{title:7. Composite table with comptab}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:gen byte expensive = (price > 6000)}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: logistic expensive i.foreign}{p_end}
+{phang2}{cmd:regtab, frame(m1) noint}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: logistic expensive i.foreign mpg weight}{p_end}
+{phang2}{cmd:regtab, frame(m2) noint}{p_end}
+{phang2}{cmd:comptab m1 m2, rownames("foreign \ foreign") xlsx(composite.xlsx) sheet("Models")}
+{cmd:title("Table 4. Association with Price") zebra}{p_end}
+
+{title:8. Incidence rates by exposure}
+{phang2}{cmd:webuse diet, clear}{p_end}
+{phang2}{cmd:stset dox, failure(fail) origin(time dob) enter(time doe) scale(365.25) id(id)}{p_end}
+{phang2}{cmd:strate hienergy, per(1) output(rate_hienergy, replace)}{p_end}
+{phang2}{cmd:stratetab, using(rate_hienergy) xlsx(rates.xlsx) outcomes(1)}
+{cmd:outlabels("CHD Death") explabels("Energy Intake")}
+{cmd:title("Incidence Rates per 1,000 Person-Years") zebra}{p_end}
+
+{title:9. Table 2 workflow with hrcomptab}
+{phang2}{cmd:webuse diet, clear}{p_end}
+{phang2}{cmd:stset dox, failure(fail) origin(time dob) enter(time doe) scale(365.25) id(id)}{p_end}
+{phang2}{cmd:strate hienergy, per(1) output(rate_chd, replace)}{p_end}
+{phang2}{cmd:stratetab, using(rate_chd) outcomes(1) outlabels("CHD death") outcomeids(chd)}
+{cmd:frame(chd_rates, replace)}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: stcox i.hienergy}{p_end}
+{phang2}{cmd:regtab, frame(chd_model, replace) noint coef("HR")}{p_end}
+{phang2}{cmd:hrcomptab chd_rates, modelframes(chd_model) rows(3) outcomemap(_t)}
+{cmd:frame(chd_table2, replace)}{p_end}
+
+{title:10. Console preview without Excel}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: regress price mpg weight i.foreign}{p_end}
+{phang2}{cmd:regtab, noint}{p_end}
+{phang2}{cmd:table1_tc, by(foreign) vars(price contn \ mpg conts \ rep78 cat)}{p_end}
+
+{title:11. CSV export for R/Python users}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: logistic foreign mpg weight price}{p_end}
+{phang2}{cmd:regtab, xlsx(models.xlsx) sheet("OR") csv(models_for_R.csv) noint}{p_end}
+
+{title:12. Frame output for downstream Stata analysis}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: logistic foreign mpg weight price}{p_end}
+{phang2}{cmd:regtab, xlsx(models.xlsx) sheet("OR") frame(results) noint}{p_end}
+{phang2}{cmd:frame results: list}{p_end}
+
+{title:13. Custom formatting setup}
+{phang2}{cmd:tabtools set font Calibri}{p_end}
+{phang2}{cmd:tabtools set fontsize 9}{p_end}
+{phang2}{cmd:tabtools set headercolor "200 220 240"}{p_end}
+{phang2}{cmd:tabtools set zebracolor "240 245 250"}{p_end}
+{phang2}{cmd:tabtools set borderstyle thin}{p_end}
+{phang2}{cmd:tabtools get}{p_end}
+{phang2}{cmd:tabtools set clear}{p_end}
+
+{title:14. Dose-response pattern via regtab}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:gen byte price_cat = cond(price < 4000, 1, cond(price < 6000, 2, cond(price < 10000, 3, 4)))}{p_end}
+{phang2}{cmd:collect clear}{p_end}
+{phang2}{cmd:collect: regress mpg ib1.price_cat weight foreign}{p_end}
+{phang2}{cmd:regtab, xlsx(dose_response.xlsx) sheet("Dose") title("MPG by Price Category") noint factorlabel}{p_end}
+
+{title:15. Survival summary table}
+{phang2}{cmd:webuse drugtr, clear}{p_end}
+{phang2}{cmd:stset studytime, failure(died)}{p_end}
+{phang2}{cmd:survtab, times(5 10 15 20) by(drug) xlsx(survival.xlsx) sheet("Table 2")}
+{cmd:title("Table 2. Survival Estimates by Treatment")}
+{cmd:median riskset difference font(Arial) fontsize(9) borderstyle(academic)}{p_end}
+
+{title:16. Direct access to the consolidated descriptive engine}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:desctab price mpg weight rep78, by(foreign) xlsx(desc_events.xlsx) sheet("Descriptive")}
+{cmd:title("Characteristics by origin")}{p_end}
+
+{title:17. Style a raw in-memory table with puttab}
+{phang2}{cmd:sysuse auto, clear}{p_end}
+{phang2}{cmd:regress price mpg weight i.foreign}{p_end}
+{phang2}{cmd:matrix T = r(table)'}{p_end}
+{phang2}{cmd:puttab using report.xlsx, sheet("Coefs") matrix(T) title("OLS Coefficients") digits(3) headershade}{p_end}
+{phang2}{cmd:frame put make mpg price in 1/10, into(top)}{p_end}
+{phang2}{cmd:puttab using report.xlsx, sheet("Top10") frame(top) ///}{p_end}
+{phang2}{cmd:    title("First Ten Cars") varlabels font(Arial) fontsize(9) ///}{p_end}
+{phang2}{cmd:    borderstyle(academic) zebra}{p_end}
+
+{title:18. Emit-then-assemble pipeline}
+{phang2}{cmd:clear}{p_end}
+{phang2}{cmd:input str18 term double ahr str16 ci}{p_end}
+{phang2}{cmd:"Any HRT use" 0.82 "0.70, 0.96"}{p_end}
+{phang2}{cmd:"Current HRT use" 0.76 "0.61, 0.94"}{p_end}
+{phang2}{cmd:"Low dose" 0.91 "0.73, 1.13"}{p_end}
+{phang2}{cmd:"High dose" 0.69 "0.51, 0.93"}{p_end}
+{phang2}{cmd:end}{p_end}
+{phang2}{cmd:puttab term ahr ci in 1/2 using parts.xlsx, sheet("Primary") varlabels}{p_end}
+{phang2}{cmd:puttab term ahr ci in 3/4 using parts.xlsx, sheet("Dose") varlabels}{p_end}
+{phang2}{cmd:stacktab using parts.xlsx, sheet("Table 2")}
+{cmd:blocks(sheet(Primary) rows(2/4) cols(B-D) label(Any HRT use) \}
+{cmd:sheet(Dose) rows(2/4) cols(B-D) label(By estrogen dose))}
+{cmd:columnmerge(B+C as "aHR (95% CI)") spacing(1)}
+{cmd:title("Table 2. Hormone Therapy and Recurrent Events")}{p_end}
+
+{hline}
+{title:Also see}
+
+{pstd}{helpb tabtools} - overview and settings{p_end}
+{pstd}{helpb table1_tc}, {helpb desctab}, {helpb regtab}, {helpb effecttab},
+{helpb stratetab}, {helpb survtab}, {helpb crosstab},
+{helpb comptab}, {helpb hrcomptab}, {helpb puttab},
+{helpb stacktab} - command-specific help{p_end}
+
+{marker author}{...}
+{hline}
+{title:Author}
+
+{pstd}Timothy P Copeland, Karolinska Institutet{p_end}
+
+{hline}

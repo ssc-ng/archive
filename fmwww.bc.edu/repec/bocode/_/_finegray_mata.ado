@@ -1,4 +1,4 @@
-*! _finegray_mata Version 1.3.2  2026/09/08
+*! _finegray_mata Version 1.3.8  2026/10/19
 *! Mata forward-backward scan engine for Fine-Gray regression
 *! Author: Timothy P Copeland, Karolinska Institutet
 *! Program class: internal (stores results in Stata matrices)
@@ -8,7 +8,10 @@ Internal command: Fits Fine-Gray subdistribution hazard model using
 the forward-backward scan algorithm (Kawaguchi et al. 2021).
 Called by finegray. Not intended for direct user invocation.
 
-Algorithm: O(np) per Newton-Raphson iteration
+Algorithm: per Newton-Raphson iteration, for fixed numbers of weight and
+baseline strata, the score scan is O(np) and the full-information scan is
+O(np^2); the Newton solve is O(p^3).  Sorting, weight preparation and
+piecewise-time (tvc) passes have separate costs.
   1. KM censoring distribution G(t) (supports left truncation)
   2. Incremental risk-set tracking with entry-time pointer
   3. Backward scan: weighted sums for competing-event subjects
@@ -48,8 +51,58 @@ program define _finegray_mata_loaded
     if `rc' exit `rc'
 end
 
+* matastrict is a SESSION setting, and this file is `run' as a do-file, not
+* autoloaded as an ado-file, so Stata does not scope the switch below to the
+* load: it used to leave the caller's session strict (audit F08, 2026-09-27).
+* Package code still compiles strict; the caller's setting is put back after
+* the Mata block.  A compile failure aborts this file before that line runs,
+* so each loader call site also restores the setting on failure.
+* Replacing an older resident engine must not clear the caller's Mata objects
+* or the keyed baseline cache.  Drop only these exact shipped function names
+* before compiling their replacements; externals and similarly prefixed user
+* functions survive.  This list is generated from this file's definitions.
+local _fg_mata_functions ///
+    _finegray_mata_ok _finegray_beta _finegray_pweight_unit ///
+    _finegray_pweight_model_unit _finegray_pweight_ll _finegray_last_hole ///
+    _finegray_km_censor_single _finegray_km_censor _finegray_group_index ///
+    _finegray_bs_setup _finegray_bs_rows _finegray_G_at_times ///
+    _finegray_G_minus _finegray_H_at_times _finegray_joint_setup ///
+    _finegray_A_at_times _finegray_lt_normalizer _finegray_use_pooled_stabilizer ///
+    _finegray_A_pool_at_times _finegray_prepare_weight_design _finegray_positivity_check ///
+    _finegray_positivity_prehole _finegray_weight_diag_zzf _finegray_weight_diag ///
+    _finegray_gfloor_consulted _finegray_n_le _finegray_loglik_zzf_strat ///
+    _finegray_score_info_zzf_strat _finegray_scores_zzf_strat _finegray_loglik ///
+    _finegray_score_info _finegray_score_residuals _finegray_psi_residuals ///
+    _finegray_cluster_sums _finegray_robust_var _finegray_basehaz_zzf ///
+    _finegray_basehazard _finegray_information_inverse _finegray_schoenfeld_zzf ///
+    _finegray_schoenfeld _finegray_schoenfeld_compute _finegray_tvc_interval ///
+    _finegray_tvc_positions _finegray_tvc_ncoef _finegray_tvc_design ///
+    _finegray_tvc_mask _finegray_tvc_labels _finegray_loglik_pw ///
+    _finegray_score_info_pw _finegray_score_residuals_pw _finegray_psi_residuals_pw ///
+    _finegray_psi_residuals_lt _finegray_basehazard_pw _finegray_bh_calls_reset ///
+    _finegray_bh_calls_get _finegray_tvc_bhpieces _finegray_rank_fail ///
+    _finegray_engine _finegray_eta_shift _finegray_cif_core_zzf ///
+    _finegray_cif_accum _finegray_cif_core _finegray_cif_core_pw ///
+    _finegray_cif_var_st _finegray_cif_predict _finegray_boot_cif ///
+    _finegray_boot_cif_obs _finegray_tvc_eta _finegray_tvc_bhpieces_bs ///
+    _finegray_hazard_product _finegray_hazard_cif _finegray_cloglog_ci ///
+    _finegray_cif_stable _finegray_tvc_lambda _finegray_boot_cif_tvc ///
+    _finegray_boot_cif_obs_tvc _finegray_bh_rebuild _finegray_bh_store ///
+    _finegray_wsig _finegray_bh_escal _finegray_bh_setkey ///
+    _finegray_bh_have _finegray_bh_stash _finegray_bh_unstash ///
+    _finegray_bh_cutvals _finegray_tvc_mass_lookup _finegray_tvc_mass_store ///
+    _finegray_step_lookup_cached _finegray_bh_grid_cached _finegray_step_core ///
+    _finegray_step_core_bs _finegray_bh_stratum _finegray_step_lookup_direct ///
+    _finegray_bh_grid _finegray_step_lookup _finegray_assign_schoenfeld_vars ///
+    _finegray_numeric_ok
+foreach _fg_mata_fn of local _fg_mata_functions {
+    capture mata: mata drop `_fg_mata_fn'()
+}
+
+local _fg_matastrict0 = c(matastrict)
+mata: mata set matastrict on
+
 mata:
-mata set matastrict on
 
 /* The real load sentinel: a Mata function, so that `mata clear' -- which wipes
    Mata but not Stata programs -- makes the probe fail and the caller reload. */
@@ -65,9 +118,12 @@ void _finegray_mata_ok() {}
    before any such pairing.  Read the LIVE e(b) and drop by stripe, never a
    stored narrow copy: margins builds its delta-method Jacobian by reposting a
    perturbed e(b) and calling predict, and a private copy would leave that
-   derivative at zero.  `Nb.' is the base marker; `Nbn.' (ibn.) carries a real
-   coefficient and stays.  Same rule as _finegray_bnb on the Stata side and the
-   kept-term filter in finegray.ado; a tvc() or non-factor fit is the identity. */
+   derivative at zero.  Dropped: a term with an `o'-marked part (1b.a#co.x) or
+   a pure factor term whose every part is a base level (1b.grp, 1b.a#1b.b) --
+   Stata's own omission rule (_ms_omit_info).  Kept: 1b.grp#c.x and 1b.a#2.b,
+   which are real columns, and `Nbn.' (ibn.).  Same rule as _finegray_bnb on
+   the Stata side and the kept-term filter in finegray.ado; a tvc() or
+   non-factor fit is the identity. */
 real colvector _finegray_beta()
 {
     real rowvector b
@@ -77,9 +133,156 @@ real colvector _finegray_beta()
     b = st_matrix("e(b)")
     if (cols(b) == 0) return(J(0, 1, .))
     s = st_matrixcolstripe("e(b)")
-    keep = selectindex(!regexm(s[., 2], "[0-9]+b\."))
+    keep = selectindex(!(regexm(s[., 2], "(^|#)([0-9]+b?n?|c)?o\.") :|
+        regexm(s[., 2], "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$")))
     if (length(keep) == cols(b)) return(b')
     return(b[1, keep]')
+}
+
+/* Probability weights in the computational unit: mean one, w = c * unit.
+
+   A common factor c on every pweight leaves the weighted score root, the
+   fixed-weight sandwich, the Breslow baseline and the CIF unchanged (Wogu et
+   al. 2021 eq. 3: rho_i multiplies every risk-set sum and the subject's own
+   term, so U_c = c U, I_c = c I, Delta Lambda_c = Delta Lambda).  The
+   arithmetic does not: through 1.3.7 the absolute Newton-decrement test ran
+   on the RAW scale, so [pw = 1e-12*w] stopped after one step with
+   e(converged) = 1 (b(x) .611 against .642), and 1e-160 underflowed to
+   b = 0, V = 0 at rc 0 (audit M02, 2026-10-05).  Every consumer that reads a
+   pweight column (engine, CIF variance, observation CIF, Schoenfeld, baseline
+   rebuild) therefore works on this unit, so the optimizer stops on the same
+   footing as an unweighted fit.  e(sum_w), e(wexp) and the weight signature
+   are computed in Stata from the RAW column and are untouched.  Dividing by
+   the maximum first means obtaining the mean cannot overflow; a relative
+   weight range the double cannot represent as a normal number is refused
+   rather than silently flushed toward zero.  An all-ones column comes back
+   bit-identical, so [pw = 1] stays bit-identical to the unweighted fit. */
+real colvector _finegray_pweight_unit(real colvector w, | real scalar c)
+{
+    real scalar mx, av
+    real colvector q
+
+    c = 1
+    if (rows(w) == 0) return(w)
+    if (hasmissing(w) | min(w) <= 0) {
+        errprintf("finegray: probability weights must be positive and finite\n")
+        exit(error(402))
+    }
+    mx = max(w)
+    q = w :/ mx
+    if (min(q) < smallestdouble()) {
+        errprintf("finegray: the ratio of the smallest to the largest ")
+        errprintf("probability weight is below double precision range\n")
+        exit(430)
+    }
+    av = mean(q)
+    c = mx * av
+    return(q :/ av)
+}
+
+/* Computational pweights on the rows contributing to a cause-event risk set.
+   On the supported right-censoring weighted route, a non-competing exit before
+   the first cause event has no score, likelihood or baseline contribution.
+   Keep these rows in the sample and in the unweighted censoring KM; only their
+   computational weights are zero.  Normalizing over them let an early censored
+   row with weight 1e12 shrink every event weight until the Newton-decrement
+   test fired early; at 1e17 adding and removing it erased the active risk sum.
+   Every fit and post-estimation entry point uses this same definition.
+
+   Uniform weights retain the original all-ones arithmetic, including its exact
+   equivalence with an unweighted fit.  All raw-weight summaries and signatures
+   remain in Stata, before this computational conversion. */
+real colvector _finegray_pweight_model_unit(
+    real colvector w,
+    real colvector t,
+    real colvector delta,
+    real scalar cause,
+    real scalar censval,
+    real colvector event_type,
+    | real scalar c)
+{
+    real colvector is_cause, active, q, out
+    real scalar first, mx, av
+
+    c = 1
+    if (rows(w) == 0) return(w)
+    if (hasmissing(w) | min(w) <= 0) {
+        errprintf("finegray: probability weights must be positive and finite\n")
+        exit(error(402))
+    }
+    if (min(w) == max(w)) return(_finegray_pweight_unit(w, c))
+    is_cause = (event_type :== cause) :& (delta :== 1)
+    if (sum(is_cause) == 0) return(_finegray_pweight_unit(w, c))
+    first = min(select(t, is_cause))
+    active = (t :>= first) :| ((delta :== 1) :&
+        (event_type :!= cause) :& (event_type :!= censval))
+    q = select(w, active)
+    mx = max(q)
+    q = q :/ mx
+    if (min(q) < smallestdouble()) {
+        errprintf("finegray: the ratio of the smallest to the largest ")
+        errprintf("probability weight is below double precision range\n")
+        exit(430)
+    }
+    av = mean(q)
+    c = mx * av
+    out = J(rows(w), 1, 0)
+    out[selectindex(active)] = q :/ av
+    return(out)
+}
+
+/* The typed-pweight log pseudo-likelihood from the unit-weight one.  With
+   w = c * unit and d = the unit weight total over cause events,
+   ell_w(beta) = c * (ell_unit(beta) - d * log(c)).  c == 1 returns ll
+   bit for bit. */
+real scalar _finegray_pweight_ll(real scalar ll, real scalar c, real scalar d)
+{
+    return(c * (ll - d * ln(c)))
+}
+
+/* Last observation gap ("hole") of a left-truncated sample: the largest entry
+   time u > 0 at which every subject that entered before u had already exited
+   by u, so the risk set was empty just before the entries at u.  0 when the
+   sample has no gap (in particular whenever no t0 exceeds 0).
+
+   With (t0, t] intervals and the events-then-censorings-then-entries
+   ordering, the at-risk count just before the entries at u is
+       r(u) - w(u) = #{ l_i <= u } - #{ x_i <= u } - #{ l_i == u }
+                   = #{ l_i <  u } - #{ x_i <= u },
+   so a gap is an entry time with #{ l_i < u } == #{ x_i <= u } -- the same
+   r(u) == w(u) that puts a zero factor into _finegray_H_at_times' reverse
+   product limit.  Subjects with x_i <= last gap are exactly those the entry
+   product limit H(x_i-) is zero for.  O(n log n): two sorts and one merge. */
+real scalar _finegray_last_hole(
+    real colvector t,
+    real colvector t0)
+{
+    real colvector ls, ts_, lt
+    real scalar nl, j, u, pl, pt, hole
+
+    lt = uniqrows(select(t0, t0 :> 0))
+    nl = rows(lt)
+    if (nl == 0) return(0)
+    ls = sort(t0, 1)
+    ts_ = sort(t, 1)
+    hole = 0
+    pl = 1
+    pt = 1
+    for (j = 1; j <= nl; j++) {
+        u = lt[j]
+        /* entries with l_i < u */
+        while (pl <= rows(ls)) {
+            if (ls[pl] < u) pl++
+            else break
+        }
+        /* exits with x_i <= u */
+        while (pt <= rows(ts_)) {
+            if (ts_[pt] <= u) pt++
+            else break
+        }
+        if ((pl - 1) == (pt - 1)) hole = u
+    }
+    return(hole)
 }
 
 /* Single-stratum KM of censoring distribution (with left truncation).
@@ -87,7 +290,49 @@ real colvector _finegray_beta()
    right-continuous KM step values.  Consumers that need the IPCW weight take
    the left limit G(t-) via _finegray_G_at_times/_finegray_G_minus; keeping the
    raw step values here is what lets that lookup be exact at, between, and
-   beyond observation times. */
+   beyond observation times.
+
+   TIE ORDERING (events_first, 1.3.5).  Without delayed entry the censoring
+   jump at t divides by the count at risk at t INCLUDING the subjects failing
+   at t: the "flip failures and censorings and take the ordinary KM"
+   convention stcrreg uses, and the one every released right-censored result
+   is pinned to (test_finegray_ties FG-C02, 1e-7 against stcrreg).  Under
+   delayed entry the weight is Zhang-Zhang-Fine's b(t)/S(t-), which the
+   engine reaches through Geskus's product G(t-)H(t-).  That identity holds
+   at tied times ONLY under Geskus's ordering t_(i) < c_(j) < l_(j) -- events,
+   then censorings, then entries (2011, p.40) -- and he states the
+   consequence for this jump: "individuals with an event at c_(j) are not
+   considered to be at risk in the calculation of r(c_(j))" (p.41).  Through
+   1.3.4 the delayed-entry path kept those failures in the censoring risk
+   set, so after an event/censoring collision the product G(t-)H(t-) no
+   longer telescoped to b/S(t-): on a 401-subject fixture with five such
+   collisions the converged coefficient was -0.06030 against -0.06151 from
+   the published weight (survival::finegray + coxph agree with the latter to
+   1e-13).  Taking the left limit later cannot undo a wrong jump.  With
+   events_first the jump divides by r(t) - d(t), and the identity
+   S*G*H(u+) / S*G*H(u-) = r(u+)/r(u) holds at every tie.  The caller sets
+   the flag from the WHOLE sample (any t0 > 0), not per stratum: the ZZF
+   target applies to every stratum of a delayed-entry fit.
+
+   OBSERVATION GAPS (1.3.5).  A lone early entrant censored before the next
+   entrant arrives is the only subject at risk at its own censoring, so the
+   product-limit jump there is 1 - 1/1 = 0 and G is zero at every later
+   time -- floored to 1e-10, which put numerator and denominator of every
+   later weight on the floor and silently erased the censoring weighting at
+   rc 0 with e(converged) = 1 (a 300-subject fixture moved b(z2) from -0.101
+   to -0.084 on the pooled path, and b(z1) from -0.229 to +0.002 under
+   strata()==truncstrata()).  He & Yang (1998, Thm 2.2) make the product
+   limits well defined only on the identifiable region -- after the sample's
+   last empty risk set -- so this KM is now estimated on that region: the
+   subjects observed before the last gap of THIS sample get weight 0 here
+   and enter neither the at-risk nor the censoring counts.  Their own G is
+   never consulted: their entry product limit H(x_i-) is zero, so their
+   weight denominator is zero and _finegray_positivity_check refuses the fit
+   if anything divides by it.  The gap is the gap of the sample this KM is
+   estimated on (a censoring stratum, or the pooled sample), not of the
+   truncation group: under truncstrata() alone G is pooled, and an early
+   censoring while other strata's subjects are at risk is legitimate
+   information about the pooled G. */
 real colvector _finegray_km_censor_single(
     real colvector t,
     real colvector delta,
@@ -95,10 +340,13 @@ real colvector _finegray_km_censor_single(
     real colvector event_type,
     real colvector t0,
     | real scalar n_trunc_out,
-    real colvector w)
+    real colvector w,
+    real scalar events_first,
+    real colvector floored)
 {
-    real colvector row_id
-    real scalar n, i, j, surv, n_risk_at_t, n_cens_at_t, cur_time, ep
+    real colvector row_id, wk
+    real scalar n, i, j, surv, n_risk_at_t, n_cens_at_t, n_fail_at_t
+    real scalar cur_time, ep, hole, n_risk_cens, jump, next_surv
     real colvector G, ord, entry_ord
 
     n = rows(t)
@@ -110,6 +358,13 @@ real colvector _finegray_km_censor_single(
        population interpretation requires a valid sample censoring estimate. With
        w == 1 every sum below is the integer count it was. */
     if (args() < 7) w = J(n, 1, 1)
+    if (args() < 8) events_first = 0
+    /* Identifiable region: zero KM weight before the sample's last gap.  wk
+       is a private copy; the caller's w (and the returned G's rows) keep
+       their meaning. */
+    hole = _finegray_last_hole(t, t0)
+    if (hole > 0) wk = w :* (t :> hole)
+    else wk = w
     /* Deterministic tie-break by row index.  Mata's order() resolves ties
        using Stata's sort seed, which ADVANCES on every sort, so a tied key
        (every t0 == 0 when there is no delayed entry) yields a different
@@ -140,47 +395,76 @@ real colvector _finegray_km_censor_single(
             if (t0[entry_ord[ep]] >= cur_time) break
             /* Only count if subject is still alive (t >= cur_time) */
             if (t[entry_ord[ep]] >= cur_time) {
-                n_risk_at_t = n_risk_at_t + w[entry_ord[ep]]
+                n_risk_at_t = n_risk_at_t + wk[entry_ord[ep]]
             }
             ep++
         }
 
-        /* Count censoring events in this time group */
+        /* Count censoring events -- and, for the events-first ordering, the
+           failures -- in this time group */
         n_cens_at_t = 0
+        n_fail_at_t = 0
         j = i
         while (j <= n) {
             if (t[ord[j]] != cur_time) break
             if (event_type[ord[j]] == censval & delta[ord[j]] == 0) {
-                n_cens_at_t = n_cens_at_t + w[ord[j]]
+                n_cens_at_t = n_cens_at_t + wk[ord[j]]
+            }
+            else if (delta[ord[j]] == 1) {
+                n_fail_at_t = n_fail_at_t + wk[ord[j]]
             }
             j++
         }
 
-        if (n_cens_at_t > 0 & n_risk_at_t > 0) {
-            surv = surv * (1 - n_cens_at_t / n_risk_at_t)
+        /* Events precede censorings at a tied time under delayed entry, so
+           the failures at cur_time have left the censoring risk set. */
+        n_risk_cens = (events_first ? n_risk_at_t - n_fail_at_t : n_risk_at_t)
+        if (n_cens_at_t > 0 & n_risk_cens > 0) {
+            jump = 1 - n_cens_at_t / n_risk_cens
+            next_surv = surv * jump
+            if (surv > 0 & jump > 0 & next_surv == 0) {
+                errprintf("finegray: a positive censoring survivor is below double precision range\n")
+                exit(430)
+            }
+            surv = next_surv
         }
 
         /* Assign G to all obs at this time, then remove them from risk set */
         while (i < j) {
             G[ord[i]] = surv
-            n_risk_at_t = n_risk_at_t - w[ord[i]]
+            n_risk_at_t = n_risk_at_t - wk[ord[i]]
             i++
         }
     }
 
     real scalar n_trunc
+    real colvector fl
     n_trunc = 0
+    fl = J(n, 1, 0)
     for (i = 1; i <= n; i++) {
-        if (G[i] < 1e-10) {
+        /* Preserve every positive product-limit probability.  A floor on a
+           positive G changes ratios and can turn a finite delayed-entry weight
+           into a different estimator.  Retain the existing exact-zero policy. */
+        if (G[i] <= 0) {
             G[i] = 1e-10
+            fl[i] = 1
             n_trunc++
         }
     }
     /* This function never prints.  A stratified sweep calls it once per
        stratum, so a note emitted here would fire once PER STRATUM; the
        decision to print, and the aggregation across strata, belong to
-       _finegray_km_censor.  Report the count back by reference instead. */
+       the engine.  Report the count back by reference instead.
+
+       n_trunc counts EVERY floored row, and most of them are harmless: the
+       rows at the terminal time of a KM whose last risk set is emptied by
+       censoring (every subject still at risk at an administrative end of
+       follow-up) are floored, but no weight reads them -- G is consulted
+       only as the left limit G(u-) at a later time u.  floored (optional)
+       hands back the per-row mask so the engine can count only the floored
+       values some weight actually consults (_finegray_gfloor_consulted). */
     if (args() >= 6) n_trunc_out = n_trunc
+    if (args() >= 9) floored = fl
 
     return(G)
 }
@@ -194,21 +478,28 @@ real colvector _finegray_km_censor(
     real colvector byg_id,
     real colvector t0,
     | real scalar quiet,
-    real colvector w)
+    real colvector w,
+    real colvector floored)
 {
-    real scalar n, g, nlev, n_trunc, n_trunc_tot
-    real colvector G, levels, sel
+    real scalar n, g, nlev, n_trunc, n_trunc_tot, events_first
+    real colvector G, levels, sel, fl, flg
 
-    /* quiet suppresses the G-truncation note.  The fit REPORTS it once (the
-       data characteristic is the user's to act on); post-estimation commands
-       recompute G for the influence function and must NOT reprint it, or a
-       fit-time warning appears attributed to predict/cif.  Omitted => 0. */
+    /* quiet once suppressed the G-truncation count (see the end of this
+       function); it no longer changes anything.  floored (optional) receives
+       the per-row mask of floored step values. */
     if (args() < 7) quiet = 0
     if (args() < 8) w = J(rows(t), 1, 1)
     n_trunc_tot = 0
 
     n = rows(t)
     G = J(n, 1, 1)
+    fl = J(n, 1, 0)
+
+    /* Geskus's events-then-censorings ordering whenever the fit has delayed
+       entry ANYWHERE: decided on the whole sample so that every censoring
+       stratum of one fit follows one convention.  Right-censored fits keep
+       the stcrreg convention bit for bit; see _finegray_km_censor_single. */
+    events_first = (sum(t0 :> 0) > 0)
 
     levels = uniqrows(byg_id)
     nlev = rows(levels)
@@ -216,15 +507,18 @@ real colvector _finegray_km_censor(
         for (g = 1; g <= nlev; g++) {
             sel = selectindex(byg_id :== levels[g])
             G[sel] = _finegray_km_censor_single(t[sel], delta[sel],
-                censval, event_type[sel], t0[sel], n_trunc, w[sel])
+                censval, event_type[sel], t0[sel], n_trunc, w[sel],
+                events_first, flg)
+            fl[sel] = flg
             n_trunc_tot = n_trunc_tot + n_trunc
         }
     }
     else {
         G = _finegray_km_censor_single(t, delta, censval, event_type, t0,
-            n_trunc, w)
+            n_trunc, w, events_first, fl)
         n_trunc_tot = n_trunc
     }
+    if (args() >= 9) floored = fl
 
     /* One count per sweep, over every stratum.  Truncation is a property of
        the censoring KM as a whole; the per-stratum breakdown is not something
@@ -237,10 +531,16 @@ real colvector _finegray_km_censor(
        a first-time user saw -- above even the command's own title.  The count
        now rides out in a local, the fit posts it as e(N_G_trunc), and
        _finegray_display prints it inside the header where the reader already
-       has the context to read it (and with the right singular/plural). */
-    if (!quiet) {
-        st_local("_fg_ntrunc", strofreal(n_trunc_tot, "%18.0g"))
-    }
+       has the context to read it (and with the right singular/plural).
+
+       After 1.3.7 this function no longer reports a count at all, and quiet is
+       kept only as the positional slot every caller passes.  Through 1.3.7
+       the local it set was the RAW number of floored rows, which includes
+       every terminal row of a KM whose last risk set is emptied by censoring
+       -- rows no weight reads -- so the note fired on the canonical webuse
+       hypoxia example (1 row) and on any administrative end of follow-up (55
+       rows after stset, exit(time 3)).  The engine takes the floored mask
+       instead and posts the CONSULTED count (_finegray_gfloor_consulted). */
 
     return(G)
 }
@@ -391,14 +691,24 @@ real colvector _finegray_G_minus(
 
    Stabilized Zhang-Zhang-Fine Weight 1 is  w_i(t) = A(t-) / A(X_i-)  with
 
-       A(t) = b(t) / S(t-)                  ZZF (2011) eq. (5)   [canonical]
-            = H(t-) * G(t-)                 Geskus (2011) eq. (11)
+       A(t) = H(t-) * G(t-)                 Geskus (2011) eq. (11)
+            = b(t) / (kappa S(t-))          ZZF (2011) eq. (4), up to kappa
 
-   The product-limit identity holds without requiring L and C to be independent.
-   Under independence, H and G additionally admit separate marginal-probability
-   interpretations (H as P(L < t)); otherwise they remain the two product-limit
-   factors of A. Gate Z-ties established that the two computational forms agree
-   to machine precision on every tie-collision class.
+   The product is PROPORTIONAL to ZZF's canonical b/S, not equal to it: the
+   constant kappa = n^-1 sum 1/H(X_i-) (Geskus eq. 8) is the inverse observation
+   probability of the sample.  It cancels from the one-stratum ratio above, so
+   this file carries the raw product there; it does NOT cancel between a
+   pooled numerator and a stratum denominator, so the stratified branch
+   restores it (_finegray_lt_normalizer).  The proportionality holds without
+   requiring L and C to be independent.  Under independence, H and G
+   additionally admit separate marginal-probability interpretations (H as
+   P(L < t)); otherwise they remain the two product-limit factors of A.  The
+   two computational forms agree to machine precision on every tie-collision
+   class once the constant is accounted for -- on the STATA engine, checked
+   in qa/test_finegray_v135.do and qa/crossval_finegray_zzf_ties.do.  (The
+   R-only Gate Z-ties in crossval_finegray_zzf_r.R showed the same for
+   survival::finegray; through 1.3.4 that was mistaken for a statement about
+   this engine, whose censoring KM used the other tie ordering.)
 
    The product form is not merely convenient -- it is what makes the no-LT
    path BIT-IDENTICAL.  With no delayed entry every l_j = 0, so for any t > 0
@@ -423,9 +733,14 @@ real colvector _finegray_G_minus(
    in their own risk set.  This differs from the (t0, t] convention used for
    the at-risk set and for G, where an entry at exactly t is NOT yet at risk --
    which is the "events, then censorings, then entries" ordering (Geskus p.40).
-   The two conventions are both correct and they are not the same; this is
-   verified against the direct b/S oracle in qa/crossval_finegray_zzf.do rather
-   than argued.
+   The same ordering governs G's own jump under delayed entry: failures at a
+   censoring time leave the censoring risk set first (_finegray_km_censor_single,
+   events_first).  With all three factors on that ordering the product
+   telescopes exactly at ties, S*G*H(u+) / S*G*H(u-) = r(u+)/r(u), which is
+   what makes A = G(t-)H(t-) proportional to b(t)/S(t-) on tied data.  This
+   is verified against the direct b/S form on tied fixtures in
+   qa/test_finegray_v135.do and qa/crossval_finegray_zzf_ties.do, live on
+   the Stata engine, rather than argued.
    ------------------------------------------------------------------------ */
 
 /* Left limit H_g(target-) of the entry distribution, one column per level of
@@ -533,7 +848,16 @@ real matrix _finegray_H_at_times(
         for (j = nl; j >= 1; j--) {
             r_j = rv[j]
             w_j = wv[j]
-            if (r_j > 0 & w_j > 0) acc = acc * (1 - w_j / r_j)
+            if (r_j > 0 & w_j > 0) {
+                real scalar jump, next_acc
+                jump = 1 - w_j / r_j
+                next_acc = acc * jump
+                if (acc > 0 & jump > 0 & next_acc == 0) {
+                    errprintf("finegray: a positive entry survivor is below double precision range\n")
+                    exit(430)
+                }
+                acc = next_acc
+            }
             Hleft[j] = acc        /* = prod over entry times >= lt[j] */
         }
 
@@ -640,21 +964,181 @@ real matrix _finegray_A_at_times(
     real colvector tg_id,
     real colvector jc,
     real colvector ju,
-    real colvector target_t)
+    real colvector target_t,
+    | real matrix Ht_out)
 {
     real scalar j, nj
     real matrix Gt, Ht, out
 
     Gt = _finegray_G_at_times(t, G, byg_id, target_t)
     Ht = _finegray_H_at_times(t, t0, tg_id, target_t)
+    if (args() >= 9) Ht_out = Ht
 
     nj = rows(jc)
     out = J(rows(target_t), nj, 1)
-    for (j = 1; j <= nj; j++) out[., j] = Gt[., jc[j]] :* Ht[., ju[j]]
+    for (j = 1; j <= nj; j++) {
+        out[., j] = Gt[., jc[j]] :* Ht[., ju[j]]
+        if (sum((Gt[., jc[j]] :> 0) :& (Ht[., ju[j]] :> 0) :&
+            (out[., j] :== 0)) > 0) {
+            errprintf("finegray: a positive joint G/H weight probability is below double precision range\n")
+            exit(430)
+        }
+    }
     return(out)
 }
 
-/* ZZF (2011) equation (7) uses a POOLED time-side stabilizer and a
+/* ------------------------------------------------------------------------
+   STRATIFIED DELAYED ENTRY: the per-stratum normalizer kappa_j.
+
+   ZZF (2011) eq. (6), published p.1938 (eq. (7) in the PMC author
+   manuscript), is
+
+       w_ri(t) = r_ri(t) * S_r(X_ri- ^ t-) * b(t) / [ b_r(X_ri ^ t) * S(t-) ]
+               = r_ri(t) * B_pool(t) / B_r(X_ri ^ t),   B_g(s) = b_g(s)/S_g(s-)
+
+   with b_g(s) = n_g^-1 * #{i in g : L_i < s <= X_i} and S_g the left-truncated
+   all-cause Kaplan-Meier WITHIN stratum g.  The product-limit object the scan
+   carries, A_g(s) = G_g(s-) H_g(s-), is proportional to B_g but NOT equal to
+   it:
+
+       B_g(s) = kappa_g * A_g(s),     kappa_g = n_g^-1 * sum_{i in g} 1/H_g(X_i-)
+
+   The identity S_g G_g H_g (s-) = c_g * r_g(s-) holds exactly under the
+   events-then-censorings-then-entries tie ordering (each factor's jump is the
+   ratio of consecutive risk counts, so the product telescopes), and Geskus
+   (2011) eq. (7)-(8) identify the constant as 1/N_g with N_g = sum 1/H_g(X_i-),
+   the inverse-probability estimate of the untruncated stratum size.  kappa_g
+   therefore estimates 1/P(L < X | g): the observation probability of stratum
+   g, which is exactly what the b_g/S_g form carries and the raw product does
+   not.  Verified to 2e-15 on tied and untied fixtures before this was written.
+
+   The constant cancels from A_g(t)/A_g(X_i) -- the ONE-stratum weight ratio --
+   which is why the pooled delayed-entry path and every right-censoring path
+   are untouched.  It does NOT cancel between a pooled numerator and a
+   stratum-specific denominator: B_pool(t)/B_g(X_i) = (kappa_pool/kappa_g) *
+   A_pool(t)/A_g(X_i).  Through 1.3.2 the pooled branch used the raw A ratio
+   and so weighted each stratum by kappa_g/kappa_pool relative to the published
+   estimator; the tied fixture in qa/test_finegray_zzf.do moves its
+   coefficient from 0.1732 to 0.1506 when the constants are restored.
+
+   FACTORIZED GROUPINGS.  When strata() and truncstrata() differ, joint cell
+   j = (c, u) carries A_j = G_c(t-) H_u(t-).  The same cohort-size argument
+   gives the cell's normalizer from its OWN members and the entry product
+   limit of its truncation group:
+
+       kappa_j = n_j^-1 * sum_{i in j} 1/H_u(j)(X_i-)
+
+   This is the IPW estimate of N_j/n_j = 1/P(L < X | j) under the design the
+   options assert (entry depends on u only, censoring on c only, L independent
+   of (T, C) within the cell).  With matching groupings it reduces to kappa_g
+   above, so the two cases share one code path.  This normalization is a
+   package derivation, not a published formula; finegray_methods.sthlp says so.
+
+   SUPPORT: THE IDENTIFIABLE REGION (1.3.4).  H_u(X_i-) == 0 happens when the
+   truncation group's risk set was EMPTY at some entry time at or after X_i --
+   an inner empty risk set, or "hole": every earlier entrant of the group had
+   already exited when the next one arrived, so the reverse-time factor at
+   that entry is (1 - w/r) with r == w, and the entry product limit is zero
+   at every time before it.  The subjects with H_u(X_i-) == 0 are exactly the
+   ones observed before the group's last hole.
+
+   He & Yang (1998, Ann Statist 26:1011-1027), the source Geskus cites for the
+   constant, state what that means.  Their Theorem 2.2 makes the constant
+   alpha_n = G_n(x) Fbar_n(x-) / R_n(x) independent of x ONLY on {x : R_n(x) >
+   0}, and the proof opens with the degenerate case: alpha_n = 0 iff b_{F_n} <
+   a_{G_n}, which is what a hole produces -- the exit NPMLE puts all its mass
+   below the hole, the entry NPMLE none, and the implied cohort size 1/alpha_n
+   is infinite.  The observed data are consistent with arbitrarily many
+   truncated pairs inside the hole: the truncation probability is NOT
+   identified across it.  Only the CONDITIONAL estimand on the identifiable
+   region -- Woodroofe's (1985) F0 = P(X <= x | X >= a_G), He & Yang's alpha_0
+   (p.1012, Lemma 2.1) -- exists, and their own sec. 3 modified estimator
+   (eq. 3.5-3.7, Gu & Lai 1990 trimming, "necessary to avoid singularities at
+   the boundaries") is that conditioning made operational.
+
+   So the normalizer is estimated on the identifiable region: the IPW sum runs
+   over the members with H_u(X_i-) > 0 and is divided by the FULL observed cell
+   size n_j.  The divisor is n_j, not the count of identifiable members,
+   because that is what ZZF's canonical form does.  Write the post-hole
+   sub-sample with a star; it has no hole, so the telescoping identity holds on
+   it verbatim, B*_g = kappa*_g A*_g with kappa*_g = n*_g^-1 sum_{H>0} 1/H_g.
+   ZZF's own b_g(s)/S_g(s-) on the FULL sample counts the pre-hole subjects in
+   n_g but not in the risk count after the hole, and S_g is untouched when the
+   lone subject was censored, so B_g(s) = (n*_g/n_g) B*_g(s) = [n_g^-1 sum_{H>0}
+   1/H_g(X_i-)] A*_g(s).  With this divisor the product form reproduces the
+   published b/S form on every dataset where the published form is finite --
+   PROVIDED A*_g really is the post-hole product.  Through 1.3.4 it was not:
+   G_g was the full-sample censoring KM, whose jump at the lone pre-hole
+   subject's censoring is (1 - 1/1) = 0, so G_g and the whole column were on
+   the 1e-10 floor after the hole and the "identity" above was asserted on a
+   quantity the code never computed (b(z1) = +0.002 against -0.229 at rc 0,
+   e(converged) = 1; the clarity audit's scenario 1 fixture did not even
+   converge).  Since 1.3.5 _finegray_km_censor_single estimates G on the
+   identifiable region of its own sample (weight 0 before that sample's last
+   gap), which IS A*_g, and the audit fixture reproduces the dense published
+   b/S coefficient to 3e-14 (test_finegray_v135 T4).
+   Where the published form is not finite -- the lone pre-hole subject had an
+   EVENT, so ZZF's S_g drops to zero and B_g is infinite -- the pre-hole
+   subject's own denominator A_j(X_i-) = kappa_j G(X_i-) H_u(X_i-) is zero
+   through H_u, and so is the cell's column at every time inside the hole;
+   _finegray_positivity_check refuses the fit the moment a weight consults
+   either (a retained competing exit before the hole closes, or a cause event
+   inside it).  A pre-hole subject whose denominator is never consulted --
+   censored, or with the cause event only after the hole -- contributes only
+   its count to n_g, exactly as it does in the b/S form.
+
+   Through 1.3.3 a single H_u(X_i-) == 0 member zeroed the WHOLE cell's
+   normalizer, so the entire stratum was refused even when nothing consulted
+   the subject: validation_finegray_zzf_coverage arm ts_mod_n2000, replication
+   245 (seed 20260959), where the first stratum-0 entrant is censored before
+   the second arrives, failed with r(459) on a dataset the published estimator
+   handles.  The excluded count per cell is returned through nexcl so the
+   engine can post e(N_lt_prehole) and print the note.  A cell with NO
+   identifiable member keeps kappa_j = 0: its column is then zero, which the
+   consulted-cell check refuses if it is ever divided by, and -- missing being
+   ordered above every number in Mata -- must not be missing, or it would pass
+   the `> 0' test and surface later as r(430) nonconvergence. */
+real colvector _finegray_lt_normalizer(
+    real colvector gidx,
+    real colvector ju,
+    real matrix Ht,
+    | real colvector nexcl)
+{
+    real scalar j, nj, i, n, h
+    real colvector kappa, rawsum, cnt, excl
+
+    nj = rows(ju)
+    n = rows(gidx)
+    kappa = J(nj, 1, 0)
+    rawsum = J(nj, 1, 0)
+    cnt = J(nj, 1, 0)
+    excl = J(nj, 1, 0)
+    for (i = 1; i <= n; i++) cnt[gidx[i]] = cnt[gidx[i]] + 1
+    for (i = 1; i <= n; i++) {
+        j = gidx[i]
+        h = Ht[i, ju[j]]
+        if (h <= 0 | h >= .) {
+            excl[j] = excl[j] + 1
+            continue
+        }
+        /* Preserve the released reciprocal summation order when finite.
+           In parallel, divide the unit by the cell count BEFORE H: this
+           mean can be finite when a reciprocal or its unscaled sum is not. */
+        rawsum[j] = rawsum[j] + 1 / h
+        kappa[j] = kappa[j] + (1 / cnt[j]) / h
+    }
+    for (j = 1; j <= nj; j++) {
+        if (cnt[j] > 0 & rawsum[j] < .) kappa[j] = rawsum[j] / cnt[j]
+        if (kappa[j] >= .) {
+            errprintf("finegray: an entry-weight normalizer exceeds double precision range\n")
+            exit(430)
+        }
+    }
+    if (args() >= 4) nexcl = excl
+    return(kappa)
+}
+
+/* ZZF (2011) equation 6 uses a POOLED time-side stabilizer and a
    stratum-specific subject-side denominator.  The same algebra applies to the
    package's factorized censoring-by-entry extension when its two grouping
    variables differ.  This differs from the historical symmetric
@@ -675,9 +1159,14 @@ real scalar _finegray_use_pooled_stabilizer(
         sum(tg_id :!= tg_id[1]) > 0)
 }
 
-/* Pooled A(t-) = G_pool(t-) H_pool(t-), evaluated on target_t.  Bellach et
-   al. (2020) establish the continuous-time equivalence to ZZF's b(t)/S(t-);
-   the package's tie convention is separately regression-tested. */
+/* Pooled B(t-) = kappa_pool * G_pool(t-) H_pool(t-) = b(t)/S(t-), evaluated
+   on target_t: ZZF's pooled stabilizer on the scale eq. (6) states it.  The
+   product-limit identity behind kappa is documented at
+   _finegray_lt_normalizer; Bellach et al. (2020) establish the
+   continuous-time equivalence of the two forms, and the package's tie
+   convention is separately regression-tested.  target_t must be the
+   observation times themselves: kappa_pool is read off H_pool(X_i-), so the
+   H column has to be evaluated at every X_i. */
 real colvector _finegray_A_pool_at_times(
     real colvector t,
     real colvector delta,
@@ -686,7 +1175,7 @@ real colvector _finegray_A_pool_at_times(
     real colvector t0,
     real colvector target_t)
 {
-    real colvector one, Gp
+    real colvector one, Gp, kappa
     real matrix Gpt, Hpt
 
     one = J(rows(t), 1, 1)
@@ -700,7 +1189,8 @@ real colvector _finegray_A_pool_at_times(
     Gp = _finegray_km_censor(t, delta, censval, event_type, one, t0, 1)
     Gpt = _finegray_G_at_times(t, Gp, one, target_t)
     Hpt = _finegray_H_at_times(t, t0, one, target_t)
-    return(Gpt[., 1] :* Hpt[., 1])
+    kappa = _finegray_lt_normalizer(one, J(1, 1, 1), Hpt)
+    return(kappa[1] :* Gpt[., 1] :* Hpt[., 1])
 }
 
 /* Build the beta-INDEPENDENT weight design once.
@@ -714,11 +1204,25 @@ real colvector _finegray_A_pool_at_times(
    diagnostic calculations.  Standalone callers retain their self-contained
    fallback and build the same bundle on entry.
 
-     use_pooled  whether ZZF equation 7's pooled stabilizer is active
+     use_pooled  whether ZZF equation 6's pooled stabilizer is active
      gidx       subject -> observed joint weight-stratum index
      Gminus     A_g(X_i-) for each subject
      A          A_g(t_i-) for every observation time and joint stratum
-     Apool      pooled A(t_i-) (ones when the pooled branch is inactive) */
+     Apool      pooled A(t_i-) (ones when the pooled branch is inactive)
+
+   ON THE POOLED BRANCH A, Gminus AND Apool ARE NORMALIZED: column g of A and
+   the matching Gminus entries carry B_g = kappa_g * G_g H_g, and Apool
+   carries B_pool = kappa_pool * G_pool H_pool, so that every consumer's
+   Apool/Aden ratio is ZZF eq. (6) on the published scale.  The names are
+   kept because the one-stratum branch, where kappa cancels, still holds the
+   raw product; see _finegray_lt_normalizer for the derivation and the
+   identifiable-region rule.
+
+   nprehole (optional, 1.3.4) receives the per-joint-cell count of subjects
+   excluded from that cell's normalizer because H_u(X_i-) == 0 -- observed
+   before the cell's truncation group last had an empty risk set.  Zeros when
+   the pooled branch is inactive.  The engine posts its total as
+   e(N_lt_prehole); every other caller leaves it alone. */
 void _finegray_prepare_weight_design(
     real colvector t,
     real colvector delta,
@@ -732,20 +1236,34 @@ void _finegray_prepare_weight_design(
     real colvector gidx,
     real colvector Gminus,
     real matrix A,
-    real colvector Apool)
+    real colvector Apool,
+    | real colvector nprehole)
 {
-    real colvector jc, ju
+    real colvector jc, ju, kappa, nexcl
+    real matrix Ht
+    real scalar j
 
     _finegray_joint_setup(byg_id, tg_id, gidx, jc, ju)
-    A = _finegray_A_at_times(t, G, byg_id, t0, tg_id, jc, ju, t)
-    Gminus = _finegray_G_minus(gidx, A)
+    A = _finegray_A_at_times(t, G, byg_id, t0, tg_id, jc, ju, t, Ht)
     use_pooled = (sum(t0 :> 0) > 0 & rows(jc) > 1)
+    nexcl = J(rows(jc), 1, 0)
     if (use_pooled) {
+        kappa = _finegray_lt_normalizer(gidx, ju, Ht, nexcl)
+        for (j = 1; j <= rows(jc); j++) A[., j] = kappa[j] :* A[., j]
         Apool = _finegray_A_pool_at_times(t, delta, censval, event_type, t0, t)
     }
     else {
         Apool = J(rows(t), 1, 1)
+        /* One weight cell: kappa cancels from every ratio and is not applied,
+           but the pre-gap COUNT is still a fact about the fit (1.3.5).
+           Through 1.3.4 it was reported only on the stratified branch, so a
+           pooled delayed-entry fit with an observation gap posted
+           e(N_lt_prehole) = 0 and printed no note while its censoring KM
+           sat on the 1e-10 floor.  The normalizer value is discarded. */
+        if (sum(t0 :> 0) > 0) (void) _finegray_lt_normalizer(gidx, ju, Ht, nexcl)
     }
+    Gminus = _finegray_G_minus(gidx, A)
+    if (args() >= 14) nprehole = nexcl
 }
 
 /* Combined-weight diagnostics, computed ONCE after convergence.
@@ -782,7 +1300,7 @@ void _finegray_prepare_weight_design(
 
    A retained competing-event subject i is divided by its own stratum's
    A_g(X_i-): its numerator is A_g(t-) on the one-stratum branch and
-   the pooled A(t-) under equation 7.  If A_g(X_i-) is ZERO, that weight is
+   the pooled A(t-) under equation 6.  If A_g(X_i-) is ZERO, that weight is
    undefined -- and Mata returns
    MISSING for x/0 rather than infinity, so the damage surfaces far downstream as
    "the null log pseudo-likelihood is not finite" / r(430) "convergence not
@@ -846,7 +1364,7 @@ real scalar _finegray_positivity_check(
     }
     nj = cols(Aden)
 
-    /* Under the equation-7 pooled-stabilizer form, every genuinely at-risk
+    /* Under the equation-6 pooled-stabilizer form, every genuinely at-risk
        subject is divided by its group's A_g(t-), not just retained
        competing-event subjects by A_g(X_i-).  Check exactly those consulted
        denominator cells.  Inactive groups are deliberately ignored: 0/A_g
@@ -907,6 +1425,7 @@ real scalar _finegray_positivity_check(
             else              badstr = badstr + " " + strofreal(i)
         }
         st_local("_fg_posstrata", badstr)
+        _finegray_positivity_prehole(gidx, Gminus, flagged)
         return(npos)
     }
 
@@ -928,9 +1447,14 @@ real scalar _finegray_positivity_check(
     npos = 0
     flagged = J(nj, 1, 0)
     for (i = 1; i <= n; i++) {
-        /* Only X_i < t_k subjects are retained at a later cause time. A zero
-           denominator after the final cause event is never consulted. */
-        if (!is_compete[i] | t[i] >= last_cause) continue
+        /* A cause event consults its own A(X_i-) at its own event time; a
+           competing exit consults it only if a later cause event retains it
+           (X_i < t_k), so a zero after the final cause event is never read.
+           Through 1.3.7 cause events were skipped here, and a lone cause
+           event before the last gap -- where the published b/S(t-) is
+           undefined -- fitted at rc 0 with e(converged) = 1 (audit M04,
+           2026-10-05).  The multi-cell branch above already checks them. */
+        if (!is_cause[i] & (!is_compete[i] | t[i] >= last_cause)) continue
         if (Gminus[i] > 0) continue
         npos++
         flagged[gidx[i]] = 1
@@ -943,8 +1467,32 @@ real scalar _finegray_positivity_check(
         else              badstr = badstr + " " + strofreal(i)
     }
     st_local("_fg_posstrata", badstr)
+    _finegray_positivity_prehole(gidx, Gminus, flagged)
 
     return(npos)
+}
+
+/* The cause behind a zero denominator, for the r(459) message.  A_j(X_i-) =
+   kappa_j G_c(X_i-) H_u(X_i-) is zero only through H_u(X_i-) == 0 (G is
+   floored at 1e-10, never zero -- and since 1.3.5 no longer collapses across
+   a gap at all -- and kappa_j is zero only when every member's H is):
+   subject i was observed before its truncation group's risk set was last
+   empty.  Count those subjects in the flagged cells so the message can
+   say how many, and name the mechanism, instead of reporting a count of
+   consulted cells that reads like a data-shape problem. */
+void _finegray_positivity_prehole(
+    real colvector gidx,
+    real colvector Gminus,
+    real colvector flagged)
+{
+    real scalar i, npre
+
+    npre = 0
+    for (i = 1; i <= rows(gidx); i++) {
+        if (!flagged[gidx[i]]) continue
+        if (Gminus[i] <= 0 | Gminus[i] >= .) npre++
+    }
+    st_local("_fg_posprehole", strofreal(npre, "%18.0g"))
 }
 
 void _finegray_weight_diag_zzf(
@@ -1125,7 +1673,8 @@ void _finegray_weight_diag(
     real colvector gidx,
     real colvector Gminus,
     real matrix Aden,
-    real colvector Apool)
+    real colvector Apool,
+    real colvector bsraw)
 {
     real scalar A_FLOOR, WT_CEIL
     real scalar n, nj, K, i, k, g, r, minprob, maxwt, nprobwarn, nwtwarn, w, a
@@ -1133,10 +1682,54 @@ void _finegray_weight_diag(
     real colvector ord, row_id, cmin
     real matrix Aev, SUF
     string scalar warnstr
+    real colvector bslev, bscode, rows_k
+    real scalar kb, K_bs, v
+    string rowvector warned
 
     if (args() < 14) {
         _finegray_prepare_weight_design(t, delta, censval, event_type, G,
             byg_id, t0, tg_id, use_pooled, gidx, Gminus, Aden, Apool)
+    }
+    if (args() < 15) bsraw = J(rows(t), 1, 1)
+
+    /* A competitor is retained only by a later cause event in its OWN
+       baseline stratum.  G/H themselves are still the full-sample weight
+       design: subset the consultation rows, not the estimated distributions.
+       The one-baseline and delayed-entry routes keep their existing scan. */
+    _finegray_bs_setup(bsraw, bslev, bscode, K_bs)
+    if (!use_pooled & K_bs > 1) {
+        nj = cols(Aden)
+        minprob = maxwt = .
+        nprobwarn = nwtwarn = 0
+        flagged = J(nj, 1, 0)
+        for (kb = 1; kb <= K_bs; kb++) {
+            rows_k = select((1::rows(t)), bscode :== kb)
+            _finegray_weight_diag(t[rows_k], delta[rows_k], cause, censval,
+                event_type[rows_k], G[rows_k], byg_id[rows_k], t0[rows_k],
+                tg_id[rows_k], use_pooled, gidx[rows_k], Gminus[rows_k],
+                Aden[rows_k, .], Apool[rows_k])
+            v = st_matrix("_finegray_minprob")[1, 1]
+            if (v < minprob) minprob = v
+            v = st_matrix("_finegray_maxwt")[1, 1]
+            if (v < .) {
+                if (maxwt >= . | v > maxwt) maxwt = v
+            }
+            nprobwarn = nprobwarn + st_matrix("_finegray_nprobwarn")[1, 1]
+            nwtwarn = nwtwarn + st_matrix("_finegray_nwtwarn")[1, 1]
+            warned = tokens(st_local("_fg_warnstrata"))
+            for (i = 1; i <= cols(warned); i++) flagged[strtoreal(warned[i])] = 1
+        }
+        warnstr = ""
+        for (i = 1; i <= nj; i++) {
+            if (flagged[i]) warnstr = warnstr + (warnstr == "" ? "" : " ") + strofreal(i)
+        }
+        st_matrix("_finegray_nwstrata", nj)
+        st_matrix("_finegray_minprob", minprob)
+        st_matrix("_finegray_maxwt", maxwt)
+        st_matrix("_finegray_nprobwarn", nprobwarn)
+        st_matrix("_finegray_nwtwarn", nwtwarn)
+        st_local("_fg_warnstrata", warnstr)
+        return
     }
 
     if (use_pooled) {
@@ -1298,7 +1891,168 @@ void _finegray_weight_diag(
     st_local("_fg_warnstrata", warnstr)
 }
 
-/* Canonical stratified ZZF equation (7): pooled A(t) stabilizer,
+/* Number of observations whose inverse-probability weight CONSULTS a
+   censoring survivor that _finegray_km_censor_single floored at 1e-10 -- the
+   count the fit posts as e(N_G_trunc) (changed after 1.3.7).
+
+   Through 1.3.7 the fit posted every floored row instead.  G is floored where
+   the censoring KM reaches zero, which happens whenever a KM's last risk set
+   is emptied by censoring: the censored rows at an administrative end of
+   follow-up, or the single last censored subject of webuse hypoxia.  Those
+   rows are never read, because every weight reads G only as the LEFT LIMIT
+   G(u-) at some later u (_finegray_G_at_times), and within that KM's sample
+   nothing is observed after its last time.  The note then told users that
+   weights "rest on almost no censoring information" on data where no weight
+   touches the floor.
+
+   Which G evaluations a weight consults, read off the scans themselves:
+
+   one weight cell, or several without delayed entry (_finegray_loglik and
+   the score, residual, psi and baseline scans that share its layout):
+     - an at-risk subject carries weight 1; no G is read;
+     - a competing-event subject i in weight group g, retained by a cause
+       event at t_k > X_i IN ITS OWN bstrata() STRATUM, carries
+       A_g(t_k-) / A_g(X_i-): the numerator is Gt[idx, g] multiplied by the
+       group's backward sum raw_bwd[g], which is nonzero only once such an
+       i has exited, and the denominator is Gminus[i].
+   several weight cells under delayed entry (ZZF eq. 6,
+   _finegray_loglik_zzf_strat and its score/residual/baseline twins):
+     - an at-risk subject i at a cause time t_k in (t0_i, X_i] carries
+       Apool(t_k-) / A_g(t_k-): its own group's denominator Aden[idx, g]
+       (read only for groups with riskn[g] > 0) and the pooled stabilizer;
+     - a retained competing-event subject carries Apool(t_k-) / A_g(X_i-).
+   Apool is built from the POOLED censoring KM, whose floor is checked here
+   too (fpool).  The H factor never floors; its zeros are the positivity
+   check's business, and kappa never enters a floor.
+
+   Consulted G values are therefore evaluated exactly as the weights evaluate
+   them: the floor MASK is pushed through the same _finegray_G_at_times
+   lookup that builds A, so an entry here is "the G this weight reads was a
+   floored one", with no separate reasoning about where a KM ends.  The count
+   is per OBSERVATION (an observation whose weight consults a floored value at
+   one or more cause times counts once), weighted by w under fweights so that
+   a fit on [fw = w] reports what the same fit on the expanded data reports.
+   It never enters the estimates. */
+real scalar _finegray_gfloor_consulted(
+    real colvector t,
+    real colvector delta,
+    real scalar cause,
+    real scalar censval,
+    real colvector event_type,
+    real colvector floored,
+    real colvector byg_id,
+    real colvector t0,
+    real colvector tg_id,
+    real scalar use_pooled,
+    real colvector bsraw,
+    real colvector w)
+{
+    real scalar n, i, r, kk, K, nc, m, a, b, cnt, hit, nk
+    real colvector is_cause, is_compete, jidx, jc, ju, cidx, bslev, bscode
+    real colvector ct, crow, fpool, sel, rows_k, one, Pp
+    real matrix FL, FLp, P
+
+    n = rows(t)
+    if (n == 0) return(0)
+    if (sum(floored) == 0 & !use_pooled) return(0)
+
+    is_cause = (event_type :== cause) :& (delta :== 1)
+    is_compete = (event_type :!= cause) :& (event_type :!= censval) :&
+        (delta :== 1)
+
+    /* FL[i, c] = 1 when G_c(t_i-), as the weight lookup reads it, is a floored
+       value.  The lookup starts every stratum at 1 before its first time, so
+       it is fed the complement (1 = not floored) and flipped back. */
+    FL = 1 :- _finegray_G_at_times(t, 1 :- floored, byg_id, t)
+    nc = cols(FL)
+    _finegray_joint_setup(byg_id, tg_id, jidx, jc, ju)
+    cidx = jc[jidx]
+
+    if (use_pooled) {
+        one = J(n, 1, 1)
+        (void) _finegray_km_censor(t, delta, censval, event_type, one, t0, 1,
+            one, fpool)
+        FLp = 1 :- _finegray_G_at_times(t, 1 :- fpool, one, t)
+    }
+    else FLp = J(n, 1, 0)
+
+    _finegray_bs_setup(bsraw, bslev, bscode, K)
+    if (K < 1) {
+        K = 1
+        bscode = J(n, 1, 1)
+    }
+
+    cnt = 0
+    for (kk = 1; kk <= K; kk++) {
+        /* Distinct cause-event times of this baseline stratum, ascending, with
+           one representative row each (every row at a time reads the same G),
+           and prefix counts of floored reads over them: P[m + 1, c] is the
+           number of the first m cause times at which group c's G is floored,
+           Pp the same for the pooled stabilizer. */
+        sel = selectindex(is_cause :& (bscode :== kk))
+        if (length(sel) == 0) continue
+        sel = sel[order((t[sel], sel), (1, 2))]
+        ct = t[sel[1]]
+        crow = sel[1]
+        for (m = 2; m <= length(sel); m++) {
+            if (t[sel[m]] == ct[rows(ct)]) continue
+            ct = ct \ t[sel[m]]
+            crow = crow \ sel[m]
+        }
+        nk = rows(ct)
+        P = J(nk + 1, nc, 0)
+        Pp = J(nk + 1, 1, 0)
+        for (m = 1; m <= nk; m++) {
+            P[m + 1, .] = P[m, .] + FL[crow[m], .]
+            Pp[m + 1] = Pp[m] + FLp[crow[m]]
+        }
+
+        rows_k = selectindex(bscode :== kk)
+        for (r = 1; r <= length(rows_k); r++) {
+            i = rows_k[r]
+            /* a = #{cause times <= X_i}, b = #{cause times <= t0_i} */
+            a = _finegray_n_le(ct, t[i])
+            hit = 0
+            if (is_compete[i] & a < nk) {
+                /* retained: the denominator G(X_i-) and every later numerator */
+                if (FL[i, cidx[i]]) hit = 1
+                if (use_pooled) {
+                    if (Pp[nk + 1] - Pp[a + 1] > 0) hit = 1
+                }
+                else {
+                    if (P[nk + 1, cidx[i]] - P[a + 1, cidx[i]] > 0) hit = 1
+                }
+            }
+            if (use_pooled & !hit) {
+                /* at risk over (t0_i, X_i]: own-group denominator, stabilizer */
+                b = _finegray_n_le(ct, t0[i])
+                if (a > b) {
+                    if (P[a + 1, cidx[i]] - P[b + 1, cidx[i]] > 0) hit = 1
+                    if (Pp[a + 1] - Pp[b + 1] > 0) hit = 1
+                }
+            }
+            if (hit) cnt = cnt + w[i]
+        }
+    }
+    return(cnt)
+}
+
+/* Number of entries of the ascending vector v that are <= x. */
+real scalar _finegray_n_le(real colvector v, real scalar x)
+{
+    real scalar lo, hi, mid
+
+    lo = 1
+    hi = rows(v)
+    while (lo <= hi) {
+        mid = floor((lo + hi) / 2)
+        if (v[mid] <= x) lo = mid + 1
+        else hi = mid - 1
+    }
+    return(lo - 1)
+}
+
+/* Canonical stratified ZZF equation 6: pooled A(t) stabilizer,
    stratum-specific A_g(.) denominators.  Risk-set sums are maintained on the
    denominator scale; the pooled factor cancels from S1/S0 but remains as the
    outer cause-event weight in the estimating equation. */
@@ -2201,20 +2955,26 @@ real matrix _finegray_score_residuals(
 
    with g = i's censoring stratum, Y_g(u) = #{j in g : X_j >= u}, and
 
-       q_g(t) = sum_{s >= t, s an event time FROM GROUP g} d_s^g
+       q_g(t) = sum_{s >= t, s ANY cause-1 event time} d_s
                   [ S1_2^g(s,t) - zbar(s) S0_2^g(s,t) ] / S0(s)
        S0_2^g(s,t) = sum_{X_j < t, eps_j = 2, g(j) = g}
                         exp(eta_j) Ghat_g(s-)/Ghat_g(X_j-)
 
-   THREE THINGS THAT ARE EASY TO GET WRONG, each verified against
-   cmprsk's Fortran crrvv (written by R.J. Gray, FG's second author) and
-   proven by fixtures in qa/:
+   THREE THINGS THAT ARE EASY TO GET WRONG, the second and third verified
+   against cmprsk's Fortran crrvv (written by R.J. Gray, FG's second author)
+   and all three proven by fixtures in qa/:
 
-   1. BOTH sums in q are group-restricted.  crr.f:379 accumulates into
-      qu(., icg(j1)) -- the group of the EVENT subject -- so a cause-1 event
-      in group A contributes only to q_A.  S0(s) and zbar(s) stay GLOBAL.
-      Restricting only the inner competing-event sum passes every
-      single-stratum fixture and fails at ~1e-3 with strata().
+   1. ONLY the inner competing-event sum is group-restricted (1.3.3).  Ghat_g
+      enters the score through the weights of group g's RETAINED subjects,
+      and those sit in the risk set of EVERY later cause event, whichever
+      censoring group that event's subject belongs to; the outer sum runs
+      over all cause events, and S0(s) and zbar(s) stay GLOBAL.  crr.f:379
+      accumulates into qu(., icg(j1)) -- the group of the EVENT subject --
+      which drops the cross-group terms; this function reproduced that until
+      1.3.3 (see pass B below) and now differs from crr by exactly those
+      terms, gated by a numerical derivative of the fitted score
+      (qa/validation_nuisance_strata_numeric.do).  With one censoring group
+      the two agree.
    2. TIE MULTIPLICITY.  A time carrying d tied cause-1 events contributes
       d times (Breslow); crr.f loops over event SUBJECTS, not distinct event
       times.  Dropping it is invisible without tied events and >100% wrong
@@ -2291,7 +3051,7 @@ real matrix _finegray_psi_residuals(
     real colvector censtrue)
 {
     real scalar n, p, ng, i, j, k, g, idx, it, nt, S0_t, cur_time
-    real scalar cS0, dNc_g, K, kk, gk, ngk
+    real scalar cS0, dNc_g, K, kk, gk, ngk, Dk
     real colvector row_id, ord, gidx, levels, eta, expeta
     real colvector is_cause, is_compete, is_cens, Gminus, Yg
     real colvector bslev, bscode, risk_S0
@@ -2470,7 +3230,26 @@ real matrix _finegray_psi_residuals(
 
     /* ---- pass B: reverse cumulative C0, C1 over (group g, stratum k) event
        times.  The DENOMINATOR is the stratum's S0_k and the numerator carries
-       the group's Ghat_g -- that pairing is the whole of the change. */
+       the group's Ghat_g -- that pairing is the whole of the change.
+
+       THE CAUSE-EVENT COUNT IS THE STRATUM'S, NOT THE GROUP'S (1.3.3).  Ghat_g
+       enters the score only through the weights of group g's RETAINED
+       competing-event subjects, and those subjects sit in the risk set of
+       EVERY later cause event in their baseline stratum -- whichever
+       censoring group that event's subject belongs to.  q_g(u) therefore sums
+       over all of stratum k's cause events at s >= u, with Ghat_g(s) as the
+       numerator of the retained weight.  Until 1.3.3 this loop used
+       Dg[it, gk], the count of cause events FROM group g, which drops every
+       cross-group (retained in g, event in g' != g) term: a censoring group
+       with competing events but no cause events then contributed an
+       identically zero psi, though perturbing its censoring KM moves the
+       fitted score (numerical-derivative probe, 2026-09-12).  cmprsk::crr's
+       crrvv makes the same omission (crr.f: qu(k, icg(j1)) accumulates only
+       ss3(k, icg(j1))), which is why the earlier crr-parity oracle could not
+       see it; the fix is gated by validation_nuisance_strata_numeric.do,
+       which differentiates the fitted score directly.  With one censoring
+       group Dk == Dg, so the pooled numbers are untouched; with strata() ==
+       bstrata() every cross-group bwd term is empty, so q is unchanged too. */
     C0 = J(nt, ngk, 0)
     C1 = J(nt, ngk * p, 0)
     for (it = nt; it >= 1; it--) {
@@ -2478,12 +3257,14 @@ real matrix _finegray_psi_residuals(
             C0[it, .] = C0[it + 1, .]
             C1[it, .] = C1[it + 1, .]
         }
-        for (g = 1; g <= ng; g++) {
-            for (kk = 1; kk <= K; kk++) {
+        for (kk = 1; kk <= K; kk++) {
+            Dk = 0
+            for (g = 1; g <= ng; g++) Dk = Dk + Dg[it, (g - 1) * K + kk]
+            if (Dk == 0) continue
+            if (S0arr[it, kk] <= 0) continue
+            for (g = 1; g <= ng; g++) {
                 gk = (g - 1) * K + kk
-                if (Dg[it, gk] == 0) continue
-                if (S0arr[it, kk] <= 0) continue
-                cS0 = Dg[it, gk] * Gg[it, g] / S0arr[it, kk]
+                cS0 = Dk * Gg[it, g] / S0arr[it, kk]
                 C0[it, gk] = C0[it, gk] + cS0
                 C1[it, ((gk - 1) * p + 1)..(gk * p)] =
                     C1[it, ((gk - 1) * p + 1)..(gk * p)] +
@@ -3316,7 +4097,7 @@ real matrix _finegray_schoenfeld(
     /* Legacy internal diagonal rescaling; no public caller requests it.
        Do NOT re-enable this as "Grambsch-Therneau scaling": GT scale by the FULL
        V^-1(beta,t_k) (eq. 5-6, p.517) or by the average variance Vbar = J/d
-       (p.518-519).  GT sec. 5, p.523 attributes DIAGONAL-only standardization to
+       (p.518-519).  GT sec. 4, p.524 attributes DIAGONAL-only standardization to
        Pettitt & Bin Daud (1990) and rejects it -- valid "only if the covariates
        are uncorrelated at each time point", otherwise it leaks one covariate's
        time-dependence into another's plot and "precludes equivalence ... to
@@ -3326,7 +4107,7 @@ real matrix _finegray_schoenfeld(
        Fine-Gray score is an estimating function, so it would not transport
        even in full-matrix form.  See Grambsch, P. M. and T. M. Therneau.
        1994.  Proportional hazards tests and diagnostics based on weighted
-       residuals.  Biometrika 81: 515-526, sections 3-5, pp.517-523.  */
+       residuals.  Biometrika 81: 515-526, sections 3-4, pp.517-524.  */
     if (do_scale & n_events > 0) {
         _finegray_score_info(t, delta, cause, censval, event_type,
             Z, beta, G, byg_id, score_vec, info_mat, t0, tg_id,
@@ -3356,7 +4137,8 @@ void _finegray_schoenfeld_compute(
     string scalar t0var,
     | string scalar bs_str,
     string scalar w_str,
-    real scalar wtype)
+    real scalar wtype,
+    string scalar outmat)
 {
     real colvector t, delta, event_type, G, byg_id, beta, t0, tg_id, bsraw, w
     real matrix Z, sch
@@ -3366,6 +4148,10 @@ void _finegray_schoenfeld_compute(
     if (args() < 9) bs_str = ""
     if (args() < 10) w_str = ""
     if (args() < 11) wtype = 0
+    /* The caller's tempname.  A fixed output name overwrote -- and the
+       caller's cleanup then dropped -- a user matrix called
+       _finegray_schoenfeld (audit F07 pattern). */
+    if (args() < 12) outmat = "_finegray_schoenfeld"
 
     vars = tokens(varlist_str)
     p = length(vars)
@@ -3395,6 +4181,8 @@ void _finegray_schoenfeld_compute(
 
     if (w_str != "") w = st_data(., w_str)
     else             w = J(rows(t), 1, 1)
+    if (wtype == 1) w = _finegray_pweight_model_unit(w, t, delta,
+        cause, censval, event_type)
 
     /* post-estimation recompute: quiet=1, the fit already printed any note */
     if (wtype == 2) {
@@ -3412,7 +4200,7 @@ void _finegray_schoenfeld_compute(
     sch = _finegray_schoenfeld(t, delta, cause, censval, event_type,
         Z, beta, G, byg_id, do_scale, t0, tg_id, bsraw, w)
 
-    st_matrix("_finegray_schoenfeld", sch)
+    st_matrix(outmat, sch)
 }
 
 /* Abort on a rank-deficient information matrix, naming the offending terms.
@@ -3465,8 +4253,11 @@ void _finegray_schoenfeld_compute(
 
    SCOPE.  Refused in the parser and again in the engine: delayed entry (the
    ZZF branch is the package's own extension and no source covers beta(t)
-   there), bstrata(), and nuisance.  So K == 1 and use_pooled == 0 everywhere
-   below.
+   there), so use_pooled == 0 everywhere below.  bstrata() and nuisance were
+   refused with tvc() when this was written and no longer are (1.3.0):
+   bstrata() rides through the scan as the stratum axis K of every
+   accumulator, and nuisance decomposes exactly over intervals
+   (_finegray_psi_residuals_pw), so K > 1 is a live case here.
    ======================================================================== */
 
 /* Interval index of each analysis time.  Interval j is (cuts[j-1], cuts[j]],
@@ -3879,14 +4670,18 @@ real matrix _finegray_psi_residuals_pw(
    which _finegray_psi_residuals computes for right censoring only.
 
    WHY THE PACKAGE'S OWN WEIGHTS MAY BE USED.  ZZF's appendix is written in
-   the b/S representation; the engine holds the Geskus product A = G(t-)H(t-).
-   Bellach et al. (2020) prove the two equal for continuous times, and Gate
-   Z-ties (qa/crossval_finegray_zzf_r.R) established that with the package's
-   event < censoring < entry tie ordering the product reproduces b/S(t-) on
-   every collision class -- which is why e(lt_weight) is zzf1_geskus.  So
-   Gt (A(t-) at each row's time) and Gminus (A(X_i-)) below ARE b/S, and the
-   all-cause risk-set count Y(u) = #{t0_j < u <= t_j} IS n * b(u) in the same
-   convention.
+   the b/S representation; the engine holds the Geskus product A = G(t-)H(t-),
+   which equals b/S(t-) only up to the sample constant kappa = n^-1 sum
+   1/H(X_i-) (see the DELAYED ENTRY block above and _finegray_lt_normalizer).
+   Gt (A(t-) at each row's time) and Gminus (A(X_i-)) below are therefore
+   b/S(t-) divided by kappa, NOT b/S itself.  That is harmless here because
+   every A in the three terms enters as a ratio A(s-)/A(X_j-): B0/B1 carry
+   1/A(X_j-), C0/C1 carry A(s-), and Q, v_i and w_i are built only from
+   products of one of each, so kappa cancels identically and the terms are
+   the appendix's on the pooled weight.  (This function is reached on the
+   ONE-stratum branch only; the stratified branch's nuisance term is refused.)
+   The all-cause risk-set count Y(u) = #{t0_j < u <= t_j} IS n * b(u) in the
+   package's (t0, t] convention.
 
    THE THREE TERMS IN COMPUTABLE FORM.  Every dM^{L,1}_j(s) integrated over
    s > X_j is compensator-only (the jump is at X_j), and Y^{L,1}_j(s) = 1
@@ -3935,6 +4730,17 @@ real matrix _finegray_psi_residuals_pw(
    known, and the package keeps that cell on fixed_weight_sandwich.  No
    bstrata() and no tvc(), both already refused under delayed entry.
    ------------------------------------------------------------------------ */
+/* ACROSS AN OBSERVATION GAP (1.3.5) this term needs no special case.  The
+   caller's A (= Gt, Gminus) is estimated on the identifiable region; every
+   quantity below is a ratio of A values or a product of an A-scaled and a
+   1/A-scaled sum, so the scale of A never enters; and a pre-gap subject is at
+   risk at no cause event, has A(u) = 0 throughout its own window (H = 0
+   there), and contributes exactly zero to its own row and to every prefix
+   sum.  The result is Appendix B applied to the post-gap sample, and on one
+   weight cell that sample's estimator is the published one.  Pinned:
+   test_finegray_v135 T7 asserts e(V) with the gap subject == e(V) without
+   it, bit for bit.  A refusal was tried first (2026-09-13) and withdrawn on
+   that identity. */
 real matrix _finegray_psi_residuals_lt(
     real colvector t,
     real colvector delta,
@@ -4161,7 +4967,8 @@ real matrix _finegray_basehazard_pw(
     real colvector fixpos,
     real colvector tvcpos,
     real scalar nint,
-    | real colvector w)
+    | real colvector w,
+    real matrix interval_bh)
 {
     real scalar j, carry, kb, nlev
     real colvector etj, lev, carryv
@@ -4169,6 +4976,7 @@ real matrix _finegray_basehazard_pw(
     pointer(real matrix) colvector acc
 
     if (args() < 22) w = J(rows(t), 1, 1)
+    interval_bh = J(0, 4, .)
 
     if (nint <= 1) {
         return(_finegray_basehazard(t, delta, cause, censval, event_type, Z,
@@ -4195,6 +5003,8 @@ real matrix _finegray_basehazard_pw(
                 errprintf("reached the unstratified tvc() baseline scan\n")
                 exit(error(498))
             }
+            interval_bh = interval_bh \
+                (J(rows(bhj), 1, lev[1]), J(rows(bhj), 1, j), bhj)
             bhj[., 2] = bhj[., 2] :+ carry
             carry = bhj[rows(bhj), 2]
             out = out \ bhj
@@ -4239,6 +5049,8 @@ real matrix _finegray_basehazard_pw(
             errprintf("baseline reached the stratified tvc() scan\n")
             exit(error(498))
         }
+        interval_bh = interval_bh \
+            (bhj[., 1], J(rows(bhj), 1, j), bhj[., 2..3])
         for (kb = 1; kb <= nlev; kb++) {
             /* select(), not selectindex(): Mata's 1x1 orientation ambiguity
                makes selectindex() return a 1 x 0 ROW vector for a one-row
@@ -4329,6 +5141,12 @@ void _finegray_rank_fail(
         errprintf("the covariates are collinear within the cause-event ")
         errprintf("risk sets\n")
     }
+    /* The rank test runs on the raw-unit information, so an algebraically
+       full-rank design whose columns sit far from zero or on extreme scales
+       can fail it numerically (audit M01, 2026-10-05: x + 1e6, 1e8 * x). */
+    errprintf("a varying covariate far from zero or on an extreme scale can also\n")
+    errprintf("fail this check numerically: center and rescale continuous\n")
+    errprintf("covariates and refit\n")
     errprintf("remove or recode the offending term(s) and fit the model again\n")
     exit(error(459))
 }
@@ -4355,22 +5173,25 @@ void _finegray_engine(
     | string scalar w_str,
     real scalar wtype)
 {
-    real colvector t, delta, event_type, G, byg_id, t0, tg_id, w
-    real scalar nadj
-    real matrix Z, V, bh, weight_A
+    real colvector t, delta, event_type, G, byg_id, t0, tg_id, w, gfloored
+    real scalar nadj, pw_scale, pw_events
+    real matrix Z, V, bh, interval_bh, weight_A
     real colvector beta, beta_new, score_vec, step, clust_id
-    real colvector weight_gidx, weight_Gminus, weight_Apool
+    real colvector weight_gidx, weight_Gminus, weight_Apool, weight_nprehole
     real colvector bsraw
     real matrix info_mat, info_inv
     real scalar n, p, ll, ll_new, ll_0, converged, iter
     real scalar step_scale, halving, max_halvings, chi2, df_m
-    real scalar decrement, accepted, n_clust, rank_V, npos, weight_pooled
+    real scalar decrement, decrement_scale, accepted, n_clust, rank_V, npos, weight_pooled
     real scalar K_bs, kb
     real colvector bslev_e
     string scalar bs_noev, bs_noevx
     string rowvector vars, coefnames
     real colvector cuts, ivl, fixpos, tvcpos
     real scalar nint, ptot
+    real colvector info0d
+    real vector mono
+    string scalar monostr
 
     if (args() < 18) w_str = ""
     if (args() < 19) wtype = 0
@@ -4390,6 +5211,22 @@ void _finegray_engine(
        is a per-subject constant (finegray.ado checks it within id()). */
     if (w_str != "") w = st_data(., w_str)
     else              w = J(n, 1, 1)
+    /* pweights in the mean-one unit (see _finegray_pweight_unit); pw_scale
+       and pw_events restore the typed e(ll)/e(ll_0) and the iteration log. */
+    pw_scale = 1
+    pw_events = 0
+    decrement_scale = 1
+    if (wtype == 1) {
+        w = _finegray_pweight_model_unit(w, t, delta, cause, censval,
+            event_type, pw_scale)
+        pw_events = sum(select(w, (event_type :== cause) :& (delta :== 1)))
+        /* A participating censored row may still dominate the computational
+           mean.  Compare convergence in the mean event-weight unit when that
+           unit is below one, so small event weights cannot create a false
+           small-decrement success.  Uniform and unweighted fits keep scale 1. */
+        decrement_scale = min((1, pw_events /
+            sum((event_type :== cause) :& (delta :== 1))))
+    }
 
     /* Read byg variable if specified */
     if (byg_str != "") {
@@ -4453,10 +5290,13 @@ void _finegray_engine(
        mass before it, at rc 0.
 
        The refusal's stated reason was that the pair "has no reference
-       implementation to validate against".  That turned out to be false and was
-       checked rather than assumed: crrSC::crrs takes cov2/tf TOGETHER with its
-       strata argument (crrs.r's signature and its ctype=1 branch both handle
-       nc2 > 0 per stratum), so crrs IS the external oracle for the pair. */
+       implementation to validate against".  That turned out to be false: the
+       pair is fitted externally by survival::finegray() expansion plus a
+       stratified weighted coxph (qa/crossval_tvc_bstrata_r.R).  crrSC::crrs
+       accepts cov2/tf with strata, but it is NOT a reliable oracle here: crrs.r
+       passes one tf row per UNIQUE failure time while crrcs.c reads ndf rows,
+       so repeated piecewise time functions are mis-shaped before the native
+       call (crrSC 1.1.2, crrs.r:185-195, crrcs.c:345). */
 
     /* A stratum with no cause event is legitimate -- its terms simply drop out
        of the pseudo-likelihood -- but it has NO baseline, so `predict, cif' or
@@ -4485,16 +5325,28 @@ void _finegray_engine(
         st_local("_fg_bs_noevent", strtrim(bs_noev))
         st_local("_fg_bs_noeventx", strtrim(bs_noevx))
     }
+    /* A single-level bstrata() fit posts the compact unstratified K x 2
+       baseline (numerically identical), which drops the level's identity.
+       Keep it beside the curve so prediction can refuse a row in a level the
+       fit never saw -- the rule the multi-level lookup already enforces. */
+    else if (bs_str != "" & n > 0) {
+        st_local("_fg_bs_single", strofreal(bsraw[1], "%18.0g"))
+        st_local("_fg_bs_singlex", strofreal(bsraw[1], "%21x"))
+    }
 
     /* Compute censoring distribution. UNWEIGHTED on the analysis sample
        under pweights (survival::finegray's Gsurv), not Wogu's full cohort;
        see the sampling restriction in the methods help. Replicated under
        fweights, where a subject carrying w copies IS w subjects. */
     if (wtype == 2) {
-        G = _finegray_km_censor(t, delta, censval, event_type, byg_id, t0, 0, w)
+        G = _finegray_km_censor(t, delta, censval, event_type, byg_id, t0, 0,
+            w, gfloored)
     }
     else {
-        G = _finegray_km_censor(t, delta, censval, event_type, byg_id, t0)
+        /* J(n, 1, 1) is the omitted-w default, spelled out so the floored
+           mask can be requested: G is bit-identical to the 6-argument call. */
+        G = _finegray_km_censor(t, delta, censval, event_type, byg_id, t0, 0,
+            J(n, 1, 1), gfloored)
     }
 
     /* The weight design is a function of the data, never of beta.  Prepare one
@@ -4503,7 +5355,7 @@ void _finegray_engine(
        before optimization and then again inside each optimizer call. */
     _finegray_prepare_weight_design(t, delta, censval, event_type, G, byg_id,
         t0, tg_id, weight_pooled, weight_gidx, weight_Gminus, weight_A,
-        weight_Apool)
+        weight_Apool, weight_nprehole)
 
     /* bstrata() is refused with delayed entry in the parser (Zhou et al. 2011
        does not cover left truncation, so a stratified ZZF baseline would be an
@@ -4546,11 +5398,15 @@ void _finegray_engine(
     if (npos > 0) {
         errprintf("finegray: positivity violation in the delayed-entry weights\n")
         errprintf("  %g consulted joint-stratum denominator cell(s) are zero\n", npos)
-        errprintf("  a configured ZZF Weight-1 risk contribution is therefore undefined\n")
-        errprintf("  this can occur at an event time or at a retained competing exit\n")
-        errprintf("  before enough subjects in that stratum have entered\n")
+        errprintf("  %s subject(s) in the affected strata were observed before their\n",
+            st_local("_fg_posprehole"))
+        errprintf("  entry stratum's risk set was last empty: the entry product-limit\n")
+        errprintf("  H(X_i-) is zero there, the truncation probability is not identified\n")
+        errprintf("  across that gap, and the fit consults a weight inside it (a cause\n")
+        errprintf("  event or a retained competing exit before the gap closes)\n")
         errprintf("  affected weight strata: %s\n", st_local("_fg_posstrata"))
-        errprintf("  use coarser strata()/truncstrata(), or a later time origin\n")
+        errprintf("  drop the subjects observed before the gap or coarsen strata()/truncstrata();\n")
+        errprintf("  moving the time origin later changes the estimand (see help finegray_methods)\n")
         exit(error(459))
     }
 
@@ -4566,12 +5422,13 @@ void _finegray_engine(
         nint, w)
     if (ll_0 >= .) {
         errprintf("finegray: the null log pseudo-likelihood is not finite\n")
-        exit(error(430))
+        exit(430)
     }
     ll = ll_0
 
     if (show_log) {
-        printf("{txt}Iteration 0: log pseudo-likelihood = {res}%12.6f\n", ll)
+        printf("{txt}Iteration 0: log pseudo-likelihood = {res}%12.6f\n",
+            (wtype == 1 ? _finegray_pweight_ll(ll, pw_scale, pw_events) : ll))
     }
 
     converged = 0
@@ -4584,10 +5441,16 @@ void _finegray_engine(
             weight_pooled, weight_gidx, weight_Gminus, weight_A,
             weight_Apool, bsraw, ivl, fixpos, tvcpos, nint, w)
 
+        /* The information at beta = 0, kept for the monotone-likelihood
+           diagnostic below.  The first iteration always starts at zero. */
+        if (iter == 1) info0d = diagonal(info_mat)
+
         if (hasmissing(info_mat) | hasmissing(score_vec)) {
             errprintf("finegray: the score or information matrix is not ")
             errprintf("finite at iteration %g\n", iter)
-            exit(error(430))
+            errprintf("covariates far from zero or on extreme scales can ")
+            errprintf("overflow exp(xb): center and rescale them and refit\n")
+            exit(430)
         }
         if (rank(info_mat) < ptot)
             _finegray_rank_fail(info_mat, coefnames, ptot)
@@ -4614,7 +5477,7 @@ void _finegray_engine(
         decrement = score_vec' * step
         if (decrement < 0) decrement = 0    /* info is PSD; absorb fp noise */
 
-        if (decrement < tol) {
+        if (decrement / decrement_scale < tol) {
             beta = beta + step
             converged = 1
             break
@@ -4659,7 +5522,8 @@ void _finegray_engine(
 
         if (show_log) {
             printf("{txt}Iteration %g: log pseudo-likelihood = {res}%12.6f\n",
-                iter, ll)
+                iter, (wtype == 1 ?
+                _finegray_pweight_ll(ll, pw_scale, pw_events) : ll))
         }
     }
 
@@ -4682,7 +5546,7 @@ void _finegray_engine(
     if (ll >= .) {
         errprintf("finegray: the log pseudo-likelihood is not finite at the ")
         errprintf("solution\n")
-        exit(error(430))
+        exit(430)
     }
 
     /* Final information for variance */
@@ -4693,9 +5557,38 @@ void _finegray_engine(
     if (hasmissing(info_mat)) {
         errprintf("finegray: the information matrix is not finite at the ")
         errprintf("solution\n")
-        exit(error(430))
+        exit(430)
     }
     if (rank(info_mat) < ptot) _finegray_rank_fail(info_mat, coefnames, ptot)
+
+    /* Monotone likelihood.  When no (or almost no) cause event falls on one
+       side of a covariate split, the partial likelihood keeps rising as that
+       coefficient runs to +/-infinity: Newton walks out until the decrement
+       is below tolerance and reports a finite, enormous SHR (6.5e-10 on a
+       covariate marking seven early-censored subjects) with a tiny sandwich
+       SE, so the table reads as z = -48 rather than as non-identification.
+       stcox and stcrreg print the same table silently.  The tell is the
+       information on that coefficient collapsing: the subjects carrying the
+       split leave every risk set's weighted variance as exp(xb) -> 0, so the
+       diagonal at the estimate is a vanishing fraction of its value at
+       beta = 0.  The ratio is invariant to rescaling the covariate.  Measured
+       2026-10-20: 3e-10 to 8e-10 on monotone fits, 1.6e-6 on a simulated
+       quasi-separated binary (b = 19.6 against a true 6.9), and 0.78 to 1.6
+       on genuine effects up to SHR 100.  1e-4 is an SHR near 4e4 (b ~ 10.6)
+       on a balanced binary covariate, which the data cannot distinguish from
+       divergence either.  Reported (finegray.ado prints a note and posts
+       e(monotone)), not refused: the fit is what the likelihood gives. */
+    mono = J(0, 1, .)
+    if (rows(info0d) == ptot) {
+        mono = selectindex((info0d :> 0) :&
+            (diagonal(info_mat) :< 1e-4 :* info0d))
+    }
+    /* length(), not rows(): on a one-coefficient fit info0d is 1x1, and
+       selectindex() of a 1x1 with no hit is 1x0 -- one row, no element. */
+    monostr = ""
+    for (kb = 1; kb <= length(mono); kb++) monostr = monostr + " " + strofreal(mono[kb])
+    st_local("_fg_monopos", strtrim(monostr))
+
     info_inv = invsym(info_mat)
     if (missing(info_inv[1,1])) {
         errprintf("finegray: the information matrix is singular at the ")
@@ -4766,7 +5659,7 @@ void _finegray_engine(
         errprintf("finegray: the variance matrix is not finite\n")
         errprintf("the estimated weights or score contributions are numerically unstable\n")
         errprintf("inspect the weight warnings and use coarser strata()/truncstrata()\n")
-        exit(error(430))
+        exit(430)
     }
 
     /* Compute the baseline hazard ALWAYS -- the scan and Mata cache copy are
@@ -4778,8 +5671,8 @@ void _finegray_engine(
     bh = _finegray_basehazard_pw(t, delta, cause, censval, event_type,
         Z, beta, G, byg_id, t0, tg_id, weight_pooled, weight_gidx,
         weight_Gminus, weight_A, weight_Apool, bsraw, ivl, fixpos, tvcpos,
-        nint, w)
-    _finegray_bh_store(bh)
+        nint, w, interval_bh)
+    _finegray_bh_store(bh, interval_bh)
 
     /* Model chi2 degrees of freedom.  Counting positive diagonal entries is
        not the rank: a cluster-robust V can have p positive variances and still
@@ -4793,7 +5686,21 @@ void _finegray_engine(
     /* Combined-weight sensitivity diagnostics (the e() weight contract). */
     _finegray_weight_diag(t, delta, cause, censval, event_type,
         G, byg_id, t0, tg_id, weight_pooled, weight_gidx, weight_Gminus,
-        weight_A, weight_Apool)
+        weight_A, weight_Apool, bsraw)
+
+    /* Subjects excluded from their weight cell's normalizer because they were
+       observed before the cell's truncation group last had an empty risk set
+       (see _finegray_lt_normalizer).  Posted unconditionally, like the
+       diagnostics above: a missing e(N_lt_prehole) must mean "the engine did
+       not run", never "none". */
+    st_matrix("_finegray_nprehole", sum(weight_nprehole))
+
+    /* e(N_G_trunc): observations whose weight consults a floored censoring
+       survivor, NOT every floored row (changed after 1.3.7; see
+       _finegray_gfloor_consulted).  Replicated under fweights, like e(N). */
+    st_local("_fg_ntrunc", strofreal(_finegray_gfloor_consulted(t, delta,
+        cause, censval, event_type, gfloored, byg_id, t0, tg_id,
+        weight_pooled, bsraw, (wtype == 2 ? w : J(n, 1, 1))), "%18.0g"))
 
     /* Post results to Stata matrices */
     st_matrix("_finegray_b", beta')
@@ -4802,6 +5709,11 @@ void _finegray_engine(
     if (n_clust < .) st_matrix("_finegray_nclust", n_clust)
     if (want_bh) {
         st_matrix("_finegray_basehaz", bh)
+        if (nint > 1) {
+            st_matrix("_finegray_basehaz_tvc", interval_bh)
+            st_matrixcolstripe("_finegray_basehaz_tvc",
+                (J(4,1,""), ("bstratum" \ "interval" \ "time" \ "cumhazard")))
+        }
         /* K x 2 unstratified -- the shape every released consumer knows -- and
            K x 3 under bstrata(), whose first column is the stratum VALUE. */
         if (cols(bh) == 3) {
@@ -4811,6 +5723,16 @@ void _finegray_engine(
         else {
             st_matrixcolstripe("_finegray_basehaz",
                 (J(2,1,""), ("time" \ "cumhazard")))
+        }
+    }
+    /* Back to the typed-pweight convention the user's weights define. */
+    if (wtype == 1) {
+        ll = _finegray_pweight_ll(ll, pw_scale, pw_events)
+        ll_0 = _finegray_pweight_ll(ll_0, pw_scale, pw_events)
+        if (ll >= . | ll_0 >= .) {
+            errprintf("finegray: the log pseudo-likelihood on the scale of ")
+            errprintf("the supplied probability weights is not finite\n")
+            exit(430)
         }
     }
     st_matrix("_finegray_ll", ll)
@@ -4851,7 +5773,41 @@ void _finegray_engine(
    public entry points (_st for a Stata matrix of points, _predict for one point
    per observation) both delegate here so the influence-function logic lives in
    one place. */
-/* Influence-function CIF for the stratified ZZF equation-7 form.  This is the
+/* Common scale for exp(eta) inside the CIF influence functions (audit F09,
+   2026-09-27).
+
+   The influence terms divide by S0(T_m)^2.  S0 is a sum of exp(Z beta), so
+   S0^2 leaves double range once log S0 passes ~354 -- far earlier than
+   exp(eta) itself (709) -- and a covariate on a shifted origin reaches that
+   with an ordinary coefficient: x + 1000 with beta = .35.  S0^2 then became
+   +inf, 1/S0^2 became 0, the at-risk term vanished, and the CIF SE came back
+   4% low (170% high under cluster()) at rc 0, while e(b), e(V) and the point
+   CIF stayed right.
+
+   Every quantity these routines combine is homogeneous in a common factor
+   kappa on exp(eta): S0, S1 and the backward sums scale by kappa, the Breslow
+   increments, L0, own and b(t*) by 1/kappa, the 1/S0^2 prefix sums by
+   1/kappa^2, and the profile's exp(z* beta) by kappa.  The influence
+   function psi and the CIF are therefore EXACTLY invariant to replacing
+   exp(eta) by exp(eta - s) and exp(z* beta) by exp(z* beta - s).  The shift
+   s is the midpoint of the fit's linear-predictor range, which minimises the
+   largest |eta - s|.  It is 0 -- the shipped arithmetic, bit for bit -- when
+   every eta lies in [-100, 100], where log S0 <= 100 + log(n) cannot reach
+   the 1/S0^2 overflow or underflow for any realistic n.  A data SPREAD of
+   eta beyond ~700 is not an origin effect and is not repaired here. */
+real scalar _finegray_eta_shift(real colvector eta)
+{
+    real scalar mx, mn
+
+    if (rows(eta) == 0) return(0)
+    mx = max(eta)
+    mn = min(eta)
+    if (mx >= . | mn >= .) return(0)
+    if (mx <= 100 & mn >= -100) return(0)
+    return((mx + mn) / 2)
+}
+
+/* Influence-function CIF for the stratified ZZF equation-6 form.  This is the
    denominator-scale analogue of _finegray_cif_core(): each event contributes
    dL = 1/(A_event*C), an at-risk subject in group g contributes
    1/(A_event*A_g*C^2), and a retained competing subject contributes
@@ -4884,7 +5840,7 @@ real matrix _finegray_cif_core_zzf(
     real rowvector risk0, bwd0, coreS1, zbar, zstar, bvec
     real scalar n, p, ng, M, ev, i, j, k, idx, ep, g, cur_time, coreS0
     real scalar ii, mp, ne, e, tstar, mstar, m, L0, rstar, cif, factor, V
-    real scalar lp, lam
+    real scalar lp, lam, sh
     real scalar use_pooled
 
     n = rows(Z)
@@ -4905,7 +5861,9 @@ real matrix _finegray_cif_core_zzf(
     PSIb = scores * info_inv
 
     eta = Z * beta
-    expeta = exp(eta)
+    /* Common exp(eta) scale; see _finegray_eta_shift.  0 on ordinary data. */
+    sh = _finegray_eta_shift(eta)
+    expeta = exp(eta :- sh)
     is_cause = (event_type :== cause) :& (delta :== 1)
     is_compete = (event_type :!= cause) :& (event_type :!= censval) :& (delta :== 1)
     row_id = (1::n)
@@ -5054,7 +6012,7 @@ real matrix _finegray_cif_core_zzf(
             out[e, 1] = .; out[e, 2] = .
             continue
         }
-        rstar = exp(lp)
+        rstar = exp(lp - sh)
         lam = L0 * rstar
         if (lam >= .) {
             /* Overflow at a FINITE profile: same contract as
@@ -5063,7 +6021,7 @@ real matrix _finegray_cif_core_zzf(
             st_local("_fg_cifovf", "1")
             continue
         }
-        cif = 1 - exp(-lam)
+        cif = _finegray_hazard_cif(lam)
         factor = rstar * exp(-lam)
 
         own = J(n, 1, 0)
@@ -5314,7 +6272,7 @@ real matrix _finegray_cif_core(
     real rowvector risk_S1, bwd_s0_raw, zstar, bvec, S1_t, Bmstar
     real scalar n, p, i, j, k, idx, ep, cur_time, risk_S0, S0_t
     real scalar M, ev, ne, e, tstar, mstar, m, L0, rstar, cif, factor, V
-    real scalar lp, lam
+    real scalar lp, lam, sh
     real scalar mp, ii, g, ng, use_pooled, nk, kk, K, nev, ee
 
     if (args() < 14) bsraw = J(rows(t), 1, 1)
@@ -5356,7 +6314,9 @@ real matrix _finegray_cif_core(
     PSIb = scores * info_inv
 
     eta = Z * beta
-    expeta = exp(eta)
+    /* Common exp(eta) scale; see _finegray_eta_shift.  0 on ordinary data. */
+    sh = _finegray_eta_shift(eta)
+    expeta = exp(eta :- sh)
     is_cause = (event_type :== cause) :& (delta :== 1)
     is_compete = (event_type :!= cause) :& (event_type :!= censval) :& (delta :== 1)
     /* Deterministic tie-break by row index.  Mata's order() resolves ties
@@ -5431,7 +6391,7 @@ real matrix _finegray_cif_core(
                 out[e, 1] = .; out[e, 2] = .
                 continue
             }
-            rstar = exp(lp)
+            rstar = exp(lp - sh)
             lam = L0 * rstar
             if (lam >= .) {
                 /* exp(lp), or L0 exp(lp), exceeds maxdouble at a FINITE
@@ -5450,7 +6410,7 @@ real matrix _finegray_cif_core(
                 st_local("_fg_cifovf", "1")
                 continue
             }
-            cif = 1 - exp(-lam)
+            cif = _finegray_hazard_cif(lam)
             factor = rstar * exp(-lam)
 
             own = J(n, 1, 0)
@@ -5568,7 +6528,7 @@ real matrix _finegray_cif_core_pw(
     real rowvector zstar, zj, Bmstar
     real scalar n, p, pt, ne, ng, use_pooled, K, kk, nev, ee, e, i, j, g
     real scalar M_j, mstar, m, V, mj, ej, tstar, expo, c0, c1, nc, cs, ok
-    real scalar lpj
+    real scalar lpj, shj
 
     /* Chunk width for the per-evaluation-point influence columns.  The
        accumulators below are rebuilt once per chunk per interval (O(n log n)),
@@ -5655,7 +6615,10 @@ real matrix _finegray_cif_core_pw(
                 etj = _finegray_tvc_mask(event_type, cause, censval, ivl, j)
                 Dj = _finegray_tvc_design(Z, fixpos, tvcpos, nint, j)
                 is_cause_j = (etj :== cause) :& (delta :== 1)
-                expeta_j = exp(Dj * beta)
+                /* Per-interval common exp(eta) scale; see
+                   _finegray_eta_shift.  0 on ordinary data. */
+                shj = _finegray_eta_shift(Dj * beta)
+                expeta_j = exp(Dj * beta :- shj)
 
                 M_j = 0
                 ok = _finegray_cif_accum(t, t0, Dj, expeta_j, is_cause_j,
@@ -5681,7 +6644,7 @@ real matrix _finegray_cif_core_pw(
                         LAM[ee] = .
                         continue
                     }
-                    ej = exp(lpj)
+                    ej = exp(lpj - shj)
                     if (ej >= . | mj * ej >= .) {
                         /* Overflow at a FINITE profile: same contract as
                            _finegray_cif_core.  mj > 0 whenever mstar > 0, so
@@ -5733,7 +6696,7 @@ real matrix _finegray_cif_core_pw(
                     V = colsum(clust_sum :^ 2)
                 }
                 else V = colsum(psi :^ 2)
-                out[e, 1] = 1 - expo
+                out[e, 1] = _finegray_hazard_cif(LAM[ee])
                 out[e, 2] = sqrt(V)
             }
         }
@@ -5795,6 +6758,8 @@ void _finegray_cif_var_st(
     else             bsraw = J(n, 1, 1)
     if (w_str != "") w = st_data(., w_str, tousevar)
     else             w = J(n, 1, 1)
+    if (wtype == 1) w = _finegray_pweight_model_unit(w, t, delta,
+        cause, censval, event_type)
 
     E = st_matrix(evalmat)
     /* tvc(): the analytic variance is the piecewise one (2026-08-26).  Both routes
@@ -5897,6 +6862,8 @@ void _finegray_cif_predict(
     }
     if (w_str != "") w = st_data(., w_str, est_touse)
     else             w = J(n, 1, 1)
+    if (wtype == 1) w = _finegray_pweight_model_unit(w, t, delta,
+        cause, censval, event_type)
 
     /* tvc(): the piecewise influence function (2026-08-26).  Both routes reach the
        same accumulators through _finegray_cif_accum. */
@@ -6011,15 +6978,14 @@ void _finegray_boot_cif_obs(
    piecewise scan) plus its value AT each boundary, which _finegray_tvc_bhpieces
    turns into the per-interval masses.
 
-   NO ANALYTIC STANDARD ERROR IS RETURNED.  The influence function in
-   _finegray_cif_core is derived for a single exp(z'beta) multiplying every
-   Breslow increment; under beta(t) each increment carries its own interval's
-   linear predictor and its own S0, so both the prefix-sum scaffolding and the
-   beta-derivative term change shape.  That derivation is not in this release,
-   and returning the proportional-hazards influence function for a piecewise fit
-   would be a wrong standard error at rc 0.  Column 2 is therefore missing, and
-   finegray_cif / finegray_predict refuse an analytic CI on a tvc() fit and
-   offer the bootstrap, which resamples the whole fit and needs no derivation.
+   The routines below are the POINT-ESTIMATE and bootstrap pieces.  The
+   analytic standard error for this curve lives in _finegray_cif_core_pw
+   (re-derived 2026-08-26; its header carries the derivation and the J = 1
+   collapse check).  Through v1.3.0 development builds it was refused, because
+   the influence function in _finegray_cif_core assumes a single exp(z'beta)
+   multiplying every Breslow increment; that history is why the bootstrap arm
+   here exists independently of the analytic one, and the two are checked
+   against each other in qa/test_finegray_tvc.do.
    ------------------------------------------------------------------------ */
 
 /* eta_j(z) for every evaluation profile: an ne x nint matrix of linear
@@ -6091,26 +7057,81 @@ real matrix _finegray_tvc_bhpieces_bs(
     return(D)
 }
 
-/* CIF = 1 - exp(-H0 exp(xb)), evaluated so that exp() overflow at a FINITE
-   linear predictor gives the limit the arithmetic is approaching rather than a
-   missing value.  Lambda above maxdouble means exp(-Lambda) = 0 and CIF = 1;
-   H0 = 0 (no baseline mass yet) is CIF = 0 however large xb is, where Stata's
-   0 * missing would be missing.  A missing H0 or xb stays missing: there is
-   no prediction.  Same contract as _finegray_cif_core's overflow branch. */
-real colvector _finegray_cif_stable(real colvector H0, real colvector xb)
+/* A cumulative hazard times exp(xb).  Preserve ordinary multiplication when
+   it is representable, and otherwise combine on the log scale before exp().
+   Overflow of exp(xb) alone need not imply overflow of the product.  A true
+   product overflow is represented by maxdouble(), sufficient for its CIF
+   limit; zero mass remains zero for a finite predictor. */
+real colvector _finegray_hazard_product(real colvector H0, real colvector xb)
 {
-    real colvector lam, cif
+    real colvector out
+    real scalar i, e, v, lv
+
+    out = J(rows(H0), 1, .)
+    for (i = 1; i <= rows(H0); i++) {
+        if (H0[i] >= . | xb[i] >= . | H0[i] < 0) continue
+        if (H0[i] == 0) {
+            out[i] = 0
+            continue
+        }
+        e = exp(xb[i])
+        v = H0[i] * e
+        if (e > 0 & e < . & v > 0 & v < .) {
+            out[i] = v
+            continue
+        }
+        lv = ln(H0[i]) + xb[i]
+        out[i] = (lv > ln(maxdouble()) ? maxdouble() : exp(lv))
+    }
+    return(out)
+}
+
+/* -expm1(-Lambda) retains CIFs smaller than the spacing below one. */
+real colvector _finegray_hazard_cif(real colvector lambda)
+{
+    real colvector out
     real scalar i
 
-    lam = H0 :* exp(xb)
-    cif = 1 :- exp(-lam)
-    if (!hasmissing(cif)) return(cif)
-    for (i = 1; i <= rows(cif); i++) {
-        if (cif[i] < .) continue
-        if (H0[i] >= . | xb[i] >= .) continue
-        cif[i] = (H0[i] > 0)
+    out = J(rows(lambda), 1, .)
+    for (i = 1; i <= rows(lambda); i++) {
+        if (lambda[i] >= . | lambda[i] < 0) continue
+        out[i] = -expm1(-lambda[i])
     }
-    return(cif)
+    return(out)
+}
+
+/* Complementary-log-log limits for interior CIFs.  Boundary points retain
+   missing limits.  Compute the delta-method scale and transformed endpoints
+   without overflow and without subtracting a tiny CIF from one. */
+real matrix _finegray_cloglog_ci(real colvector F, real colvector se,
+    real scalar z)
+{
+    real matrix out
+    real scalar i, a, theta, delta, ld, lo, hi
+
+    out = J(rows(F), 2, .)
+    if (z >= . | z < 0) return(out)
+    for (i = 1; i <= rows(F); i++) {
+        if (F[i] >= . | se[i] >= . | F[i] <= 0 | F[i] >= 1 | se[i] < 0) continue
+        a = -ln1p(-F[i])
+        theta = ln(a)
+        delta = 0
+        if (se[i] > 0 & z > 0) {
+            ld = ln(z) + ln(se[i]) - ln1p(-F[i]) - ln(a)
+            delta = (ld > ln(maxdouble()) ? maxdouble() : exp(ld))
+        }
+        lo = theta - delta
+        hi = theta + delta
+        out[i, 1] = -expm1(-exp(lo))
+        out[i, 2] = (hi > ln(maxdouble()) ? 1 : -expm1(-exp(hi)))
+    }
+    return(out)
+}
+
+/* Proportional-model CIF from the shared cumulative-hazard arithmetic. */
+real colvector _finegray_cif_stable(real colvector H0, real colvector xb)
+{
+    return(_finegray_hazard_cif(_finegray_hazard_product(H0, xb)))
 }
 
 /* Lambda(s|z) from the per-interval baseline masses and per-interval linear
@@ -6133,7 +7154,10 @@ real colvector _finegray_tvc_lambda(
     real colvector lam
     real scalar i, j, bad, ovf, acc
 
-    term = pieces :* exp(eta)
+    term = J(rows(pieces), cols(pieces), .)
+    for (j = 1; j <= cols(pieces); j++) {
+        term[., j] = _finegray_hazard_product(pieces[., j], eta[., j])
+    }
     lam = rowsum(term, 1)
     if (!hasmissing(lam)) return(lam)
     for (i = 1; i <= rows(lam); i++) {
@@ -6167,7 +7191,7 @@ void _finegray_boot_cif_tvc(
     string scalar tsplit_str,
     | real scalar lev)
 {
-    external real matrix _finegray_bh_cache
+    external real matrix _finegray_bh_cache, _finegray_bh_tvc_cache
     external string scalar _finegray_bh_key
     real matrix eta, pieces
     real colvector beta, gg, cuts, fixpos, tvcpos
@@ -6188,11 +7212,11 @@ void _finegray_boot_cif_tvc(
     /* Under bstrata() the replication's cache holds one curve per stratum; the
        requested stratum is the one the point estimate was built on.  Same
        contract as _finegray_boot_cif. */
-    pieces = _finegray_tvc_bhpieces_bs(_finegray_bh_cache, gg,
-        J(rows(gg), 1, lev), cuts, nint)
+    pieces = _finegray_tvc_mass_lookup(_finegray_bh_tvc_cache, gg,
+        J(rows(gg), 1, (cols(_finegray_bh_cache) == 2 ? _finegray_bh_tvc_cache[1, 1] : lev)), nint)
     eta = _finegray_tvc_eta(J(rows(gg), 1, 1) # st_matrix(zmat), beta,
         fixpos, tvcpos, nint)
-    st_matrix(omat, 1 :- exp(-_finegray_tvc_lambda(pieces, eta)))
+    st_matrix(omat, _finegray_hazard_cif(_finegray_tvc_lambda(pieces, eta)))
 }
 
 /* Bootstrap helper (per-observation mode): piecewise CIF at each evaluation
@@ -6208,7 +7232,7 @@ void _finegray_boot_cif_obs_tvc(
     string scalar tsplit_str,
     | string scalar bsvar)
 {
-    external real matrix _finegray_bh_cache
+    external real matrix _finegray_bh_cache, _finegray_bh_tvc_cache
     external string scalar _finegray_bh_key
     real matrix Z, eta, pieces
     real colvector beta, tt, cif, sumc, ssc, tousev, sel, bsvals
@@ -6234,11 +7258,11 @@ void _finegray_boot_cif_obs_tvc(
     _finegray_tvc_positions(tvc_str, cols(Z), fixpos, tvcpos)
 
     if (bsvar != "") bsvals = st_data(sel, bsvar)
-    else             bsvals = J(length(sel), 1, .)
-    pieces = _finegray_tvc_bhpieces_bs(_finegray_bh_cache, tt, bsvals,
-        cuts, nint)
+    else             bsvals = J(length(sel), 1, _finegray_bh_tvc_cache[1, 1])
+    pieces = _finegray_tvc_mass_lookup(_finegray_bh_tvc_cache, tt, bsvals,
+        nint)
     eta = _finegray_tvc_eta(Z, beta, fixpos, tvcpos, nint)
-    cif = 1 :- exp(-_finegray_tvc_lambda(pieces, eta))
+    cif = _finegray_hazard_cif(_finegray_tvc_lambda(pieces, eta))
 
     sumc = st_data(sel, sumv)
     ssc = st_data(sel, ssv)
@@ -6284,7 +7308,8 @@ real matrix _finegray_bh_rebuild(
     string scalar tvc_str,
     string scalar tsplit_str,
     string scalar w_str,
-    real scalar wtype)
+    real scalar wtype,
+    real matrix interval_bh)
 {
     real matrix Z
     real colvector t, t0, delta, event_type, beta, byg_id, tg_id, G, bsraw, w
@@ -6298,6 +7323,7 @@ real matrix _finegray_bh_rebuild(
     if (args() < 11) tsplit_str = ""
     if (args() < 12) w_str = ""
     if (args() < 13) wtype = 0
+    interval_bh = J(0, 4, .)
 
     Z = st_data(., tokens(zvars), tousevar)
     t = st_data(., "_t", tousevar)
@@ -6319,6 +7345,8 @@ real matrix _finegray_bh_rebuild(
        Breslow baseline is a different curve from the unweighted one. */
     if (w_str != "")   w = st_data(., w_str, tousevar)
     else               w = J(n, 1, 1)
+    if (wtype == 1) w = _finegray_pweight_model_unit(w, t, delta,
+        cause, censval, event_type)
 
     /* post-estimation recompute: quiet=1, the fit already printed any note */
     if (wtype == 2) {
@@ -6343,7 +7371,7 @@ real matrix _finegray_bh_rebuild(
         ivl = _finegray_tvc_interval(t, cuts)
         return(_finegray_basehazard_pw(t, delta, cause, censval, event_type,
             Z, beta, G, byg_id, t0, tg_id, use_pooled, gidx, Gminus, Gt,
-            Apool, bsraw, ivl, fixpos, tvcpos, nint, w))
+            Apool, bsraw, ivl, fixpos, tvcpos, nint, w, interval_bh))
     }
 
     return(_finegray_basehazard(t, delta, cause, censval, event_type, Z, beta,
@@ -6380,14 +7408,17 @@ real matrix _finegray_bh_rebuild(
    itself, so no two fits can present the same key and a cleared cache simply
    has no key at all.
    ------------------------------------------------------------------------ */
-void _finegray_bh_store(real matrix bh)
+void _finegray_bh_store(real matrix bh, | real matrix interval_bh)
 {
     external real matrix    _finegray_bh_cache
+    external real matrix    _finegray_bh_tvc_cache
     external real scalar    _finegray_bh_seq
     external string scalar  _finegray_bh_key
 
     if (_finegray_bh_seq == J(1,1,.) | _finegray_bh_seq >= .) _finegray_bh_seq = 0
     _finegray_bh_cache = bh
+    if (args() >= 2) _finegray_bh_tvc_cache = interval_bh
+    else _finegray_bh_tvc_cache = J(0, 4, .)
     _finegray_bh_seq   = _finegray_bh_seq + 1
     /* The key is minted only AFTER `ereturn post', by _finegray_bh_setkey,
        because the digest reads e().  Between the store and the mint the cache
@@ -6421,15 +7452,34 @@ void _finegray_bh_store(real matrix bh)
    which weight: exchanging the weights of two subjects leaves the multiset of
    weight values (and e(sum_w)) untouched and would otherwise reconcile at
    rc 0.  `idvar' is the stset id() variable (e(idvar)); it is read as a
-   string when the id is a string variable.  Called without it -- a fit whose
-   stset carried no id() -- the digest degrades to the value-only form.
+   string when the id is a string variable.
+
+   ROW-CONTENT-KEYED WITHOUT id() (2026-09-27, audit F03).  A fit whose stset
+   carried no id() has no subject key, and the value-only form it used to fall
+   back to could not see WHICH row carries which weight: exchanging two
+   scalars in [pw = cond(g, scalar(a), scalar(b))] left the data, e(sum_w) and
+   the multiset of weights unchanged and post-estimation used the reassigned
+   column at rc 0.  Such a fit now passes SEVERAL variables -- the
+   e(datasignature) variables (_t _t0 _d, compete(), covariates, strata,
+   cluster, the weight expression's own variables), posted as e(wsigkeyvars)
+   -- and each row is keyed by its content in all of them.  That key is
+   sort-invariant, and it binds every weight to the row it belongs to.  Two
+   rows identical in every one of those variables are indistinguishable to
+   the fit, so exchanging their weights cannot change any estimate or
+   prediction; every other exchange moves the digest.  With several key
+   variables a string value is length-prefixed so that concatenations cannot
+   alias.  A single key variable (the id() route) is keyed exactly as before,
+   so digests stored by earlier builds still reconcile.  Called with no key
+   -- estimates saved by an earlier id()-less build -- the digest is the
+   legacy value-only form, and _finegray_weight_var says so.
    --------------------------------------------------------------------------- */
 void _finegray_wsig(string scalar wvar, string scalar tousevar,
     | string scalar idvar)
 {
     real colvector tv, sel, w
-    real scalar i, n, a1, a2, m, haveid
-    string colvector ids
+    real scalar i, n, a1, a2, m, haveid, k
+    string colvector ids, sk
+    string rowvector kv
     string scalar h
 
     if (args() < 3) idvar = ""
@@ -6443,11 +7493,27 @@ void _finegray_wsig(string scalar wvar, string scalar tousevar,
     if (n > 0) {
         w = st_data(sel, wvar)
         if (haveid) {
-            if (st_isnumvar(idvar)) {
-                ids = strofreal(st_data(sel, idvar), "%21x")
+            kv = tokens(idvar)
+            if (cols(kv) == 1) {
+                if (st_isnumvar(idvar)) {
+                    ids = strofreal(st_data(sel, idvar), "%21x")
+                }
+                else {
+                    ids = st_sdata(sel, idvar)
+                }
             }
             else {
-                ids = st_sdata(sel, idvar)
+                ids = J(n, 1, "")
+                for (k = 1; k <= cols(kv); k++) {
+                    if (st_isnumvar(kv[k])) {
+                        sk = strofreal(st_data(sel, kv[k]), "%21x")
+                    }
+                    else {
+                        sk = st_sdata(sel, kv[k])
+                        sk = strofreal(strlen(sk)) :+ ":" :+ sk
+                    }
+                    ids = ids :+ "~" :+ sk
+                }
             }
         }
         for (i = 1; i <= n; i++) {
@@ -6505,16 +7571,21 @@ void _finegray_bh_setkey(string scalar salt)
 }
 
 /* Does the cache hold the curve for THIS fit?  Sets the caller's local to 1/0. */
-void _finegray_bh_have(string scalar key, string scalar lname)
+void _finegray_bh_have(string scalar key, string scalar lname,
+    | real scalar need_tvc)
 {
     external real matrix _finegray_bh_cache
+    external real matrix _finegray_bh_tvc_cache
     external string scalar _finegray_bh_key
     real scalar ok
 
     ok = 0
+    if (args() < 3) need_tvc = 0
     if (_finegray_bh_key != "" & _finegray_bh_key == key) {
         if (rows(_finegray_bh_cache) > 0) ok = 1
     }
+    if (need_tvc & (cols(_finegray_bh_tvc_cache) != 4 |
+        rows(_finegray_bh_tvc_cache) == 0)) ok = 0
     st_local(lname, strofreal(ok))
 }
 
@@ -6534,10 +7605,12 @@ void _finegray_bh_have(string scalar key, string scalar lname)
 void _finegray_bh_stash()
 {
     external real matrix _finegray_bh_cache, _finegray_bh_cache_stash
+    external real matrix _finegray_bh_tvc_cache, _finegray_bh_tvc_cache_stash
     external real scalar _finegray_bh_seq,   _finegray_bh_seq_stash
     external string scalar _finegray_bh_key, _finegray_bh_key_stash
 
     _finegray_bh_cache_stash = _finegray_bh_cache
+    _finegray_bh_tvc_cache_stash = _finegray_bh_tvc_cache
     _finegray_bh_seq_stash   = _finegray_bh_seq
     /* The key travels WITH the matrix.  Restoring the curve without its token
        leaves the held fit's e(bh_key) naming a cache that answers to the last
@@ -6547,10 +7620,12 @@ void _finegray_bh_stash()
 void _finegray_bh_unstash()
 {
     external real matrix _finegray_bh_cache, _finegray_bh_cache_stash
+    external real matrix _finegray_bh_tvc_cache, _finegray_bh_tvc_cache_stash
     external real scalar _finegray_bh_seq,   _finegray_bh_seq_stash
     external string scalar _finegray_bh_key, _finegray_bh_key_stash
 
     _finegray_bh_cache = _finegray_bh_cache_stash
+    _finegray_bh_tvc_cache = _finegray_bh_tvc_cache_stash
     _finegray_bh_seq   = _finegray_bh_seq_stash
     _finegray_bh_key   = _finegray_bh_key_stash
 }
@@ -6600,6 +7675,57 @@ void _finegray_bh_cutvals(
     st_matrix(cutmat, out)
 }
 
+/* Interval cumulative masses were captured BEFORE the cumulative carry.  A
+   small second-interval mass may disappear in the displayed total baseline,
+   yet give a substantial hazard after multiplication by its own exp(eta_j).
+   Never recover this payload by subtracting two rounded cumulative totals. */
+real matrix _finegray_tvc_mass_lookup(real matrix interval_bh,
+    real colvector times, real colvector bsvals, real scalar nint)
+{
+    real matrix out, block
+    real colvector lev, sel
+    real scalar k, j
+
+    if (cols(interval_bh) != 4 | rows(interval_bh) == 0) {
+        errprintf("finegray: separate tvc() interval baseline masses are not available\n")
+        errprintf("restore the estimation data or re-fit finegray with basehaz\n")
+        exit(error(459))
+    }
+    out = J(rows(times), nint, 0)
+    lev = uniqrows(bsvals)
+    for (k = 1; k <= rows(lev); k++) {
+        if (sum(interval_bh[., 1] :== lev[k]) == 0) {
+            errprintf("finegray: no tvc() interval baseline for bstrata() level %g\n", lev[k])
+            exit(error(459))
+        }
+        sel = select((1::rows(times)), bsvals :== lev[k])
+        for (j = 1; j <= nint; j++) {
+            block = select(interval_bh, (interval_bh[., 1] :== lev[k]) :&
+                (interval_bh[., 2] :== j))
+            if (rows(block) == 0) continue
+            out[sel, j] = _finegray_step_core(block[., 3..4], times[sel])
+        }
+    }
+    return(out)
+}
+
+void _finegray_tvc_mass_store(real matrix interval_bh, string scalar tvar,
+    string scalar tousevar, string scalar bsvar, string scalar piecevars)
+{
+    real colvector sel, times, bsvals
+    string rowvector vars
+
+    if (piecevars == "") return
+    vars = tokens(piecevars)
+    sel = selectindex(st_data(., tousevar))
+    if (length(sel) == 0) return
+    times = st_data(sel, tvar)
+    if (bsvar != "") bsvals = st_data(sel, bsvar)
+    else bsvals = J(length(sel), 1, 1)
+    st_store(sel, vars, _finegray_tvc_mass_lookup(interval_bh, times,
+        bsvals, length(vars)))
+}
+
 /* Step lookup against the cached curve.  Refuses a mismatched seq rather than
    answering from another fit's baseline. */
 void _finegray_step_lookup_cached(
@@ -6609,15 +7735,18 @@ void _finegray_step_lookup_cached(
     string scalar tousevar,
     | string scalar bsvar,
     string scalar tsplit_str,
-    string scalar cutmat)
+    string scalar cutmat,
+    string scalar piecevars)
 {
     external real matrix _finegray_bh_cache
+    external real matrix _finegray_bh_tvc_cache
     external string scalar _finegray_bh_key
     real colvector touse_vec, sel, times, H0, bsvals
 
     if (args() < 5) bsvar = ""
     if (args() < 6) tsplit_str = ""
     if (args() < 7) cutmat = ""
+    if (args() < 8) piecevars = ""
 
     if (_finegray_bh_key == "" | _finegray_bh_key != key |
         rows(_finegray_bh_cache) == 0) {
@@ -6633,6 +7762,8 @@ void _finegray_step_lookup_cached(
     else             bsvals = J(length(sel), 1, 1)
     H0 = _finegray_step_core_bs(_finegray_bh_cache, times, bsvals)
     st_store(sel, H0var, H0)
+    _finegray_tvc_mass_store(_finegray_bh_tvc_cache, tvar, tousevar,
+        bsvar, piecevars)
 }
 
 /* The thinned grid, taken from the cached curve (finegray_cif's curve mode). */
@@ -6779,9 +7910,10 @@ void _finegray_step_lookup_direct(
     string scalar tsplit_str,
     string scalar cutmat,
     string scalar w_str,
-    real scalar wtype)
+    real scalar wtype,
+    string scalar piecevars)
 {
-    real matrix bh
+    real matrix bh, interval_bh
     real colvector touse_vec, sel, times, H0, bsvals
 
     if (args() < 12) bs_str = ""
@@ -6790,9 +7922,10 @@ void _finegray_step_lookup_direct(
     if (args() < 15) cutmat = ""
     if (args() < 16) w_str = ""
     if (args() < 17) wtype = 0
+    if (args() < 18) piecevars = ""
 
     bh = _finegray_bh_rebuild(zvars, events_str, cause, censval, byg_str,
-        tg_str, est_touse, t0var, bs_str, tvc_str, tsplit_str, w_str, wtype)
+        tg_str, est_touse, t0var, bs_str, tvc_str, tsplit_str, w_str, wtype, interval_bh)
     _finegray_bh_cutvals(bh, tsplit_str, cutmat)
     touse_vec = st_data(., eval_touse)
     sel = selectindex(touse_vec)
@@ -6802,6 +7935,7 @@ void _finegray_step_lookup_direct(
     else              bsvals = J(length(sel), 1, 1)
     H0 = _finegray_step_core_bs(bh, times, bsvals)
     st_store(sel, H0var, H0)
+    _finegray_tvc_mass_store(interval_bh, tvar, eval_touse, bs_str, piecevars)
 }
 
 /* The THINNED baseline time grid for finegray_cif's curve mode.  Posts at most
@@ -6868,7 +8002,8 @@ void _finegray_step_lookup(
     string scalar tousevar,
     | string scalar bsvar,
     string scalar tsplit_str,
-    string scalar cutmat)
+    string scalar cutmat,
+    string scalar piecevars)
 {
     real matrix bh
     real colvector times, H0, touse_vec, sel, bsvals
@@ -6876,6 +8011,7 @@ void _finegray_step_lookup(
     if (args() < 5) bsvar = ""
     if (args() < 6) tsplit_str = ""
     if (args() < 7) cutmat = ""
+    if (args() < 8) piecevars = ""
 
     bh = st_matrix(bh_matname)
     _finegray_bh_cutvals(bh, tsplit_str, cutmat)
@@ -6887,6 +8023,8 @@ void _finegray_step_lookup(
     else             bsvals = J(length(sel), 1, 1)
     H0 = _finegray_step_core_bs(bh, times, bsvals)
     st_store(sel, H0var, H0)
+    if (piecevars != "") _finegray_tvc_mass_store(st_matrix("e(basehaz_tvc)"),
+        tvar, tousevar, bsvar, piecevars)
 }
 
 /* Assign Schoenfeld residuals from matrix to variables via index lookup.
@@ -6919,4 +8057,9 @@ void _finegray_assign_schoenfeld_vars(
 }
 
 
+/* Installed callers probe this after every numerical helper compiled. */
+void _finegray_numeric_ok() {}
+
 end
+
+mata: mata set matastrict `_fg_matastrict0'

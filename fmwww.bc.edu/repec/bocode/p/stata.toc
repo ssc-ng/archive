@@ -89,6 +89,7 @@ p pindex module to compute targeted price indices
 p pinocchio module that randomly generates false econometric statementsp pipe module to perform a curve-free dual-agent dose-escalation design
 p pisareg module to perform linear regression with PISA data and plausible values
 p pisatools module to facilitate analysis of the data from the PISA OECD study
+p pkgtransfer module to rebuild an installed package setup on another machine, online or offline
 p plausexog module to implement Conley et al's plausibly exogenous bounds
 p plot_confidently module to visualize the mean and confidence interval of a specified variable
 p plotbeta module to plot linear combinations of coefficients
@@ -116,7 +117,13 @@ p poissark module to perform Poisson regression with integer-valued autoregressi
 p polar module to plot polar coordinates
 p polarspike module for polar spike graphs
 p polishpaper module to Generate a Structured Polishing Template for Academic Papers
+p polycopula module to compute Copula-based association for ordinal variables:  Gaussian (polychoric), Frank, Clayton and Gumbel
+p polycorr module to compute polychoric, polyserial and Pearson correlations with a joint covariance matrix, bivariate-normality diagnostics and positive-definite repair
+p polypml module to perform Joint estimation of polychoric correlations and thresholds with missing data: pairwise maximum likelihood or full-information maximum likelihood
+p polyreg module to perform-regression on a polychoric index with bootstrap inference that accounts for the estimated index (generated-regressor correction)
+p polysem module to perform confirmatory factor analysis of ordinal indicators by diagonally weighted least squares on polychoric correlations
 p polyspline module to generate sensible bases for polynomials and other splines
+p polytest module to provide tests of the latent-normality assumption behind tetrachoric, polychoric and polyserial correlations
 p pooledsd module to calculate pooled standard deviation for a continuous variable by a factor variable
 p poparms module for potential outcome parameter estimation
 p popsim module to simulate completed fertility and birth intervals for two generations

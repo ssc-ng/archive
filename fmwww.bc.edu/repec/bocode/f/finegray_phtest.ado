@@ -1,4 +1,4 @@
-*! finegray_phtest Version 1.3.2  2026/09/08
+*! finegray_phtest Version 1.3.8  2026/10/07
 *! Proportional subdistribution hazards diagnostic after finegray
 *! Author: Timothy P Copeland, Karolinska Institutet
 *! Program class: rclass
@@ -80,20 +80,35 @@ program define finegray_phtest, rclass
         display as error "with a larger iterate() or a different specification"
         exit 430
     }
+    * A stratified delayed-entry fit from 1.3.0-1.3.2 lacks the per-stratum
+    * weight normalizer (ZZF 2011 eq. 6; finegray 1.3.3), and the fit stamps
+    * e(lt_norm) only once it carries it.  Rebuilding a baseline, residuals or
+    * a variance with the corrected weights under those coefficients pairs two
+    * different estimators at rc 0.  Refuse by name.
+    if inlist(`"`e(lt_weight)'"', "zzf1_stratified", "zzf1_factorized") ///
+        & `"`e(lt_norm)'"' == "" {
+        display as error "estimation results predate finegray 1.3.3"
+        display as error "this stratified delayed-entry fit lacks the stratum weight"
+        display as error "normalizer that 1.3.3 added; re-run {bf:finegray} before using finegray_phtest"
+        exit 301
+    }
     * A tvc() fit does not assume proportional subdistribution hazards for the
     * covariates it names, so there is nothing here to test for them -- and the
     * residuals this command consumes are defined interval by interval, with
     * every other interval's block structurally zero (see the same refusal in
     * finegray_predict, schoenfeld).  finegray_phtest is the diagnostic that
     * MOTIVATES a tvc() fit: run it on the proportional fit, and answer a
-    * rejection with tvc().  Running it on the answer is the wrong direction.
+    * pattern suggesting non-proportionality with tvc().  Running it on the
+    * answer is the wrong direction.  It reports residual-time correlations,
+    * not a test with a decision, so the message does not speak of a
+    * "rejection" (the 2026-09-23 clarity audit, M3).
     if `"`e(tvc)'"' != "" {
         display as error "finegray_phtest is not available after a fit with tvc()"
         display as error "tvc() already relaxes proportionality for `e(tvc)', so the"
-        display as error "assumption this command tests is not one that fit makes"
-        display as error "run {bf:finegray_phtest} on the proportional fit; a rejection there"
-        display as error "is what {bf:tvc()} answers, and {bf:test [tvc1]x = [tvc2]x} after"
-        display as error "the tvc() fit is the corresponding Wald test"
+        display as error "assumption this diagnostic examines is not one that fit makes"
+        display as error "run {bf:finegray_phtest} on the proportional fit; a pattern suggesting"
+        display as error "non-proportionality there is what {bf:tvc()} answers, and"
+        display as error "{bf:test [tvc1]x = [tvc2]x} after the tvc() fit is the corresponding Wald test"
         exit 198
     }
     * A weighted fit's Schoenfeld residuals are well defined (Z_i minus the
@@ -174,14 +189,22 @@ program define finegray_phtest, rclass
     }
 
     * Load Mata engine
-    capture mata: _finegray_mata_ok()
+    capture mata: _finegray_numeric_ok()
     * probe MATA, not a Stata program: `mata clear' drops Mata functions but
     * leaves Stata programs standing, so a program sentinel says "loaded" when
     * the engine is gone and the next Mata call dies with r(3499).
     if _rc {
         capture findfile _finegray_mata.ado
         if _rc == 0 {
-            run "`r(fn)'"
+            * A failed load aborts _finegray_mata.ado before it restores the
+            * caller's matastrict; restore it here on that path (audit F08).
+            local _fg_ms0 = c(matastrict)
+            capture noisily run "`r(fn)'"
+            if _rc {
+                local _fg_lrc = _rc
+                mata: mata set matastrict `_fg_ms0'
+                exit `_fg_lrc'
+            }
         }
         else {
             display as error "_finegray_mata.ado not found; reinstall finegray"
@@ -315,17 +338,16 @@ program define finegray_phtest, rclass
         }
     }
 
+    * Schoenfeld matrix (n_fail x (p+1)), written straight into a tempname
+    * so a caller's matrix of any name is never touched.
+    tempname sch_mat
     mata: _finegray_schoenfeld_compute( ///
         "`covariates'", "`events'", `cause', `censvalue', ///
-        "`_byg_mata'", "`_tg_mata'", 0, "`_t0var'", "`_bs_ph'")
+        "`_byg_mata'", "`_tg_mata'", 0, "`_t0var'", "`_bs_ph'", ///
+        "", 0, "`sch_mat'")
 
     restore
     local _preserved = 0
-
-    * Retrieve the Schoenfeld matrix (n_fail x (p+1))
-    tempname sch_mat
-    matrix `sch_mat' = _finegray_schoenfeld
-    capture matrix drop _finegray_schoenfeld
 
     local n_fail = rowsof(`sch_mat')
 
@@ -362,7 +384,7 @@ program define finegray_phtest, rclass
     matrix `test_mat' = J(`p', 2, .)
 
     * Load Schoenfeld matrix into a temporary dataset once (svmat),
-    * then loop correlations over columns — avoids O(p) preserve/clear cycles.
+    * then loop correlations over columns -- avoids O(p) preserve/clear cycles.
     tempvar _tfunc
     preserve
     local _preserved = 1

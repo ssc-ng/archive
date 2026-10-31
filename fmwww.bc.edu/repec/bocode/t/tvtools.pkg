@@ -1,0 +1,98 @@
+d 'TVTOOLS': module to build and analyze time-varying exposure data for survival analysis
+d
+d  tvtools is a suite of commands that turns prescription,
+d treatment, and other episode records into analysis-ready
+d time-varying survival data. tvexpose converts episode records
+d into person-time intervals with categorical, ever/current/former,
+d cumulative-duration, recency, and cumulative-dose exposure
+d definitions, including grace periods, lags, and washout windows;
+d tvmerge combines several time-varying exposure datasets into one
+d interval set; tvevent attaches single, competing, or recurring
+d events and supports gap-time clocks; tvage, tvband, and tvsplit
+d split follow-up on age, calendar, elapsed-time, and multiple
+d Lexis timescales; and tvpanel builds entry-anchored person-period
+d panels. tvbuild, with the specification frame written by tvspec,
+d performs the whole construction as one validated, transactional
+d call and records a provenance manifest. tvdiagnose reports
+d coverage, gaps, overlaps, and exposure summaries, and tvweight
+d estimates inverse probability of treatment weights (optionally
+d stabilized), overlap and matching weights, and inverse
+d probability of censoring weights for marginal structural models.
+d Dialogs are provided for tvexpose, tvmerge, and tvevent, and the
+d tvtools command lists the suite. Results are returned in r(). 
+d
+d KW: time-varying exposure
+d KW: survival analysis
+d KW: stset
+d KW: person-time
+d KW: episode data
+d KW: prescription data
+d KW: pharmacoepidemiology
+d KW: Lexis expansion
+d KW: competing risks
+d KW: inverse probability weighting
+d KW: IPTW
+d KW: IPCW
+d KW: marginal structural models
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261030
+d
+d Author: Timothy P Copeland, Karolinska Institutet
+d Support: email timothy.copeland@@ki.se
+d
+f tvtools.ado
+f tvexpose.ado
+f tvexpose.dlg
+f tvexpose.sthlp
+f ../_/_tvexpose_eligible.ado
+f ../_/_tvexpose_fast_data.ado
+f ../_/_tvexpose_fast_build.ado
+f ../_/_tvexpose_dose_sweep.ado
+f ../_/_tvexpose_diagnostics.ado
+f ../_/_tvexpose_frame_commit.ado
+f ../_/_tvexpose_mata.ado
+f tvmerge.ado
+f tvmerge.dlg
+f tvmerge.sthlp
+f ../_/_tvmerge_mata.ado
+f ../_/_tvmerge_stack_ids.ado
+f tvspec.ado
+f tvspec.sthlp
+f ../_/_tvtools_new_vallabel.ado
+f ../_/_tvtools_check_dates.ado
+f ../_/_tvtools_interval_union.ado
+f ../_/_tvtools_rule.ado
+f ../_/_tvtools_row.ado
+f tvevent.ado
+f tvevent.dlg
+f tvevent.sthlp
+f tvdiagnose.ado
+f tvdiagnose.sthlp
+f tvweight.ado
+f ../_/_tvweight_cumprod.ado
+f tvweight.sthlp
+f tvtools.sthlp
+f tvage.ado
+f tvage.sthlp
+f tvband.ado
+f tvband.sthlp
+f tvsplit.ado
+f tvsplit.sthlp
+f ../_/_tvband_split.ado
+f tvpanel.ado
+f tvpanel.sthlp
+f ../_/_tvpanel_sweep.ado
+f tvbuild.ado
+f tvbuild.sthlp
+f ../_/_tvbuild_normalize_spec.ado
+f ../_/_tvbuild_preflight.ado
+f ../_/_tvbuild_load_source.ado
+f ../_/_tvbuild_carry_meta.ado
+f ../_/_tvbuild_make_source.ado
+f ../_/_tvbuild_combine.ado
+f ../_/_tvbuild_event.ado
+f ../_/_tvbuild_finalize.ado
+f ../_/_tvbuild_manifest.ado
+f ../_/_tvbuild_commit.ado

@@ -1,0 +1,1287 @@
+*! survtab Version 1.0.0  2026/10/20
+*! Survival summary table with Kaplan-Meier estimates, medians, and RMST
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass
+
+/*
+DESCRIPTION:
+    Generates a publication-ready survival summary table with Kaplan-Meier
+    estimates at specified timepoints. Supports group comparisons (log-rank
+    test), median survival, restricted mean survival time, number at risk,
+    and cumulative incidence. Exports to Excel with professional formatting.
+
+SYNTAX:
+    survtab, times(numlist) [by(varname) rmst(real) median riskset
+        timeunit(string) reverse difference
+        xlsx(filename) sheet(string) title(string)
+        footnote(string) font(string) fontsize(integer) borderstyle(string)
+        boldp(real) zebra highlight(real)
+        csv(filename) frame(name) open]
+
+    times:      REQUIRED. Timepoints for KM estimates (e.g., 1 3 5)
+    by:         Group comparison variable with log-rank test
+    rmst:       Restricted mean survival time truncated at specified time
+    median:     Include median survival with CI (opt-in; never auto-enabled)
+    riskset:    Number-at-risk rows at each timepoint
+    reverse:    Cumulative incidence (1 - S(t)) instead of survival
+    difference: Between-group difference column with CI
+    timeunit:   Label: "years", "months", "days" (default: "years")
+*/
+
+program define survtab, rclass
+    version 17.0
+    * Native sts/stci/log-rank helpers use numbered and S_E_* legacy globals.
+    * Indexed locals retain exact names and opaque values without truncation.
+    local _legacy_keys S_1 S_2 S_3 S_5 S_6
+    mata: st_local("_entry_e_keys", invtokens(st_dir("global", "macro", "S_E_*")'))
+    local _legacy_keys : list _legacy_keys | _entry_e_keys
+    local _legacy_i 0
+    foreach _legacy of local _legacy_keys {
+        local ++_legacy_i
+        mata: st_local("_had_legacy_" + st_local("_legacy_i"), strofreal(rows(st_dir("global", "macro", st_local("_legacy"))) > 0))
+        mata: st_local("_old_legacy_" + st_local("_legacy_i"), st_global(st_local("_legacy")))
+    }
+    local _held_estimates 0
+    tempname _prior_estimates
+    local _orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    tempname _xlsx_book
+
+capture noisily {
+
+    capture putexcel close  // stata-dev-ignore: capture-rc — closes a possibly open putexcel handle; no open file is the normal case
+
+    return clear
+
+    * Auto-load shared helper programs
+    capture _tabtools_helpers_ready
+    if !_rc capture mata: assert(findexternal("_tt_sep_parse()") != NULL)
+    if _rc {
+        capture findfile _tabtools_common.ado
+        if _rc == 0 {
+            run "`r(fn)'"
+            capture _tabtools_helpers_ready
+            if _rc {
+                display as error "_tabtools_common.ado failed to load fully; reinstall tabtools"
+                exit 111
+            }
+        }
+        else {
+            display as error "_tabtools_common.ado not found; reinstall tabtools"
+            exit 111
+        }
+    }
+    _tabtools_require_helpers
+
+**# Syntax and Validation
+    syntax, times(numlist >0) [by(varname) RMST(real -1) MEDian RISKset ///
+        TIMEUnit(string) REVerse DIFFerence EVents ///
+        Level(cilevel) ///
+        xlsx(string) excel(string) sheet(string) title(string) ///
+        FOOTnote(string) FONT(string) FONTSIZE(integer -1) BORDERstyle(string) ///
+        HEADERShade HEADERColor(string) ZEBRAColor(string) ///
+        BOLDp(real -1) zebra HIGHlight(real -1) DIGits(integer -1) ///
+        csv(string) MARKdown(string) MDAPPend FRAme(string) open pdp(integer -1) highpdp(integer -1) ///
+        ADDRow(string asis)]
+
+    * Accept excel() as synonym for xlsx()
+    if "`xlsx'" == "" & "`excel'" != "" local xlsx "`excel'"
+    * Session destinations (tabtools set workbook/markdown) apply only when
+    * sheet() asks for a sheet; an explicit option wins. Without this a
+    * sheet() call after tabtools set workbook wrote nothing, silently.
+    if `"`macval(sheet)'"' != "" {
+        _tabtools_set_sinks resolve, xlsx(`"`xlsx'"') markdown(`"`markdown'"') `mdappend'
+        local xlsx `"`_ss_xlsx'"'
+        local markdown `"`_ss_md'"'
+        local mdappend "`_ss_mdappend'"
+        if `"`xlsx'"' == "" display as text "(tabtools: sheet() ignored; no xlsx() and no session workbook)"
+    }
+    local _has_xlsx = "`xlsx'" != ""
+
+    * Resolve persistent defaults
+    if `boldp' == -1 & "$TABTOOLS_BOLDP" != "" local boldp = $TABTOOLS_BOLDP
+    if `pdp' == -1 local pdp = 3
+    if `highpdp' == -1 local highpdp = 2
+    if `pdp' < 1 | `pdp' > 10 {
+        noisily display as error "pdp() must be between 1 and 10"
+        exit 198
+    }
+    if `highpdp' < 1 | `highpdp' > 10 {
+        noisily display as error "highpdp() must be between 1 and 10"
+        exit 198
+    }
+
+    if `digits' == -1 {
+        if "$TABTOOLS_DIGITS" != "" local digits = $TABTOOLS_DIGITS
+        else local digits = 1
+    }
+    if `digits' < 0 | `digits' > 6 {
+        noisily display as error "digits() must be between 0 and 6"
+        exit 198
+    }
+
+    * Validate stset
+    capture st_is 2 analysis
+    if _rc {
+        noisily display as error "data not st set"
+        noisily display as error "Hint: run {bf:stset timevar, failure(eventvar)} before calling survtab"
+        exit 119
+    }
+    local _st_weight_spec : char _dta[st_w]
+    local _st_weight_var : char _dta[st_wv]
+    local _st_weighted 0
+    tempvar _st_weight
+    if `"`_st_weight_spec'"' != "" {
+        * Match the declared weight type itself. A substring test would accept
+        * [pweight=fweight_count] because the weight variable's name contains
+        * the token, and then treat sampling weights as replication counts.
+        local _st_weight_type = ""
+        local _st_weight_eq = strpos(`"`_st_weight_spec'"', "=")
+        if `_st_weight_eq' > 2 {
+            local _st_weight_type = lower(substr(`"`_st_weight_spec'"', 2, `_st_weight_eq' - 2))
+        }
+        if "`_st_weight_type'" != "fweight" {
+            noisily display as error "survtab supports only frequency weights in stset data"
+            noisily display as error "re-run stset without probability or importance weights before calling survtab"
+            exit 198
+        }
+        local _st_weighted 1
+        quietly generate double `_st_weight' = `_st_weight_var'
+    }
+    else {
+        quietly generate double `_st_weight' = 1
+    }
+    local st_id : char _dta[st_id]
+    if "`st_id'" != "" {
+        capture confirm variable `st_id'
+        if _rc local st_id ""
+    }
+
+    * Default options
+    if "`timeunit'" == "" {
+        local timeunit "years"
+        * the default labels times, medians, and RMST as years; say so when
+        * the stset time variable is a date and no scale() made it years
+        _tabtools_st_timescale
+        if "`_st_unit'" != "" {
+            noisily display as text "Note: analysis time is in `_st_unit' (`_st_timevar' has a date format and stset has no scale()),"
+            noisily display as text "      but times, medians, and RMST are labelled in years. stset with scale() to"
+            if "`_st_unit'" == "days" noisily display as text "      analyse in years, or specify timeunit(days)."
+            else noisily display as text "      analyse in years."
+        }
+        else {
+            * the unit is not inferred: unless stset scale() turned days into
+            * years, say that the years label is a default, not a finding
+            local _st_bs : char _dta[st_bs]
+            if !inlist(real("`_st_bs'"), 365, 365.25) {
+                noisily display as text "Note: times are labelled in years by default (survtab does not infer the unit); specify timeunit() if analysis time is not in years."
+            }
+        }
+    }
+    if !inlist("`timeunit'", "years", "months", "days", "weeks") {
+        noisily display as error "timeunit() must be years, months, days, or weeks"
+        exit 198
+    }
+    local tu_abbrev = substr("`timeunit'", 1, 2)
+    if "`tu_abbrev'" == "ye" local tu_short "yr"
+    else if "`tu_abbrev'" == "mo" local tu_short "mo"
+    else if "`tu_abbrev'" == "da" local tu_short "d"
+    else if "`tu_abbrev'" == "we" local tu_short "wk"
+
+    * Sheet default
+    if `"`macval(sheet)'"' == "" local sheet "Survival"
+    _tabtools_validate_sheet `"`macval(sheet)'"' "sheet()"
+
+    * Path validation
+    if "`open'" != "" & !`_has_xlsx' {
+        noisily display as error "open requires xlsx() or excel()"
+        exit 198
+    }
+    if `_has_xlsx' & !strmatch(lower("`xlsx'"), "*.xlsx") {
+        noisily display as error "Excel filename must have .xlsx extension"
+        exit 198
+    }
+    if `_has_xlsx' _tabtools_validate_path "`xlsx'" "xlsx()"
+    if "`csv'" != "" _tabtools_validate_path "`csv'" "csv()"
+    if "`mdappend'" != "" & `"`markdown'"' == "" {
+        noisily display as error "mdappend requires markdown()"
+        exit 198
+    }
+    if `"`markdown'"' != "" {
+        _tabtools_validate_path `"`markdown'"' "markdown()"
+        local _md_lower = lower(`"`markdown'"')
+        if !(strmatch(`"`_md_lower'"', "*.md") | ///
+             strmatch(`"`_md_lower'"', "*.markdown") | ///
+             strmatch(`"`_md_lower'"', "*.qmd") | ///
+             strmatch(`"`_md_lower'"', "*.rmd")) {
+            noisily display as error "markdown() must specify a .md, .markdown, .qmd, or .rmd file"
+            exit 198
+        }
+    }
+    _tabtools_check_sinks, xlsx(`"`xlsx'"') csv(`"`csv'"') markdown(`"`markdown'"')
+    * C2 (codex audit 2026-09-26): validate frame() before anything is
+    * written. It was checked only when the frame was stored, after the CSV
+    * and Markdown files, so an occupied or invalid frame returned an error
+    * after an existing report had already been overwritten.
+    if `"`frame'"' != "" {
+        _tabtools_frame_preflight `"`frame'"' "frame()"
+    }
+
+    local _ci_alpha = (100 - `level') / 200
+    * The level as shown: at most 15 significant digits, so 99.9 never prints
+    * as the double's 17-digit 99.90000000000001; r(ci_level) stays numeric.
+    local _level_txt = strtrim(ustrregexra(string(`level', "%21.15g"), "-(?=[0.,]+\z)", ""))
+    local _ci_z = invnormal(1 - `_ci_alpha')
+
+    * Validate boldp
+    local has_boldp = `boldp' != -1
+    if `has_boldp' & (`boldp' <= 0 | `boldp' >= 1) {
+        noisily display as error "boldp() must be between 0 and 1"
+        exit 198
+    }
+    local has_highlight = `highlight' != -1
+    if `has_highlight' & (`highlight' <= 0 | `highlight' >= 1) {
+        noisily display as error "highlight() must be between 0 and 1"
+        exit 198
+    }
+
+    * Difference requires by()
+    if "`difference'" != "" & "`by'" == "" {
+        noisily display as error "difference requires by()"
+        exit 198
+    }
+
+    * RMST validation
+    if `rmst' != -1 & `rmst' <= 0 {
+        noisily display as error "rmst() must be greater than 0"
+        exit 198
+    }
+    local has_rmst = `rmst' != -1
+
+    * Resolve formatting
+    _tabtools_resolve_format, font(`"`font'"') fontsize(`fontsize') borderstyle(`borderstyle') headershade(`headershade') zebra(`zebra')
+    _tabtools_resolve_colors, headercolor(`"`headercolor'"') zebracolor(`"`zebracolor'"')
+
+    * Count timepoints
+    local n_times : word count `times'
+
+**# Determine Groups
+    local n_groups 1
+    local group_levels ""
+    local has_by = "`by'" != ""
+    local _by_is_string 0
+    tempvar groupvar
+    if `has_by' {
+        capture confirm numeric variable `by'
+        if !_rc {
+            * C1 (codex audit 2026-09-26): not clonevar, which re-expands
+            * the variable label as macro syntax (r(132) on a backtick).
+            local _cv_type : type `by'
+            qui generate `_cv_type' `groupvar' = `by'
+            local _cv_fmt : format `by'
+            format `groupvar' `_cv_fmt'
+            local _cv_vl : value label `by'
+            if "`_cv_vl'" != "" label values `groupvar' `_cv_vl'
+            mata: st_varlabel("`groupvar'", st_varlabel("`by'"))
+        }
+        else {
+            local _by_is_string 1
+            qui encode `by', gen(`groupvar')
+        }
+        qui levelsof `groupvar' if _st, local(group_levels)
+        local n_groups : word count `group_levels'
+        if `n_groups' < 2 {
+            noisily display as error "by() variable must have at least 2 levels"
+            exit 198
+        }
+        if "`difference'" != "" & `n_groups' != 2 {
+            noisily display as error "difference requires exactly 2 groups in by()"
+            exit 198
+        }
+        * Every group selection below compares `groupvar' with a level.
+        * The levelsof text of a fractional float level (0.1 prints as
+        * .1000000014901161) equals no stored value, so those selections
+        * matched nothing: survival was reported as 1 or the command
+        * stopped. Select on an integer index (egen group, the same
+        * ascending order as levelsof) and keep the source variable and
+        * its levelsof text for labels and r(group_#_value).
+        local _by_levels `"`group_levels'"'
+        tempvar _gsrc
+        rename `groupvar' `_gsrc'
+        qui egen long `groupvar' = group(`_gsrc') if _st
+        numlist "1/`n_groups'"
+        local group_levels "`r(numlist)'"
+    }
+    else {
+        qui gen byte `groupvar' = 1
+        local group_levels "1"
+    }
+
+    * RMST is identifiable only through observed follow-up support in every
+    * reported group; never extend the final KM plateau beyond that support.
+    if `has_rmst' {
+        forvalues g = 1/`n_groups' {
+            local _glv : word `g' of `group_levels'
+            quietly summarize _t if `groupvar' == `_glv' & _st, meanonly
+            local _support = r(max)
+            if missing(`_support') | `rmst' > `_support' {
+                if `has_by' local _glv : word `g' of `_by_levels'
+                noisily display as error "rmst(`rmst') exceeds observed follow-up support (`_support') in group `_glv'"
+                exit 198
+            }
+        }
+    }
+
+    * Build group labels and counts
+    forvalues g = 1/`n_groups' {
+        local _glv : word `g' of `group_levels'
+        if `has_by' {
+            * C1 (codex audit 2026-09-26): the value label is data; every
+            * later use is macval()-protected so it is never expanded.
+            local _glv_src : word `g' of `_by_levels'
+            local _glabel : label (`_gsrc') `_glv_src'
+            if `_by_is_string' local _gvalue : copy local _glabel
+            else local _gvalue `"`_glv_src'"'
+        }
+        else {
+            local _glabel "Overall"
+            local _gvalue "1"
+        }
+        local glabel_`g' : copy local _glabel
+        local glevel_`g' : copy local _gvalue
+        if "`st_id'" != "" {
+            tempvar _gn_tag
+            qui egen byte `_gn_tag' = tag(`st_id') if `groupvar' == `_glv' & _st
+            qui summarize `_st_weight' if `_gn_tag', meanonly
+        }
+        else {
+            qui summarize `_st_weight' if `groupvar' == `_glv' & _st, meanonly
+        }
+        local gn_`g' = r(sum)
+    }
+
+**# Compute Events and At-Risk Counts
+    if "`events'" != "" {
+        forvalues g = 1/`n_groups' {
+            local _glv : word `g' of `group_levels'
+            if "`st_id'" != "" {
+                tempvar _event_tag
+                qui egen byte `_event_tag' = tag(`st_id') ///
+                    if `groupvar' == `_glv' & _st & _d == 1
+                qui summarize `_st_weight' if `_event_tag', meanonly
+            }
+            else {
+                if `has_by' {
+                    qui summarize `_st_weight' if `groupvar' == `_glv' & _st & _d == 1, meanonly
+                }
+                else {
+                    qui summarize `_st_weight' if _st & _d == 1, meanonly
+                }
+            }
+            local events_g`g' = r(sum)
+            local atrisk_g`g' = `gn_`g''
+        }
+    }
+
+    * stci's native estimate hold does not handle an empty e() namespace.
+    * Hold before its first call and before any subsequent preserve block.
+    _estimates hold `_prior_estimates', copy restore nullok
+    local _held_estimates 1
+
+**# Compute KM Estimates at Specified Timepoints
+    * Use sts generate for reliable KM function extraction
+    *
+    * A requested time after a group's last observed time (_t) reports the
+    * final Kaplan-Meier value carried forward. That flat extension is kept
+    * (estimates are unchanged), but it is not supported by the data, so the
+    * affected group/time pairs are collected here, shown as a note after the
+    * table, and returned in r(beyond_support).
+    local _beyond ""
+    forvalues g = 1/`n_groups' {
+        local _glv : word `g' of `group_levels'
+        quietly summarize _t if `groupvar' == `_glv' & _st, meanonly
+        local _g_support = r(max)
+        local _g_beyond ""
+        forvalues t = 1/`n_times' {
+            local _time : word `t' of `times'
+            if `_time' > `_g_support' local _g_beyond "`_g_beyond' `_time'"
+        }
+        if "`_g_beyond'" != "" {
+            local _g_support_s = strtrim(ustrregexra(string(`_g_support', "%12.0g"), "-(?=[0.,]+\z)", ""))
+            local _g_entry `"`macval(glabel_`g')':`_g_beyond' (last follow-up `_g_support_s')"'
+            if `"`macval(_beyond)'"' == "" local _beyond : copy local _g_entry
+            else {
+                local _beyond `"`macval(_beyond)'; `macval(_g_entry)'"'
+            }
+        }
+    }
+    forvalues g = 1/`n_groups' {
+        local _glv : word `g' of `group_levels'
+        tempvar _surv_fn _se_fn
+        qui sts generate `_surv_fn' = s if `groupvar' == `_glv'
+        qui sts generate `_se_fn' = se(s) if `groupvar' == `_glv'
+        forvalues t = 1/`n_times' {
+            local _time : word `t' of `times'
+            * Get last KM estimate at or before this timepoint
+            qui su `_surv_fn' if _t <= `_time' & `groupvar' == `_glv' & _st
+            if r(N) > 0 {
+                * Find the survival value at the largest time <= _time. The
+                * comparison stays variable-to-variable: routing the maximum
+                * through a local loses the low-order bits of _t, so an exact
+                * `_t == `_max_t'` match can select no observations and blank
+                * the cell.
+                tempvar _at_time _t_sel _t_max
+                qui gen byte `_at_time' = (_t <= `_time' & `groupvar' == `_glv' & _st & !missing(`_surv_fn'))
+                qui gen double `_t_sel' = _t if `_at_time'
+                qui egen double `_t_max' = max(`_t_sel')
+                qui su `_surv_fn' if `_at_time' & `_t_sel' == `_t_max', meanonly
+                local _surv = r(min)
+                qui su `_se_fn' if `_at_time' & `_t_sel' == `_t_max', meanonly
+                local _se = r(min)
+                drop `_at_time' `_t_sel' `_t_max'
+            }
+            else {
+                * No events before this time — survival is 1
+                local _surv = 1
+                local _se = 0
+            }
+            local surv_g`g'_t`t' = `_surv'
+            local se_g`g'_t`t' = `_se'
+
+            * Number at risk (accounts for delayed entry via _t0)
+            if "`riskset'" != "" {
+                if "`st_id'" != "" {
+                    tempvar _risk_tag
+                    qui egen byte `_risk_tag' = tag(`st_id') ///
+                        if _t >= `_time' & _t0 < `_time' & `groupvar' == `_glv' & _st
+                    qui summarize `_st_weight' if `_risk_tag', meanonly
+                }
+                else {
+                    qui summarize `_st_weight' if _t >= `_time' & _t0 < `_time' & `groupvar' == `_glv' & _st, meanonly
+                }
+                local nrisk_g`g'_t`t' = r(sum)
+            }
+        }
+        drop `_surv_fn' `_se_fn'
+    }
+
+**# Compute Median Survival
+    if "`median'" != "" {
+        forvalues g = 1/`n_groups' {
+            local _glv : word `g' of `group_levels'
+            capture qui stci if `groupvar' == `_glv', level(`level')
+            if !_rc {
+                local med_g`g' = r(p50)
+                local med_lo_g`g' = r(lb)
+                local med_hi_g`g' = r(ub)
+            }
+            else {
+                local med_g`g' = .
+                local med_lo_g`g' = .
+                local med_hi_g`g' = .
+            }
+        }
+    }
+
+**# Log-Rank Test
+    local logrank_p .
+    local logrank_chi2 .
+    local logrank_df .
+    local _logrank_row = 0
+    local _logrank_nofail = 0
+    if `has_by' {
+        * C5 (codex audit 2026-09-26): with no failures in the analysis sample
+        * there is nothing to compare, and sts test stops with r(2000). Detect
+        * that condition directly; the descriptive table is still produced,
+        * the test is omitted with a note, and r(logrank_p) is missing. Any
+        * other sts test failure still stops the command.
+        * F08 (codex audit 2026-09-27): count failures in the sample the
+        * test uses. sts test drops rows with a missing group, so a failure
+        * there must not bypass the no-failure path.
+        quietly count if _st & _d != 0 & !missing(_d) & !missing(`groupvar')
+        if r(N) == 0 {
+            local _logrank_nofail = 1
+            noisily display as text ///
+                "Note: no failures in the analysis sample; the log-rank test is not possible and is omitted"
+        }
+        else {
+            * C1: the test runs on an unlabelled copy of the group variable.
+            * sts test prints the value labels through code that expands them
+            * as macro syntax, so a backtick in a label stopped it with r(132).
+            tempvar _lr_group
+            local _lr_type : type `groupvar'
+            quietly generate `_lr_type' `_lr_group' = `groupvar'  // stata-dev-ignore: unchecked-commit — the written variable is the tempvar _lr_group (the flagged leading local is only its storage type); it copies groupvar from the caller's dataset and the no-failure case exits above
+            qui sts test `_lr_group' if _st
+            local logrank_chi2 = r(chi2)
+            local logrank_df = r(df)
+            local logrank_p = chi2tail(`logrank_df', `logrank_chi2')
+        }
+    }
+
+**# Compute RMST
+    if `has_rmst' {
+        forvalues g = 1/`n_groups' {
+            local _glv : word `g' of `group_levels'
+            preserve
+            qui keep if `groupvar' == `_glv' & _st
+            qui sort _t
+            tempvar _rmst_surv _event _event_tag _d_count _surv_at_event _surv_event ///
+                _risk_tag
+            qui sts generate `_rmst_surv' = s
+            qui gen byte `_event' = (_d == 1 & _t <= `rmst')
+            qui egen byte `_event_tag' = tag(_t) if `_event'
+            qui bysort _t: egen double `_d_count' = total(`_st_weight' * _d) if `_event'
+            qui gen double `_surv_at_event' = `_rmst_surv' if `_event'
+            qui bysort _t: egen double `_surv_event' = max(`_surv_at_event')
+
+            qui count if `_event_tag'
+            if r(N) == 0 {
+                local rmst_g`g' = `rmst'
+                local rmst_se_g`g' = 0
+                local rmst_lb_g`g' = `rmst'
+                local rmst_ub_g`g' = `rmst'
+                restore
+                continue
+            }
+
+            tempname _evtmat
+            qui mkmat _t `_surv_event' `_d_count' if `_event_tag', matrix(`_evtmat')
+
+            * F01 (codex audit 2026-09-27): each event time is compared as a
+            * scalar taken from the matrix, never through a macro. A local
+            * holds the time's decimal expansion, which can round above the
+            * stored double and drop the failing subject from its own risk
+            * set: the variance was inflated, or its only term skipped (SE 0).
+            local _n_evt = rowsof(`_evtmat')
+            tempname _evt_t _nrisk
+            matrix `_nrisk' = J(`_n_evt', 1, .)
+            forvalues k = 1/`_n_evt' {
+                scalar `_evt_t' = `_evtmat'[`k',1]
+                if "`st_id'" != "" {
+                    qui egen byte `_risk_tag' = tag(`st_id') ///
+                        if _t0 < scalar(`_evt_t') & _t >= scalar(`_evt_t')
+                    qui summarize `_st_weight' if `_risk_tag', meanonly
+                    * drop clears r(): read the count first. It was read after
+                    * the drop, so every stset id() RMST had a missing SE.
+                    matrix `_nrisk'[`k',1] = r(sum)
+                    drop `_risk_tag'
+                }
+                else {
+                    qui summarize `_st_weight' ///
+                        if _t0 < scalar(`_evt_t') & _t >= scalar(`_evt_t'), meanonly
+                    matrix `_nrisk'[`k',1] = r(sum)
+                }
+            }
+            * Area under the KM step function and its Greenwood-type
+            * variance (stci, rmean), from the matrices in full precision.
+            mata: _survtab_rmst_mata("`_evtmat'", "`_nrisk'", `rmst')
+            local rmst_g`g' `_rmst_area'
+            local rmst_se_g`g' = sqrt(`_rmst_var')
+            local rmst_lb_g`g' = `rmst_g`g'' - `_ci_z' * `rmst_se_g`g''
+            local rmst_ub_g`g' = `rmst_g`g'' + `_ci_z' * `rmst_se_g`g''
+
+            restore
+        }
+        if `has_by' & `n_groups' == 2 {
+            local rmst_diff = `rmst_g1' - `rmst_g2'
+            local rmst_diff_se = .
+            local rmst_diff_lb = .
+            local rmst_diff_ub = .
+            local rmst_diff_p  = .
+            * Between-group RMST difference: independent-group variance
+            * (groups are disjoint), Wald CI and two-sided p-value.
+            if !missing(`rmst_se_g1') & !missing(`rmst_se_g2') {
+                local rmst_diff_se = sqrt(`rmst_se_g1'^2 + `rmst_se_g2'^2)
+                if `rmst_diff_se' > 0 & !missing(`rmst_diff_se') {
+                    local rmst_diff_lb = `rmst_diff' - `_ci_z' * `rmst_diff_se'
+                    local rmst_diff_ub = `rmst_diff' + `_ci_z' * `rmst_diff_se'
+                    local rmst_diff_p  = 2 * normal(-abs(`rmst_diff' / `rmst_diff_se'))
+                }
+            }
+        }
+    }
+
+**# Build Output Dataset
+    preserve
+    clear
+
+    * Determine number of columns
+    local ncols = 1 + `n_groups'
+    if "`difference'" != "" & `n_groups' == 2 local ncols = `ncols' + 1
+    if `has_by' local ncols = `ncols' + 1
+
+    * Generate string columns
+    forvalues c = 1/`ncols' {
+        qui gen str244 c`c' = ""
+    }
+    qui gen str244 title = ""
+
+    * Row counter
+    local row 0
+
+    * Row 1: Title
+    local row = `row' + 1
+    qui set obs `row'
+    qui replace title = `"`macval(title)'"' in `row'
+
+    * Row 2: Column headers
+    local row = `row' + 1
+    qui set obs `row'
+    qui replace c1 = "" in `row'
+    forvalues g = 1/`n_groups' {
+        local col = 1 + `g'
+        qui replace c`col' = `"`macval(glabel_`g')' (N=`=ustrregexra(string(`gn_`g'', "%15.0fc"), "-(?=[0.,]+\z)", "")')"' in `row'
+    }
+    local _diff_col = 0
+    local _p_col = 0
+    if "`difference'" != "" & `n_groups' == 2 {
+        local _diff_col = `n_groups' + 2
+        * Name the direction in the header. The contrast is group 1 minus group
+        * 2 -- the first and second by() columns as displayed -- and a bare
+        * "Difference" left a sign-sensitive published number ambiguous.
+        qui replace c`_diff_col' = `"Difference (`macval(glabel_1)' - `macval(glabel_2)')"' in `row'
+    }
+    if `has_by' {
+        local _p_col = `ncols'
+        qui replace c`_p_col' = "p" in `row'
+    }
+
+    * Median survival rows
+    if "`median'" != "" {
+        local row = `row' + 1
+        qui set obs `row'
+        qui replace c1 = "Median survival, `tu_short'" in `row'
+        forvalues g = 1/`n_groups' {
+            local col = 1 + `g'
+            if !missing(`med_g`g'') {
+                qui replace c`col' = strtrim(ustrregexra(string(`med_g`g'', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) in `row'
+            }
+            else {
+                qui replace c`col' = "NR" in `row'
+            }
+        }
+        * Difference for median
+        if "`difference'" != "" & `n_groups' == 2 {
+            if !missing(`med_g1') & !missing(`med_g2') {
+                local _md = `med_g1' - `med_g2'
+                qui replace c`_diff_col' = strtrim(ustrregexra(string(`_md', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) in `row'
+            }
+        }
+
+        * CI row for median
+        local row = `row' + 1
+        qui set obs `row'
+        qui replace c1 = "  (`_level_txt'% CI)" in `row'
+        forvalues g = 1/`n_groups' {
+            local col = 1 + `g'
+            * A bound the survivor function never crosses is "not reached" (NR),
+            * as stci reports it missing. Dropping the whole cell would discard
+            * a finite lower limit that is reportable.
+            if !missing(`med_lo_g`g'') | !missing(`med_hi_g`g'') {
+                local _mlo "NR"
+                local _mhi "NR"
+                if !missing(`med_lo_g`g'') local _mlo = strtrim(ustrregexra(string(`med_lo_g`g'', "%21.`digits'f"), "-(?=[0.,]+\z)", ""))
+                if !missing(`med_hi_g`g'') local _mhi = strtrim(ustrregexra(string(`med_hi_g`g'', "%21.`digits'f"), "-(?=[0.,]+\z)", ""))
+                qui replace c`col' = "(`_mlo', `_mhi')" in `row'
+            }
+        }
+    }
+
+    * Events / N row
+    if "`events'" != "" {
+        local row = `row' + 1
+        qui set obs `row'
+        qui replace c1 = "Events / N" in `row'
+        forvalues g = 1/`n_groups' {
+            local col = 1 + `g'
+            qui replace c`col' = ustrregexra(string(`events_g`g'', "%11.0fc"), "-(?=[0.,]+\z)", "") + " / " + ustrregexra(string(`atrisk_g`g'', "%11.0fc"), "-(?=[0.,]+\z)", "") in `row'
+        }
+    }
+
+    * Survival probability header
+    local row = `row' + 1
+    qui set obs `row'
+    local _prob_label = cond("`reverse'" != "", "Cumulative incidence", "Survival probability")
+    qui replace c1 = `"`_prob_label'"' in `row'
+
+    * Survival probability rows at each timepoint
+    forvalues t = 1/`n_times' {
+        local _time : word `t' of `times'
+        local row = `row' + 1
+        qui set obs `row'
+        * Time label
+        if `_time' == 1 {
+            qui replace c1 = "  `_time' `tu_short'" in `row'
+        }
+        else {
+            qui replace c1 = "  `_time' `timeunit'" in `row'
+        }
+
+        forvalues g = 1/`n_groups' {
+            local col = 1 + `g'
+            local _s = `surv_g`g'_t`t''
+            if !missing(`_s') {
+                if "`reverse'" != "" local _s = 1 - `_s'
+                _tabtools_fmt_pct, value(`_s' * 100) format(%21.`digits'f)
+                qui replace c`col' = strtrim(`"`r(text)'"') + "%" in `row'
+            }
+        }
+
+        * Difference column
+        if "`difference'" != "" & `n_groups' == 2 {
+            local _s1 = `surv_g1_t`t''
+            local _s2 = `surv_g2_t`t''
+            local _se1 = `se_g1_t`t''
+            local _se2 = `se_g2_t`t''
+            if !missing(`_s1') & !missing(`_s2') {
+                if "`reverse'" != "" {
+                    local _d = (1 - `_s1') - (1 - `_s2')
+                }
+                else {
+                    local _d = (`_s1' - `_s2')
+                }
+                local _d_pct = `_d' * 100
+                * SE of difference (independent groups)
+                if !missing(`_se1') & !missing(`_se2') {
+                    local _se_d = sqrt(`_se1'^2 + `_se2'^2) * 100
+                    local _lo = `_d_pct' - `_ci_z' * `_se_d'
+                    local _hi = `_d_pct' + `_ci_z' * `_se_d'
+                    qui replace c`_diff_col' = strtrim(ustrregexra(string(`_d_pct', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + " (" + strtrim(ustrregexra(string(`_lo', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + ", " + strtrim(ustrregexra(string(`_hi', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + ")" in `row'
+                }
+                else {
+                    qui replace c`_diff_col' = strtrim(ustrregexra(string(`_d_pct', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) in `row'
+                }
+            }
+        }
+    }
+
+    * RMST rows
+    if `has_rmst' {
+        local row = `row' + 1
+        qui set obs `row'
+        local _rmst_str = cond(mod(`rmst', 1) == 0, ustrregexra(string(`rmst', "%3.0f"), "-(?=[0.,]+\z)", ""), ustrregexra(string(`rmst', "%5.1f"), "-(?=[0.,]+\z)", ""))
+        qui replace c1 = "RMST (`_rmst_str'-`tu_short'), `tu_short' (`_level_txt'% CI)" in `row'
+        forvalues g = 1/`n_groups' {
+            local col = 1 + `g'
+            if !missing(`rmst_g`g'') {
+                if !missing(`rmst_lb_g`g'') & !missing(`rmst_ub_g`g'') {
+                    qui replace c`col' = strtrim(ustrregexra(string(`rmst_g`g'', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) + ///
+                        " (" + strtrim(ustrregexra(string(`rmst_lb_g`g'', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) + ///
+                        ", " + strtrim(ustrregexra(string(`rmst_ub_g`g'', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) + ")" in `row'
+                }
+                else {
+                    qui replace c`col' = strtrim(ustrregexra(string(`rmst_g`g'', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) in `row'
+                }
+            }
+        }
+        if "`difference'" != "" & `n_groups' == 2 & !missing(`rmst_diff') {
+            if !missing(`rmst_diff_lb') & !missing(`rmst_diff_ub') {
+                qui replace c`_diff_col' = strtrim(ustrregexra(string(`rmst_diff', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) + ///
+                    " (" + strtrim(ustrregexra(string(`rmst_diff_lb', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) + ///
+                    ", " + strtrim(ustrregexra(string(`rmst_diff_ub', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) + ")" in `row'
+            }
+            else {
+                qui replace c`_diff_col' = strtrim(ustrregexra(string(`rmst_diff', "%21.`=`digits'+1'f"), "-(?=[0.,]+\z)", "")) in `row'
+            }
+        }
+    }
+
+    * Number at risk rows
+    if "`riskset'" != "" {
+        local row = `row' + 1
+        qui set obs `row'
+        qui replace c1 = "Number at risk" in `row'
+
+        forvalues t = 1/`n_times' {
+            local _time : word `t' of `times'
+            local row = `row' + 1
+            qui set obs `row'
+            if `_time' == 1 {
+                qui replace c1 = "  `_time' `tu_short'" in `row'
+            }
+            else {
+                qui replace c1 = "  `_time' `timeunit'" in `row'
+            }
+            forvalues g = 1/`n_groups' {
+                local col = 1 + `g'
+                qui replace c`col' = ustrregexra(string(`nrisk_g`g'_t`t'', "%11.0fc"), "-(?=[0.,]+\z)", "") in `row'
+            }
+        }
+    }
+
+    * Log-rank test row
+    if `has_by' & !missing(`logrank_p') {
+        local row = `row' + 1
+        qui set obs `row'
+        local _logrank_row = `row'
+        local _lr_chi2_str = ustrregexra(string(`logrank_chi2', "%6.2f"), "-(?=[0.,]+\z)", "")
+        local _pmin = 10^(-`pdp')
+        local _pfmt_lo = "%`=`pdp'+2'.`pdp'f"
+        local _pfmt_hi = "%`=`highpdp'+2'.`highpdp'f"
+        if `logrank_p' < `_pmin' {
+            local _lr_p_str = "<" + ustrregexra(string(`_pmin', "`_pfmt_lo'"), "-(?=[0.,]+\z)", "")
+        }
+        else if `logrank_p' < 0.10 {
+            local _lr_p_str = ustrregexra(string(`logrank_p', "`_pfmt_lo'"), "-(?=[0.,]+\z)", "")
+        }
+        else {
+            local _lr_p_str = ustrregexra(string(`logrank_p', "`_pfmt_hi'"), "-(?=[0.,]+\z)", "")
+        }
+        * A truncated p-value already carries its own operator, so the sentence
+        * has to change operator too: "p = <0.001" is not a sentence. The cell
+        * form (_lr_p_str) keeps the "<" prefix; the prose form splits it into
+        * an operator and a value.
+        local _lr_p_phrase `"p = `_lr_p_str'"'
+        if substr("`_lr_p_str'", 1, 1) == "<" {
+            local _lr_p_phrase `"p < `=substr("`_lr_p_str'", 2, .)'"'
+        }
+        else if substr("`_lr_p_str'", 1, 1) == ">" {
+            local _lr_p_phrase `"p > `=substr("`_lr_p_str'", 2, .)'"'
+        }
+        qui replace c1 = "Log-rank test: chi2(`=ustrregexra(string(`logrank_df',"%1.0f"), "-(?=[0.,]+\z)", "")') = `_lr_chi2_str', `_lr_p_phrase'" in `row'
+
+        * Write p-value in the p column on the first data row (row 3)
+        if `_p_col' > 0 {
+            qui replace c`_p_col' = `"`_lr_p_str'"' in 3
+        }
+    }
+    else if `has_by' & `_logrank_nofail' {
+        local row = `row' + 1
+        qui set obs `row'
+        local _logrank_row = `row'
+        qui replace c1 = "Log-rank test not possible: no failures in the analysis sample" in `row'
+    }
+
+    * =========================================================================
+    * ADD CUSTOM ROWS (addrow option)
+    * =========================================================================
+    if `"`addrow'"' != "" {
+        local _ar_rest `"`addrow'"'
+        while `"`_ar_rest'"' != "" {
+            local _bs_pos = strpos(`"`_ar_rest'"', "\")
+            if `_bs_pos' > 0 {
+                local _ar_chunk = substr(`"`_ar_rest'"', 1, `_bs_pos' - 1)
+                local _ar_rest = substr(`"`_ar_rest'"', `_bs_pos' + 1, .)
+            }
+            else {
+                local _ar_chunk `"`_ar_rest'"'
+                local _ar_rest ""
+            }
+            local _ar_chunk = strtrim(`"`_ar_chunk'"')
+            if `"`_ar_chunk'"' == "" continue
+
+            gettoken _ar_label _ar_vals : _ar_chunk
+            local _ar_label : subinstr local _ar_label `"""' "", all
+
+            local curr_n = _N
+            qui set obs `=`curr_n'+1'
+            qui replace c1 = `"`_ar_label'"' in `=`curr_n'+1'
+
+            local _ar_c = 1
+            local _ar_vals = strtrim(`"`_ar_vals'"')
+            while `"`_ar_vals'"' != "" {
+                gettoken _ar_v _ar_vals : _ar_vals
+                local _ar_c = `_ar_c' + 1
+                if `_ar_c' <= `ncols' {
+                    qui replace c`_ar_c' = `"`_ar_v'"' in `=`curr_n'+1'
+                }
+            }
+        }
+    }
+
+    local num_rows = _N
+    local _header_row = 2
+    local _data_start = `_header_row' + 1
+    local _p_value_row = 3
+
+**# Build Return Matrix
+    * Build r(table): rows = timepoints, cols = groups (survival estimates)
+    tempname _rtable
+    matrix `_rtable' = J(`n_times', `n_groups', .)
+    forvalues t = 1/`n_times' {
+        forvalues g = 1/`n_groups' {
+            local _s = `surv_g`g'_t`t''
+            if !missing(`_s') {
+                if "`reverse'" != "" local _s = 1 - `_s'
+                matrix `_rtable'[`t', `g'] = `_s'
+            }
+        }
+    }
+    local _rnames ""
+    forvalues t = 1/`n_times' {
+        local _time : word `t' of `times'
+        local _rnames `"`_rnames' t`_time'"'
+    }
+    local _cnames ""
+    local _used_cnames ""
+    forvalues g = 1/`n_groups' {
+        * C1: built in Mata from the literal label. strtoname() keeps a
+        * backtick, so the name is also cleared of macro characters
+        * (backtick, apostrophe, dollar, double quote) before it is used.
+        mata: st_local("_cname", substr(subinstr(subinstr(subinstr(subinstr( ///
+            strtoname(st_local("glabel_`g'")), char(96), "_"), char(39), "_"), ///
+            char(36), "_"), char(34), "_"), 1, 32))
+        if `"`_cname'"' == "" | strtrim(subinstr(`"`_cname'"', "_", "", .)) == "" {
+            local _cname "group`g'"
+        }
+        local _base_cname `"`_cname'"'
+        local _cname_i = 1
+        while strpos(" `_used_cnames' ", " `_cname' ") {
+            local ++_cname_i
+            local _suffix "_`_cname_i'"
+            local _stem_len = 32 - strlen("`_suffix'")
+            local _cname = substr(`"`_base_cname'"', 1, `_stem_len')
+            local _cname `"`_cname'`_suffix'"'
+        }
+        local _used_cnames `"`_used_cnames' `_cname'"'
+        local _cnames `"`_cnames' `_cname'"'
+    }
+    matrix rownames `_rtable' = `_rnames'
+    matrix colnames `_rtable' = `_cnames'
+
+**# Console Display
+    noisily _tabtools_console_display `ncols' `"`macval(title)'"'
+    if "`reverse'" != "" {
+        noisily display as text "Note: reverse reports 1 - Kaplan-Meier, which equals the cumulative"
+        noisily display as text "      incidence only with a single event type (no competing risks). With"
+        noisily display as text "      competing events, 1 - KM overestimates absolute risk; use a"
+        noisily display as text "      competing-risks estimator instead (Aalen-Johansen: stcompet, stcrreg,"
+        noisily display as text "      or the finegray package)."
+    }
+    if `"`macval(_beyond)'"' != "" {
+        noisily display as text "Note: times beyond the last observed follow-up of a group repeat the final"
+        noisily display as text "      Kaplan-Meier estimate and are not supported by the data:"
+        noisily display as text `"      `macval(_beyond)'"'
+        * Exported tables carry the same caveat, since a reader of the file
+        * never sees the console note.
+        local _beyond_fn `"Times beyond a group's last follow-up repeat the final Kaplan-Meier estimate and are not supported by the data: `macval(_beyond)'."'
+        if `"`macval(footnote)'"' == "" local footnote : copy local _beyond_fn
+        else {
+            * a user footnote that does not end a sentence is closed first
+            mata: st_local("_fn_end", strofreal(ustrregexm(strtrim(st_local("footnote")), "[.!?]$")))
+            if `_fn_end' local footnote `"`macval(footnote)' `macval(_beyond_fn)'"'
+            else local footnote `"`macval(footnote)'. `macval(_beyond_fn)'"'
+        }
+    }
+
+**# CSV Export
+    if "`csv'" != "" {
+        _tabtools_csv_write using "`csv'", reservedrow title(`"`macval(title)'"') footnote(`"`macval(footnote)'"')
+        capture confirm file "`csv'"
+        if _rc {
+            noisily display as error "CSV export command succeeded but file not found"
+            exit 601
+        }
+        noisily display as text "CSV exported to `csv'"
+    }
+
+    local _ret_markdown ""
+    local _ret_markdown_rows .
+    local _ret_markdown_cols .
+    if `"`markdown'"' != "" {
+        local _mdappend_opt ""
+        if "`mdappend'" != "" local _mdappend_opt "append"
+        capture noisily _tabtools_markdown_write using `"`markdown'"', ///
+            `_mdappend_opt' title(`"`macval(title)'"') footnote(`"`macval(footnote)'"') strictheaders
+        if _rc {
+            local _md_rc = _rc
+            noisily display as error "Failed to export Markdown to `markdown'"
+            restore
+            exit `_md_rc'
+        }
+        local _ret_markdown `"`markdown'"'
+        local _ret_markdown_rows = r(n_rows)
+        local _ret_markdown_cols = r(n_cols)
+        noisily display as text "Markdown exported to `markdown'"
+    }
+
+**# Frame Output
+    if `"`frame'"' != "" {
+        _tabtools_frame_put `"`frame'"'
+        local frame `"`_frame_name'"'
+        frame `frame': char _dta[tabtools_ci_level] "`_level_txt'"
+        frame `frame': char _dta[tabtools_source] "survtab"
+    }
+
+**# Return Results
+    return matrix table = `_rtable'
+    return scalar N_rows = `num_rows'
+    if "`median'" != "" {
+        forvalues g = 1/`n_groups' {
+            return scalar median_`g' = `med_g`g''
+        }
+    }
+    if "`events'" != "" {
+        forvalues g = 1/`n_groups' {
+            return scalar events_`g' = `events_g`g''
+            return scalar atrisk_`g' = `atrisk_g`g''
+        }
+    }
+    if `has_by' {
+        return scalar logrank_p = `logrank_p'
+        return scalar logrank_chi2 = `logrank_chi2'
+    }
+    * Group identity. Without this the per-group scalars (rmst_1, median_2, ...)
+    * could not be mapped back to the by() values they came from, which matters
+    * because the RMST contrast below is sign-sensitive publication output.
+    if `has_by' {
+        return local by_var "`by'"
+        return scalar n_groups = `n_groups'
+        forvalues g = 1/`n_groups' {
+            return local group_`g'_value `"`glevel_`g''"'
+            return local group_`g'_label `"`macval(glabel_`g')'"'
+        }
+    }
+    if `has_rmst' {
+        forvalues g = 1/`n_groups' {
+            return scalar rmst_`g' = `rmst_g`g''
+            return scalar rmst_se_`g' = `rmst_se_g`g''
+            return scalar rmst_lb_`g' = `rmst_lb_g`g''
+            return scalar rmst_ub_`g' = `rmst_ub_g`g''
+        }
+        if `has_by' & `n_groups' == 2 {
+            return scalar rmst_diff = `rmst_diff'
+        }
+        if `has_by' & `n_groups' == 2 {
+            return scalar rmst_diff_se = `rmst_diff_se'
+            return scalar rmst_diff_lb = `rmst_diff_lb'
+            return scalar rmst_diff_ub = `rmst_diff_ub'
+            return scalar rmst_diff_p  = `rmst_diff_p'
+        }
+    }
+    if "`frame'" != "" return local frame "`frame'"
+    if `"`macval(_beyond)'"' != "" {
+        return local beyond_support `"`macval(_beyond)'"'
+    }
+
+    * Build methods paragraph
+    local _methods `"Survival was estimated using the Kaplan-Meier method."'
+    if `_st_weighted' {
+        local _methods `"`macval(_methods)' Frequency weights from stset were treated with replication semantics for counts and Greenwood RMST variance."'
+    }
+    if "`reverse'" != "" {
+        local _methods `"`macval(_methods)' Cumulative incidence is reported as 1 minus the Kaplan-Meier survival estimate, which is valid only in the absence of competing risks; with competing events a competing-risks estimator (Aalen-Johansen) should be used instead."'
+    }
+    if `has_by' & !`_logrank_nofail' {
+        local _methods `"`macval(_methods)' Groups were compared using the log-rank test."'
+    }
+    else if `has_by' {
+        local _methods `"`macval(_methods)' There were no failures in the analysis sample, so the groups were not compared with the log-rank test."'
+    }
+    if "`median'" != "" {
+        local _methods `"`macval(_methods)' Median survival time with `_level_txt'% confidence intervals is reported."'
+    }
+    if `has_rmst' {
+        local _rmst_mstr = cond(mod(`rmst', 1) == 0, ustrregexra(string(`rmst', "%3.0f"), "-(?=[0.,]+\z)", ""), ustrregexra(string(`rmst', "%5.1f"), "-(?=[0.,]+\z)", ""))
+        local _methods `"`macval(_methods)' Restricted mean survival time was computed up to `_rmst_mstr' `timeunit' with `_level_txt'% confidence intervals based on the Greenwood variance formula."'
+        if "`difference'" != "" & `has_by' & `n_groups' == 2 {
+            local _methods `"`macval(_methods)' The between-group RMST difference is reported as `macval(glabel_1)' minus `macval(glabel_2)' (the first minus the second by() group in ascending order of `by'), with a `_level_txt'% confidence interval and two-sided Wald p-value based on the independent-group variance."'
+        }
+    }
+    local _methods `"`macval(_methods)' Analysis performed in Stata `c(stata_version)' (StataCorp, College Station, TX)."'
+    return local methods `"`macval(_methods)'"'
+
+**# Excel Export
+    local num_cols = `ncols' + 1
+    local _xlsx_ok 0
+    if `_has_xlsx' {
+        order title c*
+        capture noisily _tabtools_xlsx_write using "`xlsx'", sheet(`"`macval(sheet)'"') book(`_xlsx_book')
+        if _rc {
+            local _export_rc = _rc
+            noisily display as error "Failed to export to `xlsx'"
+            restore
+            exit `_export_rc'
+        }
+
+        * Apply formatting through the shared rule backend.
+        capture {  // stata-dev-ignore: capture-rc — _rc is tested at the closing brace of this block, beyond the lint look-ahead window
+            local _hborder_code = 1
+            if "`_hborder'" == "medium" local _hborder_code = 2
+            if "`_hborder'" == "thick" local _hborder_code = 3
+            if "`_hborder'" == "none" local _hborder_code = 4
+
+            tempname _style_rules
+            matrix `_style_rules' = (13, 1, 1, 1, 1, 1, 0, 0, 0)
+            matrix `_style_rules' = `_style_rules' \ ///
+                (13, 1, 1, 2, 2, 22, 0, 0, 0)
+            forvalues _wc = 3/`num_cols' {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (13, 1, 1, `_wc', `_wc', 18, 0, 0, 0)
+            }
+
+            matrix `_style_rules' = `_style_rules' \ ///
+                (1, 1, `num_rows', 1, `num_cols', `_fontsize', 1, 0, 0) \ ///
+                (1, 1, 1, 1, `num_cols', `=`_fontsize'+2', 1, 0, 0) \ ///
+                (14, 1, 1, 1, `num_cols', 0, 0, 0, 0) \ ///
+                (2, 1, 1, 1, 1, 0, 1, 0, 0) \ ///
+                (4, 1, 1, 1, 1, 0, 1, 0, 0) \ ///
+                (5, 1, 1, 1, 1, 0, 1, 0, 0) \ ///
+                (6, 1, 1, 1, 1, 0, 2, 0, 0) \ ///
+                (8, `_header_row', `_header_row', 2, `num_cols', 0, `_hborder_code', 0, 0) \ ///
+                (9, `_header_row', `_header_row', 2, `num_cols', 0, `_hborder_code', 0, 0) \ ///
+                (2, `_header_row', `_header_row', 2, `num_cols', 0, 1, 0, 0) \ ///
+                (5, `_header_row', `_header_row', 2, `num_cols', 0, 2, 0, 0)
+            if "`headershade'" != "" {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (7, `_header_row', `_header_row', 2, `num_cols', 0, -1, 0, 0)
+            }
+            if `num_rows' >= `_data_start' & `num_cols' >= 3 {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (5, `_data_start', `num_rows', 3, `num_cols', 0, 2, 0, 0)
+            }
+            matrix `_style_rules' = `_style_rules' \ ///
+                (9, `num_rows', `num_rows', 2, `num_cols', 0, `_hborder_code', 0, 0)
+            * Non-academic styles box the table body and close the row-label
+            * column, as regtab/desctab/stratetab do; academic keeps horizontal
+            * rules only.
+            if "`borderstyle'" != "academic" {
+                local _vborder_code = cond("`borderstyle'" == "medium", 2, 1)
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (10, `_header_row', `num_rows', 2, 2, 0, `_vborder_code', 0, 0) \ ///
+                    (11, `_header_row', `num_rows', `num_cols', `num_cols', 0, `_vborder_code', 0, 0) \ ///
+                    (11, `_header_row', `num_rows', 2, 2, 0, `_vborder_code', 0, 0)
+            }
+            if "`zebra'" != "" {
+                forvalues _zr = `=`_data_start'+1'(2)`num_rows' {
+                    matrix `_style_rules' = `_style_rules' \ ///
+                        (7, `_zr', `_zr', 2, `num_cols', 0, -2, 0, 0)
+                }
+            }
+            if `has_boldp' & `has_by' & !missing(`logrank_p') & `logrank_p' < `boldp' {
+                if `_p_col' > 0 {
+                    local _excel_p_col = `_p_col' + 1
+                    matrix `_style_rules' = `_style_rules' \ ///
+                        (2, `_p_value_row', `_p_value_row', `_excel_p_col', `_excel_p_col', 0, 1, 0, 0)
+                }
+                if `_logrank_row' > 0 {
+                    matrix `_style_rules' = `_style_rules' \ ///
+                        (2, `_logrank_row', `_logrank_row', 2, `num_cols', 0, 1, 0, 0)
+                }
+            }
+            if `has_highlight' & `has_by' & !missing(`logrank_p') & `logrank_p' < `highlight' & `_logrank_row' > 0 {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (7, `_logrank_row', `_logrank_row', 2, `num_cols', 0, -3, 0, 0)
+            }
+            if `_logrank_row' > 0 {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (14, `_logrank_row', `_logrank_row', 2, `num_cols', 0, 0, 0, 0) \ ///
+                    (5, `_logrank_row', `_logrank_row', 2, 2, 0, 1, 0, 0) \ ///
+                    (6, `_logrank_row', `_logrank_row', 2, 2, 0, 2, 0, 0)
+            }
+            if `"`macval(footnote)'"' != "" {
+                local _fn_row = `num_rows' + 1
+                local _fn_fontsize = max(`_fontsize' - 2, 6)
+                mata: `_xlsx_book'.put_string(`_fn_row', 2, st_local("footnote"))
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (14, `_fn_row', `_fn_row', 2, `num_cols', 0, 0, 0, 0) \ ///
+                    (5, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0) \ ///
+                    (6, `_fn_row', `_fn_row', 2, 2, 0, 2, 0, 0) \ ///
+                    (4, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0) \ ///
+                    (1, `_fn_row', `_fn_row', 2, 2, `_fn_fontsize', 1, 0, 0) \ ///
+                    (3, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0)
+            }
+
+            _tabtools_xlsx_apply_styles, defer book(`_xlsx_book') sheet(`"`macval(sheet)'"') ///
+                rules(`_style_rules') font("`_font'") ///
+                color1("`_headercolor'") color2("`_zebracolor'") ///
+                color3("255 255 204")
+            mata: `_xlsx_book'.close_book()
+
+            * xl() appends a style record for every styled cell instead of
+            * reusing one per distinct format, so collapse the pools here;
+            * a workbook that keeps growing would otherwise reach Stata's
+            * 65,536-record ceiling and fail with r(16147).
+            _tabtools_xlsx_compact_styles using "`xlsx'"
+        }
+        if _rc {
+            local saved_rc = _rc
+            capture mata: `_xlsx_book'.close_book()  // stata-dev-ignore: capture-rc — error-path teardown of the workbook handle; an already-closed handle is the expected failure
+            capture mata: mata drop `_xlsx_book'
+            noisily display as error "Excel formatting failed with error `saved_rc'"
+            exit `saved_rc'
+        }
+        capture mata: mata drop `_xlsx_book'
+
+        capture confirm file "`xlsx'"
+        if _rc {
+            noisily display as error "Export command succeeded but file not found"
+            exit 601
+        }
+        local _xlsx_ok 1
+        noisily _tabtools_export_done using `"`xlsx'"', sheet(`"`macval(sheet)'"')
+    }
+
+    restore
+
+    if `_xlsx_ok' {
+        return local xlsx "`xlsx'"
+        return local sheet `"`macval(sheet)'"'
+    }
+    return scalar ci_level = `level'
+    if "`csv'" != "" {
+        return local csv "`csv'"
+    }
+    if `"`_ret_markdown'"' != "" {
+        return local markdown `"`_ret_markdown'"'
+        return scalar markdown_rows = `_ret_markdown_rows'
+        return scalar markdown_cols = `_ret_markdown_cols'
+    }
+    if "`open'" != "" & `_xlsx_ok' _tabtools_open_file "`xlsx'"
+
+} // end capture noisily
+    local _rc = _rc
+    if `_held_estimates' {
+        capture _estimates unhold `_prior_estimates'
+        local _unhold_rc = _rc
+        if `_unhold_rc' & !`_rc' local _rc = `_unhold_rc'
+    }
+    mata: st_local("_current_e_keys", invtokens(st_dir("global", "macro", "S_E_*")'))
+    foreach _legacy of local _current_e_keys {
+        if !`: list _legacy in _legacy_keys' capture macro drop `_legacy'
+    }
+    local _legacy_i 0
+    foreach _legacy of local _legacy_keys {
+        local ++_legacy_i
+        if `_had_legacy_`_legacy_i'' {
+            capture mata: st_global(st_local("_legacy"), st_local("_old_legacy_" + st_local("_legacy_i")))
+        }
+        else capture macro drop `_legacy'
+    }
+    set varabbrev `_orig_varabbrev'
+    if `_rc' exit `_rc'
+end
+
+* F01 (codex audit 2026-09-27): RMST and its variance from the event matrix
+* E = (time, S(t), events) and the at-risk counts N, as stci, rmean does:
+* var = sum_j d_j / (n_j (n_j - d_j)) * A_j^2, A_j the area beyond t_j.
+* Results go back as %21.17g locals _rmst_area and _rmst_var.
+capture mata: mata drop _survtab_rmst_mata()
+mata:
+void _survtab_rmst_mata(string scalar ename, string scalar nname,
+    real scalar tau)
+{
+    real matrix E
+    real colvector N, dt
+    real scalar k, n, area, v, tail
+
+    E = st_matrix(ename)
+    N = st_matrix(nname)
+    n = rows(E)
+    dt = J(n, 1, 0)
+    for (k = 1; k <= n; k++) {
+        dt[k] = (k < n ? min((E[k + 1, 1], tau)) : tau) - E[k, 1]
+        if (dt[k] < 0) dt[k] = 0
+    }
+    area = min((E[1, 1], tau)) + sum(E[., 2] :* dt)
+    v = 0
+    for (k = 1; k <= n; k++) {
+        tail = sum(E[|k, 2 \ n, 2|] :* dt[|k \ n|])
+        if (E[k, 3] > 0 & N[k] > E[k, 3]) {
+            v = v + E[k, 3] / (N[k] * (N[k] - E[k, 3])) * tail^2
+        }
+    }
+    st_local("_rmst_area", ustrregexra(strofreal(area, "%21.17g"), "-(?=[0.,]+\z)", ""))
+    st_local("_rmst_var", ustrregexra(strofreal(v, "%21.17g"), "-(?=[0.,]+\z)", ""))
+}
+end

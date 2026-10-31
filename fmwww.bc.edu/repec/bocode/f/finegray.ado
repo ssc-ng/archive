@@ -1,4 +1,4 @@
-*! finegray Version 1.3.2  2026/09/08
+*! finegray Version 1.3.8  2026/10/27
 *! Fine-Gray competing risks regression
 *! Author: Timothy P Copeland, Karolinska Institutet
 *! Program class: eclass (returns results in e())
@@ -23,9 +23,15 @@ Optional options:
   noshr             - Display log-SHR instead of SHR
   level(cilevel)    - Confidence level
   strata(varlist)   - Stratify censoring distribution
+  truncstrata(varlist) - Stratify the entry distribution under delayed entry
   bstrata(varname)  - Stratify the BASELINE subdistribution hazard (shared beta)
+  tvc(varlist)      - Piecewise-constant time-varying coefficients
+  tsplit(numlist)   - Interior interval boundaries for tvc()
   cluster(varname)  - Clustered standard errors
+  noadjust          - Omit the finite-sample sandwich multiplier
   norobust          - Model-based SEs instead of default sandwich
+  nuisance          - Add the weight-estimation (psi) term to the sandwich
+  basehaz           - Store the baseline cumulative subhazard in e(basehaz)
   nolog             - Suppress iteration log
   iterate(#)        - Max iterations (default: 200)
   tolerance(#)      - Convergence tolerance (default: 1e-8)
@@ -80,6 +86,29 @@ program define finegray, eclass sortpreserve
 
     local _cmdline `"finegray `0'"'
 
+    * The engine returns through FIXED matrix names, and the cleanup below drops
+    * them on every exit.  A caller matrix of the same name was destroyed even
+    * by a syntax error, and on a successful fit a name the engine did not
+    * write this time (_finegray_nclust without cluster()) was read back into
+    * e() (audit F07, 2026-09-27).  Park each pre-existing one under a tempname
+    * and clear the name, so the fit sees only what the engine wrote; the
+    * cleanup zone puts them back, contents and stripes, on success and error.
+    local _fg_engmats _finegray_b _finegray_V _finegray_ll _finegray_ll_0 ///
+        _finegray_chi2 _finegray_df_m _finegray_conv ///
+        _finegray_rank _finegray_nclust _finegray_basehaz _finegray_basehaz_tvc ///
+        _finegray_kbstrata ///
+        _finegray_nwstrata _finegray_minprob _finegray_maxwt ///
+        _finegray_nprobwarn _finegray_nwtwarn _finegray_nprehole
+    local _fg_parked ""
+    foreach _fg_m of local _fg_engmats {
+        capture confirm matrix `_fg_m'
+        if !_rc {
+            tempname _fg_pk
+            matrix rename `_fg_m' `_fg_pk'
+            local _fg_parked `"`_fg_parked' `_fg_m' `_fg_pk'"'
+        }
+    }
+
     capture noisily {
 
     * =========================================================================
@@ -90,7 +119,7 @@ program define finegray, eclass sortpreserve
         [CENSvalue(integer 0) noSHR Level(cilevel) ///
          STRata(varlist numeric) TRUNCstrata(varlist numeric) ///
          BSTRata(varname numeric) ///
-         TVC(varlist numeric) TSPLIT(numlist ascending) ///
+         TVC(varlist numeric) TSPLIT(string) ///
          CLuster(varname numeric) noROBust ///
          noADJust noLOG BASEHaz NUISance ///
          ITERate(integer 200) TOLerance(real 1e-8)]
@@ -289,12 +318,109 @@ program define finegray, eclass sortpreserve
     local _fg_ntv = 0
     local _fg_nint = 1
     if "`tvc'" != "" {
-        * `numlist ascending' already refuses a repeated or out-of-order
-        * boundary at the syntax statement (r(124); pinned by T14 in
-        * qa/test_finegray_tvc.do).  What it does NOT enforce is positivity:
-        * tsplit(0) parses, and a boundary at or below zero would define an
-        * empty leading interval (0, 0] carrying its own unidentified
-        * coefficient.
+        * tsplit() is declared as a string and validated here, USED AS TYPED.
+        * Declared as `numlist ascending', syntax wrote back numlist's
+        * serialization, which is text rounded to nine significant digits:
+        * tsplit(.1000000000000001) reached the interval count, the engine,
+        * e(tsplit) and e(refitcmd) as .1, so the cause events AT the
+        * requested boundary -- which the (lower, upper] contract puts in the
+        * earlier interval -- were fitted in the later one, at rc 0 and with
+        * different coefficients.  numlist still validates the list and its
+        * order (a repeated or out-of-order boundary is r(124), by value;
+        * pinned by T14 in qa/test_finegray_tvc.do), but a plain-number
+        * token is kept as typed, as finegray_cif does for attime() and
+        * timepoints().
+        *
+        * Token by token.  A plain number that no range reads is kept as
+        * typed and put at its own position in numlist's expansion, which is
+        * read off the expansion of the list up to that token (numlist expands
+        * left to right, so each prefix's expansion is a prefix of the whole).
+        * A number that a RANGE reads -- any number inside a one-token range
+        * (1(1)5, 1[1]5, 1/5), and around `to' or `:' the token after it, the
+        * token before it and the list element before that, which is where
+        * `#1 #2 to #3' takes its step #2 - #1 -- reaches the members only
+        * through numlist's arithmetic and rounded serialization.  Through
+        * 1.3.7 such a list was taken from numlist whole, so tsplit(
+        * .1000000000000001 1 to 3) fitted .1 1 1.9 2.8 at rc 0 (the 1.3.6
+        * precision defect back again), and .1000000000000001(1)3 fitted
+        * .1 1.1 2.1.  Such a number must survive numlist unchanged or the
+        * list is refused: the members cannot be mapped to what was typed, and
+        * guessing is how the boundary moved in the first place.
+        capture numlist `"`tsplit'"', ascending
+        if _rc {
+            display as error "tsplit(): {bf:`tsplit'} is not a usable list of interval boundaries"
+            display as error "supply one or more positive numbers in increasing order, " ///
+                "e.g. {bf:tsplit(5 10)}"
+            exit _rc
+        }
+        local _fg_expanded `"`r(numlist)'"'
+        local _fg_raw : list retokenize tsplit
+        local _fg_ntok : word count `_fg_raw'
+        * The numbers a range reads, as typed.
+        local _fg_rng ""
+        forvalues _fg_j = 1/`_fg_ntok' {
+            local _fg_c : word `_fg_j' of `_fg_raw'
+            if inlist(`"`_fg_c'"', "to", ":") {
+                local _fg_rng `"`_fg_rng' `: word `=`_fg_j' - 1' of `_fg_raw'' `: word `=`_fg_j' + 1' of `_fg_raw''"'
+                * the element before #2: a plain token, or the last member of
+                * a range token (whose own numbers are checked below)
+                if `_fg_j' > 2 {
+                    local _fg_p : word `=`_fg_j' - 2' of `_fg_raw'
+                    if !inlist(`"`_fg_p'"', "to", ":") local _fg_rng `"`_fg_rng' `_fg_p'"'
+                }
+                continue
+            }
+            capture confirm number `_fg_c'
+            if _rc {
+                local _fg_parts = ustrregexra(`"`_fg_c'"', "[\(\)\[\]/]", " ")
+                local _fg_rng `"`_fg_rng' `_fg_parts'"'
+            }
+        }
+        foreach _fg_c of local _fg_rng {
+            capture confirm number `_fg_c'
+            if _rc continue
+            quietly numlist "`_fg_c'"
+            local _fg_s `"`r(numlist)'"'
+            if real("`_fg_s'") != real("`_fg_c'") {
+                display as error "tsplit(): a range in {bf:`tsplit'} reads {bf:`_fg_c'}, which numlist rounds to {bf:`_fg_s'}"
+                display as error "so the boundaries it generates would not be the ones typed;"
+                display as error "list the boundaries of that range one by one instead"
+                exit 198
+            }
+        }
+        * Plain numbers no range reads keep their typed text.
+        local _fg_kept `"`_fg_expanded'"'
+        local _fg_pre ""
+        forvalues _fg_j = 1/`_fg_ntok' {
+            local _fg_c : word `_fg_j' of `_fg_raw'
+            local _fg_pre `"`_fg_pre' `_fg_c'"'
+            if inlist(`"`_fg_c'"', "to", ":") continue
+            local _fg_nx : word `=`_fg_j' + 1' of `_fg_raw'
+            if inlist(`"`_fg_nx'"', "to", ":") continue
+            local _fg_pv ""
+            if `_fg_j' > 1 local _fg_pv : word `=`_fg_j' - 1' of `_fg_raw'
+            if inlist(`"`_fg_pv'"', "to", ":") continue
+            capture confirm number `_fg_c'
+            if _rc continue
+            if `_fg_j' + 2 <= `_fg_ntok' {
+                local _fg_nx2 : word `=`_fg_j' + 2' of `_fg_raw'
+                if inlist(`"`_fg_nx2'"', "to", ":") continue
+            }
+            quietly numlist `"`_fg_pre'"'
+            local _fg_pos : word count `r(numlist)'
+            local _fg_new ""
+            local _fg_k = 0
+            foreach _fg_e of local _fg_kept {
+                local ++_fg_k
+                if `_fg_k' == `_fg_pos' local _fg_new `"`_fg_new' `_fg_c'"'
+                else                    local _fg_new `"`_fg_new' `_fg_e'"'
+            }
+            local _fg_kept `"`_fg_new'"'
+        }
+        local tsplit : list retokenize _fg_kept
+        * What numlist does NOT enforce is positivity: tsplit(0) parses, and
+        * a boundary at or below zero would define an empty leading interval
+        * (0, 0] carrying its own unidentified coefficient.
         local _fg_ncut : word count `tsplit'
         local _fg_nint = `_fg_ncut' + 1
         foreach _fg_c of local tsplit {
@@ -399,7 +525,16 @@ program define finegray, eclass sortpreserve
     * =========================================================================
     * MARK SAMPLE
     * =========================================================================
+    * The weight is withheld from `marksample' and applied after the last
+    * markout and the _st filter (DESIGN WEIGHTS: SCOPE TO THE SAMPLE, below).
+    * marksample judges a weight on every row that passes if/in, so a negative
+    * pweight (r(402)) or fractional fweight (r(401)) on a row that a missing
+    * covariate, strata(), cluster() or stset excludes refused the whole fit,
+    * while the same row excluded by the command's own if was accepted.
+    local _fg_wsave "`weight'"
+    local weight ""
     marksample touse
+    local weight "`_fg_wsave'"
     * NOTE: compete() is deliberately NOT passed to `markout'.  It is the
     * outcome classification, not a covariate, and an unknown event type is
     * refused below rather than dropped.  See "compete() MUST BE OBSERVED".
@@ -412,35 +547,6 @@ program define finegray, eclass sortpreserve
     * pre-engine sort total, so the same data always yields the same estimates.
     tempvar _fg_row0
     quietly gen long `_fg_row0' = _n
-
-    * =========================================================================
-    * DESIGN WEIGHTS: MATERIALISE
-    * =========================================================================
-    * `marksample' has already dropped zero and missing weights from `touse'
-    * and refused a negative one (r(402)).  The expression is evaluated ONCE,
-    * here, into a package-owned column the engine reads; post-estimation
-    * re-evaluates e(wexp) on the data it sees, and the variables the
-    * expression names are put into the estimation-data signature below so a
-    * changed weight makes every post-estimation command fail rather than
-    * answer under different weights.
-    *   _fg_wtype  0 none, 1 pweight, 2 fweight -- the engine's code
-    local _fg_w ""
-    local _fg_wtype = 0
-    if "`weight'" != "" {
-        tempvar _fg_w
-        quietly generate double `_fg_w' `exp' if `touse'
-        if "`weight'" == "fweight" {
-            local _fg_wtype = 2
-            * Stata's own contract for frequency weights; `syntax' does not
-            * enforce it, and a fractional replication count has no meaning.
-            capture assert `_fg_w' == int(`_fg_w') if `touse'
-            if _rc {
-                display as error "may not use noninteger frequency weights"
-                exit 401
-            }
-        }
-        else local _fg_wtype = 1
-    }
 
     * Save original varlist before FV expansion (for e(fvvarlist))
     local _orig_varlist "`varlist'"
@@ -542,6 +648,43 @@ program define finegray, eclass sortpreserve
     if "`cluster'" != "" markout `touse' `cluster'
 
     quietly replace `touse' = 0 if _st != 1
+
+    * =========================================================================
+    * DESIGN WEIGHTS: MATERIALISE AND SCOPE TO THE SAMPLE
+    * =========================================================================
+    * The expression is evaluated ONCE, here, into a package-owned column the
+    * engine reads; post-estimation re-evaluates e(wexp) on the data it sees,
+    * and the variables the expression names are put into the estimation-data
+    * signature above so a changed weight makes every post-estimation command
+    * fail rather than answer under different weights.
+    *   _fg_wtype  0 none, 1 pweight, 2 fweight -- the engine's code
+    * Placed after every markout and the _st filter, so only a row that would
+    * otherwise be fit is judged: the r(402)/r(401) refusals, then marksample's
+    * own rule that zero and missing weights leave the sample.
+    local _fg_w ""
+    local _fg_wtype = 0
+    if "`weight'" != "" {
+        tempvar _fg_w
+        quietly generate double `_fg_w' `exp' if `touse'
+        capture assert `_fg_w' >= 0 if `touse' & !missing(`_fg_w')
+        if _rc {
+            display as error "negative weights encountered"
+            exit 402
+        }
+        if "`weight'" == "fweight" {
+            local _fg_wtype = 2
+            * Stata's own contract for frequency weights; `syntax' does not
+            * enforce it, and a fractional replication count has no meaning.
+            capture assert `_fg_w' == int(`_fg_w') if `touse' & !missing(`_fg_w')
+            if _rc {
+                display as error "may not use noninteger frequency weights"
+                exit 401
+            }
+        }
+        else local _fg_wtype = 1
+        quietly replace `touse' = 0 if missing(`_fg_w') | `_fg_w' == 0
+    }
+
 
     * =========================================================================
     * compete() MUST BE OBSERVED ON EVERY ESTIMATION-SAMPLE RECORD
@@ -1026,12 +1169,16 @@ program define finegray, eclass sortpreserve
     * counts alone: e(N) is the number of subjects, as in every official
     * pweight estimator.  e(sum_w) carries the weight total either way.
     local _fg_Nrep = `N'
-    local _fg_sumw = .
+    * The weight total travels in a scalar, not a macro: no text round-trip
+    * can drop its last bit, and a subnormal total (pweight*1e-318) prints in
+    * %21x as +0.0...X-3ff, which Stata cannot read back as a literal.
+    tempname _fg_sumw
+    scalar `_fg_sumw' = .
     local _fg_wsig ""
     local _fg_wsig_n = 0
     if "`weight'" != "" {
         quietly summarize `_fg_w' if `touse', meanonly
-        local _fg_sumw = r(sum)
+        scalar `_fg_sumw' = r(sum)
         if "`weight'" == "fweight" {
             local _fg_Nrep = r(sum)
             quietly summarize `_fg_w' if `compete' == `cause' & `touse', meanonly
@@ -1097,11 +1244,11 @@ program define finegray, eclass sortpreserve
     local _prev_owner `"`_dta[_finegray_owner]'"'
     local _fg_owner_tok ""
     if !`_fg_is_mi' {
-        capture confirm number $finegray_bh_ctr
+        capture confirm number $finegray_bh_ctr // stata-dev-ignore: globals - session salt counter; must outlive mata clear (see bh_key note)
         if _rc global finegray_bh_ctr = 0
-        global finegray_bh_ctr = $finegray_bh_ctr + 1
+        global finegray_bh_ctr = $finegray_bh_ctr + 1 // stata-dev-ignore: globals - session salt counter; must outlive mata clear (see bh_key note)
         local _fg_owner_tok = "fg" + string(clock("`c(current_date)' `c(current_time)'", ///
-            "DMYhms"), "%21x") + "." + "$finegray_bh_ctr"
+            "DMYhms"), "%21x") + "." + "$finegray_bh_ctr" // stata-dev-ignore: globals - session salt counter; must outlive mata clear (see bh_key note)
     }
 
     local _prev_estimated `"`_dta[_finegray_estimated]'"'
@@ -1113,8 +1260,9 @@ program define finegray, eclass sortpreserve
     * =========================================================================
     * The _fg_<term> names this run will write are derived HERE so that the
     * ownership adjudication below can probe them, and so that the refusals the
-    * derivation itself raises -- an unsupported factor-variable operator and a
-    * 32-character truncation collision -- happen before the entry column is
+    * derivation itself raises -- an unsupported factor-variable operator, and
+    * (unreachable since names are tagged) a name with no unique 32-character
+    * form -- happen before the entry column is
     * rewritten, before the _dta[_finegray_*] characteristics are blanked and
     * before a prior run's columns are dropped.  Deriving them inside the
     * creation loop further down meant those refusals fired mid-mutation: the
@@ -1136,6 +1284,23 @@ program define finegray, eclass sortpreserve
         * Get semantic expansion (includes base markers like 1b.race)
         fvexpand `varlist' if `touse'
         local _fv_semantic `r(varlist)'
+
+        * Record full observed support independently of selected coefficient terms.
+        local _fg_fvsvars ""
+        foreach _fg_sterm of local _fv_semantic {
+            local _fg_sparts = subinstr("`_fg_sterm'", "#", " ", .)
+            foreach _fg_spart of local _fg_sparts {
+                if regexm("`_fg_spart'", "^([0-9]+)[a-z]*\.(.+)$") {
+                    local _fg_sv = regexs(2)
+                    local _fg_fvsvars : list _fg_fvsvars | _fg_sv
+                }
+            }
+        }
+        local _fg_si = 0
+        foreach _fg_sv of local _fg_fvsvars {
+            local ++_fg_si
+            quietly levelsof `_fg_sv' if `touse', local(_fg_fvslev`_fg_si') clean
+        }
 
         * Get actual variable columns (one per term, including base)
         fvrevar `varlist' if `touse'
@@ -1161,8 +1326,18 @@ program define finegray, eclass sortpreserve
             local _term : word `_i' of `_fv_semantic'
             local _var : word `_i' of `_fv_actual'
 
-            * Skip base categories (marked with Nb. in fvexpand output)
-            if regexm("`_term'", "[0-9]+b\.") {
+            * Skip the terms Stata itself omits: any part carrying an `o'
+            * marker (2o.a#1b.b, 1b.a#co.x), and a pure factor term whose
+            * every part is a base level (1b.grp, 1b.a#1b.b).  A base level
+            * is NOT by itself an omission: 1b.grp#c.x in i.grp#c.x is the
+            * group-1 slope and 1b.a#2.b in i.a#i.b a real cell -- stcox,
+            * stcrreg and _ms_omit_info estimate both.  Through 1.3.7 any
+            * `Nb.' part skipped the term, so i.grp#c.x fitted with the
+            * group-1 slope fixed at 0 at rc 0.  The same two-regex rule is
+            * used at every site that pairs e(fvsemantic) or the e(b) stripe
+            * with the design (_finegray_bnb, _finegray_beta, ...).
+            if regexm("`_term'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                regexm("`_term'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") {
                 local _fv_namemap "`_fv_namemap' ."
                 continue
             }
@@ -1192,9 +1367,11 @@ program define finegray, eclass sortpreserve
                 * A kept factor level part is `N.var' or `Nbn.var' (base-none:
                 * ibn. omits no reference, so its first level 1bn.var carries a
                 * REAL coefficient and must produce a legal name, not the raw
-                * token _fg_1bn.varXx that r(198)'d before).  Base parts (Nb.var)
-                * never reach here -- the whole term is skipped above.
-                if regexm("`_part'", "^([0-9]+)(bn)?\.(.+)$") {
+                * token _fg_1bn.varXx that r(198)'d before).  A base part
+                * `Nb.var' reaches here only inside a kept term (1b.grp#c.x,
+                * 1b.a#2.b), where it is the indicator (var == N) like any
+                * other level; all-base and `o'-marked terms were skipped above.
+                if regexm("`_part'", "^([0-9]+)(bn|b)?\.(.+)$") {
                     if "`_fg_parts'" != "" local _fg_parts "`_fg_parts'X"
                     local _fg_parts "`_fg_parts'`=regexs(3)'_`=regexs(1)'"
                 }
@@ -1216,16 +1393,39 @@ program define finegray, eclass sortpreserve
                 }
             }
 
+            * Stata names hold 32 characters.  A derived name that is longer
+            * is cut and given a term-number tag (_k#, # the term's position in
+            * e(fvsemantic), so it cannot be read as a level), and any name that collides
+            * with one this specification already claims is re-tagged until it
+            * is unique.  Through 1.3.7 the cut was a bare substr(), so two
+            * levels of any factor variable named with 27 or more characters
+            * (26 with ##) cut to the same name and the fit was refused
+            * "factor variable names too similar" for legal 32-character
+            * variable names.  The name is only a label: post-estimation pairs
+            * design columns with e(fvsemantic) by POSITION and rebuilds them
+            * from the term, never from the name (_finegray_fv_design).  The
+            * refusal below is kept, but no specification reaches it: the tag
+            * loop ends as soon as a name is unclaimed.  Measured and cut in
+            * CHARACTERS (ustrlen/usubstr): the limit is 32 characters, and a
+            * byte cut tagged a 15-character name of two-byte characters that
+            * fits and split a character, leaving an invalid UTF-8 name
+            * (independent review, 2026-10-21; test_finegray_v110.do 12d).
             local _fg_name "_fg_`_fg_parts'"
-            if length("`_fg_name'") > 32 {
-                local _fg_name = substr("`_fg_name'", 1, 32)
-            }
-
-            * Detect name collision from truncation within this run
+            local _fg_tagk = 0
+            local _fg_tagged = (ustrlen("`_fg_name'") > 32)
             local _collision : list posof "`_fg_name'" in _fv_names
+            while `_fg_tagged' | `_collision' > 0 {
+                local _fg_tag "_k`_i'"
+                if `_fg_tagk' > 0 local _fg_tag "_k`_i'x`_fg_tagk'"
+                local _fg_name = usubstr("_fg_`_fg_parts'", 1, 32 - ustrlen("`_fg_tag'")) + "`_fg_tag'"
+                local _collision : list posof "`_fg_name'" in _fv_names
+                local _fg_tagged = 0
+                local ++_fg_tagk
+                if `_fg_tagk' > 99 continue, break
+            }
             if `_collision' > 0 {
                 display as error "factor variable names too similar"
-                display as error "`_fg_name' collides after truncation to 32 characters"
+                display as error "no unique 32-character design-column name for `_term'"
                 display as error "use shorter variable names or fewer interaction levels"
                 exit 198
             }
@@ -1233,6 +1433,223 @@ program define finegray, eclass sortpreserve
             local _fv_names "`_fv_names' `_fg_name'"
             local _fv_namemap "`_fv_namemap' `_fg_name'"
             if !`_fg_is_mi' local _fv_newnames "`_fv_newnames' `_fg_name'"
+        }
+    }
+
+    * =========================================================================
+    * PURE SPECIFICATION CHECKS -- BEFORE ANY MUTATION
+    * =========================================================================
+    * Refusals that read only the estimation sample and the specification, and
+    * no design column, run HERE: before the entry column is rewritten, before
+    * the _dta[_finegray_*] characteristics are marked "0" (invalidated) and
+    * before a prior run's _fg_* columns are dropped.  They used to fire after
+    * all three, so a refit that was refused for a tsplit() interval with no
+    * cause event, a tvc() variable missing from the model, too few clusters or
+    * an unusable delayed-entry weight stratum left the still-current prior fit
+    * unusable (finegray_cif r(301)) although nothing it depends on had moved.
+    * The rank check stays where it is: it needs the design columns, and its
+    * refusal invalidating the prior fit is pinned on purpose
+    * (test_finegray_v110.do section 4).  The original sites below are kept as
+    * defence in depth where they still exist.  Guarded by test_finegray_v110.do
+    * section 4b.
+
+    * Design columns the fit will have: one per kept (non-base, non-omitted)
+    * term, the same count the creation loop gives `varlist' below.
+    local _fg_ncols0 = 0
+    if `_has_fv' {
+        foreach _pc_nm of local _fv_namemap {
+            if "`_pc_nm'" != "." local ++_fg_ncols0
+        }
+    }
+    else local _fg_ncols0 : word count `varlist'
+
+    local _fg_ntv0 = 0
+    if "`tvc'" != "" {
+        * One "source variables" list per design column, built from the same
+        * fit-time expansion and the same part rule as the tvc() mapping below.
+        forvalues _pc_c = 1/`_fg_ncols0' {
+            local _pc_src`_pc_c' ""
+        }
+        if `_has_fv' {
+            local _pc_c = 0
+            foreach _pc_term of local _fv_semantic {
+                if regexm("`_pc_term'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                    regexm("`_pc_term'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
+                local ++_pc_c
+                local _pc_parts = subinstr(subinstr("`_pc_term'", "##", "#", .), "#", " ", .)
+                foreach _pc_p of local _pc_parts {
+                    if regexm("`_pc_p'", "\.(.+)$") local _pc_p = regexs(1)
+                    local _pc_seen : list posof "`_pc_p'" in _pc_src`_pc_c'
+                    if `_pc_seen' == 0 local _pc_src`_pc_c' "`_pc_src`_pc_c'' `_pc_p'"
+                }
+            }
+        }
+        else {
+            forvalues _pc_c = 1/`_fg_ncols0' {
+                local _pc_src`_pc_c' "`: word `_pc_c' of `varlist''"
+            }
+        }
+        foreach _tv_v of local tvc {
+            local _tv_any = 0
+            forvalues _pc_c = 1/`_fg_ncols0' {
+                local _tv_in : list posof "`_tv_v'" in _pc_src`_pc_c'
+                if `_tv_in' > 0 {
+                    local _tv_any = 1
+                    continue, break
+                }
+            }
+            if !`_tv_any' {
+                display as error "tvc(`_tv_v') is not in the model"
+                display as error "tvc() names covariates the model already fits; add `_tv_v' to"
+                display as error "the varlist, or remove it from tvc()"
+                exit 198
+            }
+        }
+        forvalues _pc_c = 1/`_fg_ncols0' {
+            foreach _tv_v of local tvc {
+                local _tv_in : list posof "`_tv_v'" in _pc_src`_pc_c'
+                if `_tv_in' > 0 {
+                    local ++_fg_ntv0
+                    continue, break
+                }
+            }
+        }
+
+        * ---- every interval must carry a cause event ------------------------
+        * Interval j is (cut[j-1], cut[j]], so a boundary at or beyond the last
+        * cause-event time leaves the final interval with no events at all and
+        * its coefficients unidentified.  The information matrix would catch it,
+        * but as "not full rank" naming a design column -- which sends the reader
+        * looking for collinearity.  Name the interval instead.
+        local _fg_lo = 0
+        local _fg_tvnfail ""
+        forvalues _tv_j = 1/`_fg_nint' {
+            if `_tv_j' == `_fg_nint' {
+                local _tv_cond "_t > `_fg_lo'"
+                local _tv_lbl "_t > `_fg_lo'"
+            }
+            else {
+                local _tv_hi : word `_tv_j' of `tsplit'
+                local _tv_cond "_t > `_fg_lo' & _t <= `_tv_hi'"
+                if `_tv_j' == 1 local _tv_lbl "_t <= `_tv_hi'"
+                else            local _tv_lbl "`_fg_lo' < _t <= `_tv_hi'"
+            }
+            quietly count if `touse' & `compete' == `cause' & `_tv_cond'
+            * Kept, not just tested.  An interval is identified as soon as it
+            * carries one cause event, but a coefficient estimated from two or
+            * three of them is a monotone-likelihood accident waiting to happen
+            * -- and the fit converges and prints a finite (enormous) subhazard
+            * ratio when it does.  The count belongs next to the interval in the
+            * output, where the reader can see what each estimate rests on.
+            local _fg_tvnfail "`_fg_tvnfail' `r(N)'"
+            if r(N) == 0 {
+                display as error "tsplit() interval `_tv_j' (`_tv_lbl') contains no cause `cause' event"
+                display as error "its coefficients are not identified by the subdistribution"
+                display as error "likelihood, so the interval cannot be estimated"
+                display as error "move or drop that boundary; the last cause event is the upper"
+                display as error "limit of any usable tsplit() value"
+                exit 459
+            }
+            if `_tv_j' < `_fg_nint' local _fg_lo : word `_tv_j' of `tsplit'
+        }
+        local _fg_tvnfail : list retokenize _fg_tvnfail
+    }
+
+    * Clusters against coefficients: the same two refusals, and the same
+    * wording, as _finegray_engine, which keeps them as defence in depth.  The
+    * engine counts distinct cluster() values over exactly these rows (it runs
+    * on `keep if touse'), and fits ncols + (J - 1) * (tvc columns)
+    * coefficients (_finegray_tvc_ncoef).
+    if "`cluster'" != "" {
+        tempname _pc_ncl
+        mata: st_numscalar("`_pc_ncl'", rows(uniqrows(st_data(., "`cluster'", "`touse'"))))
+        local _pc_ptot = `_fg_ncols0' + (`_fg_nint' - 1) * `_fg_ntv0'
+        if scalar(`_pc_ncl') < 2 {
+            display as error "finegray: cluster(`cluster') identifies `=scalar(`_pc_ncl')' cluster in the estimation sample"
+            display as error "clustered standard errors require at least 2 clusters"
+            exit 459
+        }
+        if scalar(`_pc_ncl') <= `_pc_ptot' {
+            display as error "finegray: cluster(`cluster') identifies `=scalar(`_pc_ncl')' clusters for `_pc_ptot' coefficients"
+            display as error "the clustered variance matrix has rank at most `=scalar(`_pc_ncl') - 1', so it cannot support `_pc_ptot' standard errors"
+            display as error "use more clusters, or fit fewer covariates"
+            exit 459
+        }
+    }
+
+    * ---- Support boundary for the combined-weight design.
+    *
+    * The factorized weights are EVALUATED for each observed joint (censoring x
+    * truncation) stratum: G is estimated within censoring strata and H within
+    * truncation strata.  Every observed combination must still carry enough
+    * support to make its configured weight usable.  Both limits are hard
+    * failures: silently pooling groups the user asked to keep separate would
+    * change the estimand without saying so, which is the failure class this
+    * package treats as worst.
+    *
+    * Enforced only on the ZZF (delayed-entry) branch.  A right-censoring fit
+    * with many strata() levels is unchanged released behaviour, and turning
+    * that into an error would break existing analyses -- the no-LT path is
+    * required to stay bit-identical, and an error is not bit-identical.
+    *
+    * BREAKING CHANGE, stated so nobody rediscovers it as a bug: a delayed-entry
+    * fit with more than 100 strata() levels used to run and now hard-errors,
+    * EVEN WITHOUT truncstrata().  Under delayed entry the weights are A = G*H,
+    * and A is evaluated for every observed joint group, so 150 censoring strata
+    * are 150 weight strata whether or not the user asked for entry strata.
+    * Guarded by Z21/Z22.
+    *
+    * Delayed-entry weight strata: the joint strata() x truncstrata() groups
+    * the factorized weight is evaluated in, over the estimation sample.  The
+    * same partition the engine block forms from _finegray_weight_groups
+    * (egen group() of each side, then of the pair).
+    if `_fg_has_lt' {
+        tempvar _fg_jgrp _fg_jn
+        if "`strata'" == "" & "`truncstrata'" == "" {
+            quietly gen byte `_fg_jgrp' = 1 if `touse'
+        }
+        else {
+            quietly egen long `_fg_jgrp' = group(`strata' `truncstrata') if `touse'
+        }
+        quietly summarize `_fg_jgrp' if `touse', meanonly
+        local _fg_njgrp = r(max)
+
+        * Name only the options that actually formed the groups.  Blaming a
+        * cross-classification with truncstrata() when the user never typed
+        * truncstrata() sends them looking for an option they did not use.
+        *
+        * Keep each line short.  Stata wraps display output at linesize, and
+        * test Z22 greps this text -- a message that wraps mid-token would make
+        * the guard's own regression test unfalsifiable.
+        if `_fg_njgrp' > 100 {
+            display as error "too many weight strata: `_fg_njgrp' observed joint groups (limit 100)"
+            if "`strata'" != "" & "`truncstrata'" != "" {
+                display as error "strata() and truncstrata() are cross-classified:"
+                display as error "the weight strata are their observed combinations"
+            }
+            else if "`truncstrata'" != "" {
+                display as error "the weight strata are the observed levels of truncstrata()"
+            }
+            else {
+                display as error "the weight strata are the observed levels of strata()"
+                display as error "under delayed entry G is stratum-specific, H is pooled,"
+                display as error "and A is evaluated separately for every strata() level"
+            }
+            display as error "this limit applies to delayed-entry fits only"
+            display as error "use coarser grouping variables"
+            exit 459
+        }
+
+        quietly bysort `_fg_jgrp': gen long `_fg_jn' = _N if `touse'
+        quietly summarize `_fg_jn' if `touse', meanonly
+        local _fg_minjn = r(min)
+
+        if `_fg_minjn' < 20 {
+            display as error "a weight stratum has only `_fg_minjn' subjects (minimum 20)"
+            display as error "the factorized weight is evaluated within each observed joint"
+            display as error "stratum; too few subjects makes that configured weight unusable"
+            display as error "use coarser grouping variables"
+            exit 459
         }
     }
 
@@ -1477,7 +1894,7 @@ program define finegray, eclass sortpreserve
                 * and regenerates their own under the same name keeps it.
                 if `_prev_match' > 0 & `"`_own_n'"' != "" & ///
                     `"`_own_n'"' == `"`_prev_owner'"' & `"`_prev_owner'"' != "" {
-                    * Prior finegray-created variable — safe to replace
+                    * Prior finegray-created variable -- safe to replace
                     display as text "(note: replacing existing variable `_fg_name')"
                     quietly drop `_fg_name'
                 }
@@ -1508,7 +1925,13 @@ program define finegray, eclass sortpreserve
                     local _lbl_remaining ""
                 }
 
-                if regexm("`_lbl_part'", "^([0-9]+)(bn)?\.(.+)$") {
+                * Value and variable labels are USER TEXT: every expansion
+                * below goes through macval(), so a label holding `$name' or a
+                * backtick is copied, not re-expanded as macro text.  Through
+                * 1.3.7 a label "A $G" became "A <contents of $G>", a quoted
+                * `q' pair vanished, and an unbalanced backtick stopped a valid
+                * fit with r(132).
+                if regexm("`_lbl_part'", "^([0-9]+)(bn|b)?\.(.+)$") {
                     * Factor part: use value label if available (Nbn. base-none
                     * levels label like ordinary levels; they have no reference)
                     local _lp_lev = regexs(1)
@@ -1518,7 +1941,7 @@ program define finegray, eclass sortpreserve
                     if "`_lp_vallbl'" != "" {
                         local _lp_txt : label `_lp_vallbl' `_lp_lev'
                     }
-                    if `"`_lp_txt'"' == "" local _lp_txt "`_lp_lev'"
+                    if `"`macval(_lp_txt)'"' == "" local _lp_txt "`_lp_lev'"
                     * Find reference category for (vs. ref) suffix
                     local _lp_ref ""
                     foreach _bterm of local _fv_semantic {
@@ -1526,31 +1949,42 @@ program define finegray, eclass sortpreserve
                             local _lp_ref = regexs(1)
                         }
                     }
-                    if "`_lp_ref'" != "" {
+                    * A base level inside a kept term (1b.grp#c.x) IS the
+                    * reference; "(vs. itself)" says nothing.
+                    if "`_lp_ref'" != "" & "`_lp_ref'" != "`_lp_lev'" {
                         local _lp_reftxt ""
                         if "`_lp_vallbl'" != "" {
                             local _lp_reftxt : label `_lp_vallbl' `_lp_ref'
                         }
-                        if `"`_lp_reftxt'"' == "" local _lp_reftxt "`_lp_ref'"
-                        local _lp_txt `"`_lp_txt' (vs. `_lp_reftxt')"'
+                        if `"`macval(_lp_reftxt)'"' == "" local _lp_reftxt "`_lp_ref'"
+                        local _lp_txt `"`macval(_lp_txt)' (vs. `macval(_lp_reftxt)')"'
                     }
-                    if `"`_lbl_full'"' != "" local _lbl_full `"`_lbl_full' # "'
-                    local _lbl_full `"`_lbl_full'`_lp_txt'"'
+                    if `"`macval(_lbl_full)'"' != "" {
+                        * block form: a one-line if re-expands its command
+                        local _lbl_full `"`macval(_lbl_full)' # "'
+                    }
+                    local _lbl_full `"`macval(_lbl_full)'`macval(_lp_txt)'"'
                 }
                 else if regexm("`_lbl_part'", "^c\.(.+)$") {
                     * Continuous part: use variable label if available
                     local _lp_var = regexs(1)
                     local _lp_txt : variable label `_lp_var'
-                    if `"`_lp_txt'"' == "" local _lp_txt "`_lp_var'"
-                    if `"`_lbl_full'"' != "" local _lbl_full `"`_lbl_full' # "'
-                    local _lbl_full `"`_lbl_full'`_lp_txt'"'
+                    if `"`macval(_lp_txt)'"' == "" local _lp_txt "`_lp_var'"
+                    if `"`macval(_lbl_full)'"' != "" {
+                        * block form: a one-line if re-expands its command
+                        local _lbl_full `"`macval(_lbl_full)' # "'
+                    }
+                    local _lbl_full `"`macval(_lbl_full)'`macval(_lp_txt)'"'
                 }
                 else {
-                    if `"`_lbl_full'"' != "" local _lbl_full `"`_lbl_full' # "'
-                    local _lbl_full `"`_lbl_full'`_lbl_part'"'
+                    if `"`macval(_lbl_full)'"' != "" {
+                        * block form: a one-line if re-expands its command
+                        local _lbl_full `"`macval(_lbl_full)' # "'
+                    }
+                    local _lbl_full `"`macval(_lbl_full)'`_lbl_part'"'
                 }
             }
-            label variable `_fg_name' `"`_lbl_full'"'
+            label variable `_fg_name' `"`macval(_lbl_full)'"'
 
             local _fv_final "`_fv_final' `_fg_name'"
         }
@@ -1580,7 +2014,8 @@ program define finegray, eclass sortpreserve
         if `_has_fv' {
             local _rk_nb ""
             foreach _rk_t of local _fv_semantic {
-                if regexm("`_rk_t'", "[0-9]+b\.") continue
+                if regexm("`_rk_t'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                    regexm("`_rk_t'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
                 local _rk_nb "`_rk_nb' `_rk_t'"
             }
             local _rk_nnb : word count `_rk_nb'
@@ -1622,6 +2057,8 @@ program define finegray, eclass sortpreserve
         if "`_fv_created'" != "" quietly drop `_fv_created'
         display as error "finegray covariates are not full rank"
         display as error "constant or collinear term(s): `_rk_report'"
+        display as error "(a varying covariate far from zero or on an extreme scale can also fail"
+        display as error "this check numerically; center and rescale it)"
         if `_rk_bn' {
             display as error "an ibn. main effect names every level, and the Fine-Gray partial"
             display as error "likelihood has no intercept to absorb the redundancy: the level"
@@ -1662,7 +2099,8 @@ program define finegray, eclass sortpreserve
         if `_has_fv' {
             local _tv_c = 0
             foreach _tv_term of local _fv_semantic {
-                if regexm("`_tv_term'", "[0-9]+b\.") continue
+                if regexm("`_tv_term'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                    regexm("`_tv_term'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
                 local ++_tv_c
                 local _tv_parts = subinstr(subinstr("`_tv_term'", "##", "#", .), "#", " ", .)
                 foreach _tv_p of local _tv_parts {
@@ -1724,58 +2162,29 @@ program define finegray, eclass sortpreserve
         }
 
         local _fg_ntv : word count `_fg_tvcpos'
-
-        * ---- every interval must carry a cause event ------------------------
-        * Interval j is (cut[j-1], cut[j]], so a boundary at or beyond the last
-        * cause-event time leaves the final interval with no events at all and
-        * its coefficients unidentified.  The information matrix would catch it,
-        * but as "not full rank" naming a design column -- which sends the reader
-        * looking for collinearity.  Name the interval instead.
-        local _fg_lo = 0
-        local _fg_tvnfail ""
-        forvalues _tv_j = 1/`_fg_nint' {
-            if `_tv_j' == `_fg_nint' {
-                local _tv_cond "_t > `_fg_lo'"
-                local _tv_lbl "_t > `_fg_lo'"
-            }
-            else {
-                local _tv_hi : word `_tv_j' of `tsplit'
-                local _tv_cond "_t > `_fg_lo' & _t <= `_tv_hi'"
-                if `_tv_j' == 1 local _tv_lbl "_t <= `_tv_hi'"
-                else            local _tv_lbl "`_fg_lo' < _t <= `_tv_hi'"
-            }
-            quietly count if `touse' & `compete' == `cause' & `_tv_cond'
-            * Kept, not just tested.  An interval is identified as soon as it
-            * carries one cause event, but a coefficient estimated from two or
-            * three of them is a monotone-likelihood accident waiting to happen
-            * -- and the fit converges and prints a finite (enormous) subhazard
-            * ratio when it does.  The count belongs next to the interval in the
-            * output, where the reader can see what each estimate rests on.
-            local _fg_tvnfail "`_fg_tvnfail' `r(N)'"
-            if r(N) == 0 {
-                display as error "tsplit() interval `_tv_j' (`_tv_lbl') contains no cause `cause' event"
-                display as error "its coefficients are not identified by the subdistribution"
-                display as error "likelihood, so the interval cannot be estimated"
-                display as error "move or drop that boundary; the last cause event is the upper"
-                display as error "limit of any usable tsplit() value"
-                exit 459
-            }
-            if `_tv_j' < `_fg_nint' local _fg_lo : word `_tv_j' of `tsplit'
-        }
-        local _fg_tvnfail : list retokenize _fg_tvnfail
+        * The every-interval-carries-a-cause-event check (and `_fg_tvnfail')
+        * runs before the mutation zone; see PURE SPECIFICATION CHECKS.
     }
 
     * =========================================================================
     * LOAD MATA ENGINE
     * =========================================================================
-    capture mata: _finegray_mata_ok()
+    capture mata: _finegray_numeric_ok()
     * probe MATA, not a Stata program: `mata clear' drops Mata functions but
     * leaves Stata programs standing, so a program sentinel says "loaded" when
     * the engine is gone and the next Mata call dies with r(3499).
     if _rc {
         capture findfile _finegray_mata.ado
         if _rc == 0 {
-            run "`r(fn)'"
+            * A failed load aborts _finegray_mata.ado before it restores the
+            * caller's matastrict; restore it here on that path (audit F08).
+            local _fg_ms0 = c(matastrict)
+            capture noisily run "`r(fn)'"
+            if _rc {
+                local _fg_lrc = _rc
+                mata: mata set matastrict `_fg_ms0'
+                exit `_fg_lrc'
+            }
         }
         else {
             display as error "_finegray_mata.ado not found; reinstall finegray"
@@ -1794,8 +2203,37 @@ program define finegray, eclass sortpreserve
     * Keyed by the stset id() variable: without it the digest is invariant to
     * EXCHANGING two subjects' weights, which leaves e(sum_w) and the multiset
     * of weight values untouched and rebuilt a different column at rc 0.
+    * WITHOUT id() there is no subject key, and a value-only digest cannot see
+    * which row carries which weight: exchanging the scalars in
+    * [pw = cond(g, scalar(a), scalar(b))] kept data, e(sum_w) and the multiset
+    * of weights and was accepted at rc 0 (audit F03, 2026-09-27).  Key each row
+    * by its content in the signature variables instead -- sort-invariant, and
+    * rows identical in all of them are interchangeable to the fit.  The list is
+    * posted as e(wsigkeyvars) so post-estimation rebuilds the same key.
+    * _datasignature is invariant to independent column permutations.
+    * Bind every original analysis tuple (including subject id and entry)
+    * jointly.  The id and entry variables are kept OUT of e(datasignaturevars):
+    * _datasignature is storage-type sensitive, so signing them there refused
+    * `compress' or `recast' of an id at r(459).  The digest below hashes
+    * values, not storage types, and the list it covers is posted as
+    * e(rowsigvars).
+    local _fg_rowkeys "`_fg_sigvars'"
+    if `"`_fg_idvar'"' != "" {
+        local _fg_rowkeys : list _fg_rowkeys | _fg_idvar
+    }
+    if "`_fg_entryvar'" != "" {
+        local _fg_rowkeys : list _fg_rowkeys | _fg_entryvar
+    }
+    tempvar _fg_one
+    quietly generate byte `_fg_one' = 1 if `touse'
+    mata: _finegray_wsig("`_fg_one'", "`touse'", "`_fg_rowkeys'")
+    local _fg_rowsig "`_fg_wsig'"
+    local _fg_rowsig_n = `_fg_wsig_n'
+
+    local _fg_wsigkey ""
     if "`weight'" != "" {
-        mata: _finegray_wsig("`_fg_w'", "`touse'", "`_fg_idvar'")
+        local _fg_wsigkey "`_fg_rowkeys'"
+        mata: _finegray_wsig("`_fg_w'", "`touse'", "`_fg_wsigkey'")
     }
 
     * =========================================================================
@@ -1837,76 +2275,9 @@ program define finegray, eclass sortpreserve
             local _tg_mata "`_tg_grp'"
         }
 
-        * ---- Support boundary for the combined-weight design.
-        *
-        * The factorized weights are EVALUATED for each observed joint (censoring x
-        * truncation) stratum: G is estimated within censoring strata and H within
-        * truncation strata.  Every observed combination must still carry enough
-        * support to make its configured weight usable.  Both limits are hard
-        * failures: silently pooling groups the user asked to keep separate would
-        * change the estimand without saying so, which is the failure class this
-        * package treats as worst.
-        *
-        * Enforced only on the ZZF (delayed-entry) branch.  A right-censoring fit
-        * with many strata() levels is unchanged released behaviour, and turning
-        * that into an error would break existing analyses -- the no-LT path is
-        * required to stay bit-identical, and an error is not bit-identical.
-        *
-        * BREAKING CHANGE, stated so nobody rediscovers it as a bug: a delayed-entry
-        * fit with more than 100 strata() levels used to run and now hard-errors,
-        * EVEN WITHOUT truncstrata().  Under delayed entry the weights are A = G*H,
-        * and A is evaluated for every observed joint group, so 150 censoring strata
-        * are 150 weight strata whether or not the user asked for entry strata.
-        * Guarded by Z21/Z22.
-        if `_fg_has_lt' {
-            tempvar _fg_jgrp _fg_jn
-            if "`_byg_mata'" == "" & "`_tg_mata'" == "" {
-                quietly gen byte `_fg_jgrp' = 1
-            }
-            else {
-                quietly egen long `_fg_jgrp' = group(`_byg_mata' `_tg_mata')
-            }
-            quietly summarize `_fg_jgrp', meanonly
-            local _fg_njgrp = r(max)
-
-            * Name only the options that actually formed the groups.  Blaming a
-            * cross-classification with truncstrata() when the user never typed
-            * truncstrata() sends them looking for an option they did not use.
-            *
-            * Keep each line short.  Stata wraps display output at linesize, and
-            * test Z22 greps this text -- a message that wraps mid-token would make
-            * the guard's own regression test unfalsifiable.
-            if `_fg_njgrp' > 100 {
-                display as error "too many weight strata: `_fg_njgrp' observed joint groups (limit 100)"
-                if "`_byg_mata'" != "" & "`_tg_mata'" != "" {
-                    display as error "strata() and truncstrata() are cross-classified:"
-                    display as error "the weight strata are their observed combinations"
-                }
-                else if "`_tg_mata'" != "" {
-                    display as error "the weight strata are the observed levels of truncstrata()"
-                }
-                else {
-                    display as error "the weight strata are the observed levels of strata()"
-                    display as error "under delayed entry G is stratum-specific, H is pooled,"
-                    display as error "and A is evaluated separately for every strata() level"
-                }
-                display as error "this limit applies to delayed-entry fits only"
-                display as error "use coarser grouping variables"
-                exit 459
-            }
-
-            quietly bysort `_fg_jgrp': gen long `_fg_jn' = _N
-            quietly summarize `_fg_jn', meanonly
-            local _fg_minjn = r(min)
-
-            if `_fg_minjn' < 20 {
-                display as error "a weight stratum has only `_fg_minjn' subjects (minimum 20)"
-                display as error "the factorized weight is evaluated within each observed joint"
-                display as error "stratum; too few subjects makes that configured weight unusable"
-                display as error "use coarser grouping variables"
-                exit 459
-            }
-        }
+        * The delayed-entry weight-strata limits (more than 100 joint groups, a
+        * group of fewer than 20 subjects) are checked before the mutation zone,
+        * where `_fg_njgrp' is set; see PURE SPECIFICATION CHECKS.
 
         sort _t `_fg_row0'
 
@@ -1979,7 +2350,8 @@ program define finegray, eclass sortpreserve
     if `_has_fv' {
         local _cn_fv ""
         foreach _cn_t of local _fv_semantic {
-            if regexm("`_cn_t'", "[0-9]+b\.") continue
+            if regexm("`_cn_t'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                regexm("`_cn_t'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
             local _cn_fv "`_cn_fv' `_cn_t'"
         }
         local _cn_n : word count `_cn_fv'
@@ -2070,7 +2442,8 @@ program define finegray, eclass sortpreserve
         local _wn_j = 0
         forvalues _wn_i = 1/`_wn_k' {
             local _wn_t : word `_wn_i' of `_wn_names'
-            if regexm("`_wn_t'", "[0-9]+b\.") continue
+            if regexm("`_wn_t'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                regexm("`_wn_t'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
             local ++_wn_j
             if `_wn_j' <= `_fg_ncol' matrix `_wS'[`_wn_i', `_wn_j'] = 1
         }
@@ -2152,9 +2525,10 @@ program define finegray, eclass sortpreserve
 
     ereturn scalar N = `_fg_Nrep'
     if "`weight'" != "" {
-        ereturn scalar sum_w = `_fg_sumw'
+        ereturn scalar sum_w = scalar(`_fg_sumw')
         ereturn scalar wsig_n = `_fg_wsig_n'
         ereturn local wsig "`_fg_wsig'"
+        ereturn local wsigkeyvars "`_fg_wsigkey'"
     }
     ereturn scalar N_fail = `N_fail'
     ereturn scalar N_compete = `N_compete'
@@ -2173,7 +2547,7 @@ program define finegray, eclass sortpreserve
     ereturn scalar N_delayed = `_fg_n_lt'
     * Baseline strata actually fitted.  1 on an unstratified fit, so a consumer
     * never has to test e(bstrata) for emptiness to know the baseline's shape:
-    * e(k_bstrata) > 1 means e(basehaz) is K x 3 and every baseline lookup needs
+    * e(k_bstrata) > 1 means e(basehaz) is stacked stratum/event-time rows x 3 and every baseline lookup needs
     * a stratum.
     ereturn scalar k_bstrata = _finegray_kbstrata[1,1]
     * Piecewise beta(t) shape.  A consumer must be able to tell from e() alone
@@ -2224,7 +2598,22 @@ program define finegray, eclass sortpreserve
     * unweighted fit, so the line below reduces to what it always was.
     local _fg_wspec ""
     if "`weight'" != "" local _fg_wspec `" [`weight'`exp']"'
-    local _refitcmd `"finegray `_orig_varlist'`_fg_wspec', compete(`compete') cause(`cause') censvalue(`censvalue') iterate(`iterate') tolerance(`tolerance') nolog"'
+    * The recipe carries the FIT-TIME expansion of a factor specification
+    * (e(fvsemantic): `1b.grp 2.grp ifp'), not the user's spelling.  A dynamic
+    * base -- ib(freq)., ib(first)., ib(last)., or a bare i. under a later
+    * `fvset base' -- is re-resolved by whoever replays the line, and a
+    * bootstrap resample can change the most frequent level: the refit then
+    * posts a different e(designvars), every consumer rejects the replicate,
+    * and the bootstrap fails r(498) after discarding usable resamples (10 of
+    * 25 accepted on a 55/54 split; 1.3.5).  Explicit level terms freeze the
+    * base to the level VALUE the point estimate used, and fvexpand returns
+    * them unchanged, so the replay's e(fvsemantic), e(designvars) and
+    * coefficient stripe are the fit's own (verified bit for bit for ib(freq),
+    * ib(last), i.a#c.x, i.a##c.x and c.x#ibn.a).  e(fvvarlist) and
+    * e(cmdline) keep what the user typed.
+    local _refit_varlist "`_orig_varlist'"
+    if `_has_fv' local _refit_varlist "`_fv_semantic'"
+    local _refitcmd `"finegray `_refit_varlist'`_fg_wspec', compete(`compete') cause(`cause') censvalue(`censvalue') iterate(`iterate') tolerance(`tolerance') nolog"'
     if "`strata'" != ""          local _refitcmd `"`_refitcmd' strata(`strata')"'
     if "`truncstrata'" != ""     local _refitcmd `"`_refitcmd' truncstrata(`truncstrata')"'
     if "`bstrata'" != ""         local _refitcmd `"`_refitcmd' bstrata(`bstrata')"'
@@ -2285,6 +2674,14 @@ program define finegray, eclass sortpreserve
     * current data and matching positionally silently applies the fitted
     * coefficients to whatever levels happen to be present now.
     if `_has_fv' ereturn local fvsemantic "`_fv_semantic'"
+    if `_has_fv' {
+        ereturn local fvsupport_vars "`_fg_fvsvars'"
+        local _fg_si = 0
+        foreach _fg_sv of local _fg_fvsvars {
+            local ++_fg_si
+            ereturn local fvsupport`_fg_si' "`_fg_fvslev`_fg_si''"
+        }
+    }
     if "`strata'" != "" ereturn local strata "`strata'"
     if "`truncstrata'" != "" ereturn local truncstrata "`truncstrata'"
     * The BASELINE stratification variable.  A different axis from strata()
@@ -2303,6 +2700,14 @@ program define finegray, eclass sortpreserve
     * a level obtained any other way misses at rc 0; every internal consumer
     * compares this one.
     if "`_fg_bs_noeventx'" != "" ereturn local bstrata_noevent_x "`_fg_bs_noeventx'"
+    * The sole level of a single-level bstrata() fit.  Its baseline is posted
+    * in the compact unstratified shape, so without this a row in a level the
+    * fit never saw was answered from the fitted level's curve at rc 0.
+    * Readable and %21x forms, as for e(bstrata_noevent).
+    if "`bstrata'" != "" & "`_fg_bs_singlex'" != "" {
+        ereturn local bstrata_level "`_fg_bs_single'"
+        ereturn local bstrata_level_x "`_fg_bs_singlex'"
+    }
     * Piecewise beta(t).
     *   e(tvc)            the variables the user named
     *   e(tsplit)         the interior boundaries, ascending
@@ -2326,13 +2731,40 @@ program define finegray, eclass sortpreserve
     }
     if "`cluster'" != "" ereturn local clustvar "`cluster'"
 
+    * Monotone likelihood: the coefficients whose information collapsed between
+    * beta = 0 and the estimate (_finegray_engine sets `_fg_monopos' via
+    * st_local, as positions in its narrow frame).  The narrow frame is the
+    * posted stripe with base and omitted factor terms removed -- the rule
+    * _finegray_beta applies -- so the positions name stripe entries.  The
+    * equation is kept only under tvc(), where it is what tells the intervals
+    * apart.  Reported by _finegray_display on the fit and on every replay.
+    if "`_fg_monopos'" != "" {
+        local _mn_all : colfullnames e(b)
+        local _mn_keep ""
+        foreach _mn_t of local _mn_all {
+            local _mn_n = substr("`_mn_t'", strpos("`_mn_t'", ":") + 1, .)
+            if regexm("`_mn_n'", "(^|#)([0-9]+b?n?|c)?o\.") | ///
+                regexm("`_mn_n'", "^[0-9]+b\.[^#]+(#[0-9]+b\.[^#]+)*$") continue
+            if "`tvc'" == "" local _mn_t "`_mn_n'"
+            local _mn_keep "`_mn_keep' `_mn_t'"
+        }
+        local _mn_k : word count `_mn_keep'
+        local _mn_names ""
+        foreach _mn_p of local _fg_monopos {
+            if `_mn_p' <= `_mn_k' local _mn_names "`_mn_names' `: word `_mn_p' of `_mn_keep''"
+            else local _mn_names "`_mn_names' #`_mn_p'"
+        }
+        local _mn_names : list retokenize _mn_names
+        ereturn local monotone "`_mn_names'"
+    }
+
     * Combined-weight contract.  lt_weight names the weight actually computed:
     *   right_censoring : no delayed entry; A == G; identical to prior releases
     *   zzf1_geskus       : one weight stratum; Geskus product-limit form
-    *   zzf1_stratified   : ZZF eq. 7 pooled-stabilizer form; strata() and
+    *   zzf1_stratified   : ZZF eq. 6 pooled-stabilizer form; strata() and
     *                       truncstrata() name the SAME grouping -- the paper's
     *                       stratified nonparametric construction
-    *   zzf1_factorized   : ZZF eq. 7 machinery, but strata() and truncstrata()
+    *   zzf1_factorized   : ZZF eq. 6 machinery, but strata() and truncstrata()
     *                       name DIFFERENT groupings (including one side left
     *                       unspecified): G is estimated within strata(), H
     *                       within truncstrata(), and the components multiply.
@@ -2356,6 +2788,12 @@ program define finegray, eclass sortpreserve
                 local _fg_factorized = 1
             if `_fg_factorized' ereturn local lt_weight "zzf1_factorized"
             else                ereturn local lt_weight "zzf1_stratified"
+            * The stratum normalizer kappa_g (1.3.3; _finegray_lt_normalizer).
+            * Post-estimation refuses a stratified delayed-entry fit without
+            * this stamp: an `estimates use' of a 1.3.0-1.3.2 fit would
+            * otherwise pair its coefficients with a baseline rebuilt on the
+            * corrected weights at rc 0.
+            ereturn local lt_norm "stratum"
         }
         else ereturn local lt_weight "zzf1_geskus"
     }
@@ -2413,22 +2851,36 @@ program define finegray, eclass sortpreserve
     ereturn scalar N_prob_warn     = _finegray_nprobwarn[1,1]
     ereturn scalar N_weight_warn   = _finegray_nwtwarn[1,1]
     ereturn local weight_warn_strata "`_fg_warnstrata'"
-    * Observations whose censoring survivor G(t) was floored at 1e-10 during the
-    * fit's own KM sweep.  `_fg_ntrunc' is set directly in this scope by
-    * _finegray_km_censor via st_local (see its header for why it reports rather
-    * than prints).  Missing would be indistinguishable from "none", so treat an
-    * unset local as a broken contract rather than as a reassuring zero.
+    * Subjects observed before their entry stratum's risk set was last empty
+    * (1.3.4; _finegray_lt_normalizer).  Their H(X_i-) is zero, so they are
+    * left out of their weight cell's normalizer kappa_j and the fit is refused
+    * only if a weight consults them.  Zero on every fit with no such gap,
+    * including right-censored fits; the same fail-loud contract as above.
+    ereturn scalar N_lt_prehole    = _finegray_nprehole[1,1]
+    * Observations whose inverse-probability weight consults a censoring
+    * survivor G(t) that the fit's own KM sweep floored at 1e-10.  Floored rows
+    * that no weight reads (the terminal rows of a KM whose last risk set is
+    * emptied by censoring) are not counted; through 1.3.7 they were, and the
+    * note fired on webuse hypoxia.  `_fg_ntrunc' is set directly in this scope
+    * by the engine from _finegray_gfloor_consulted via st_local.  Missing would
+    * be indistinguishable from "none", so treat an unset local as a broken
+    * contract rather than as a reassuring zero.
     if "`_fg_ntrunc'" == "" {
         display as error "internal error: the G(t) truncation count was not returned"
         exit 498
     }
     ereturn scalar N_G_trunc = `_fg_ntrunc'
-    * VCE type: cluster > robust (default) > oim (norobust)
+    * VCE type: cluster > robust (default) > oim (norobust).  e(vcetype) is
+    * the column label -ereturn display- and esttab/estout/etable read, so the
+    * sandwich prints under "Robust std. err." as it does after stcrreg; it is
+    * left unset under norobust, as Stata's own estimators leave it for OIM.
     if "`cluster'" != "" {
         ereturn local vce "cluster"
+        ereturn local vcetype "Robust"
     }
     else if "`robust'" != "norobust" {
         ereturn local vce "robust"
+        ereturn local vcetype "Robust"
     }
     else {
         ereturn local vce "oim"
@@ -2478,11 +2930,6 @@ program define finegray, eclass sortpreserve
         ereturn local marginsok "xb"
     }
 
-    local _sig_entry_seen = 0
-    if "`_fg_entryvar'" != "" {
-        local _sig_entry_seen : list posof "`_fg_entryvar'" in _fg_sigvars
-        if `_sig_entry_seen' == 0 local _fg_sigvars "`_fg_sigvars' `_fg_entryvar'"
-    }
     * Package-owned _fg_* design columns are deliberately NOT in this signature.
     * They are derived from the raw factor variables, and post-estimation is
     * allowed to rebuild them when they have been dropped -- putting them here
@@ -2493,6 +2940,9 @@ program define finegray, eclass sortpreserve
     quietly _datasignature `_fg_sigvars' if e(sample), nodefault nonames
     ereturn local datasignature `"`r(datasignature)'"'
     ereturn local datasignaturevars "`_fg_sigvars'"
+    ereturn local rowsig "`_fg_rowsig'"
+    ereturn local rowsigvars "`_fg_rowkeys'"
+    ereturn scalar rowsig_n = `_fg_rowsig_n'
 
     * e(basehaz) carries one row per distinct cause-event time, so K is roughly
     * n/2.  Creating ANY K-row Stata matrix is O(K^2) -- Stata builds the
@@ -2510,6 +2960,10 @@ program define finegray, eclass sortpreserve
         capture confirm matrix _finegray_basehaz
         if _rc == 0 {
             ereturn matrix basehaz = _finegray_basehaz
+        }
+        if "`tvc'" != "" {
+            capture confirm matrix _finegray_basehaz_tvc
+            if _rc == 0 ereturn matrix basehaz_tvc = _finegray_basehaz_tvc
         }
     }
 
@@ -2532,11 +2986,11 @@ program define finegray, eclass sortpreserve
     if `"`_fg_bh_seq'"' != "" {
         * A GLOBAL, not a Mata scalar: `mata clear' is the event this key exists
         * to survive.  (A global macro name may not begin with an underscore.)
-        capture confirm number $finegray_bh_ctr
+        capture confirm number $finegray_bh_ctr // stata-dev-ignore: globals - session salt counter; must outlive mata clear (see bh_key note)
         if _rc global finegray_bh_ctr = 0
-        global finegray_bh_ctr = $finegray_bh_ctr + 1
+        global finegray_bh_ctr = $finegray_bh_ctr + 1 // stata-dev-ignore: globals - session salt counter; must outlive mata clear (see bh_key note)
         local _fg_bh_salt = string(clock("`c(current_date)' `c(current_time)'", ///
-            "DMYhms"), "%21x") + "." + "$finegray_bh_ctr"
+            "DMYhms"), "%21x") + "." + "$finegray_bh_ctr" // stata-dev-ignore: globals - session salt counter; must outlive mata clear (see bh_key note)
         mata: _finegray_bh_setkey("`_fg_bh_salt'")
         ereturn local bh_key "`_fg_bh_key'"
     }
@@ -2586,14 +3040,15 @@ program define finegray, eclass sortpreserve
 
     local rc = _rc
 
-    * Clean up temporary matrices (runs on both success and error paths)
-    foreach m in _finegray_b _finegray_V _finegray_ll _finegray_ll_0 ///
-        _finegray_chi2 _finegray_df_m _finegray_conv ///
-        _finegray_rank _finegray_nclust _finegray_basehaz ///
-        _finegray_kbstrata ///
-        _finegray_nwstrata _finegray_minprob _finegray_maxwt ///
-        _finegray_nprobwarn _finegray_nwtwarn {
+    * Clean up temporary matrices (runs on both success and error paths),
+    * then return any caller matrix parked above to its own name.
+    foreach m of local _fg_engmats {
         capture matrix drop `m'
+    }
+    while `"`_fg_parked'"' != "" {
+        gettoken _fg_m _fg_parked : _fg_parked
+        gettoken _fg_pk _fg_parked : _fg_parked
+        capture matrix rename `_fg_pk' `_fg_m'
     }
 
     * Drop FV indicators on error (they persist on success for predict)

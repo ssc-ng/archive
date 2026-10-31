@@ -1,0 +1,21 @@
+d 'RMSTPATH': module to calculate differences in restricted mean survival time (RMST) between two independent groups
+d
+d  The command estimates and visualizes differences in restricted
+d mean survival time (RMST) between two independent groups using
+d unadjusted Kaplan–Meier survival estimates. It allows users to
+d evaluate RMST differences across multiple prespecified follow-up
+d horizons while generating a continuous RMST difference trajectory
+d that incorporates the observed event times. 
+d
+d KW: survival data
+d KW: survival time
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20261030
+d
+d Author:  Christina Laternser ,  Ann & Robert H. Lurie Children’s Hospital of Chicago
+d Support: email christina.laternser.research@@gmail.com
+d
+f rmstpath.ado
+f rmstpath.sthlp

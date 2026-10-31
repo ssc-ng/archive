@@ -9,7 +9,7 @@ d average of the unit coefficients, and its variance	is
 d estimated from their dispersion (Pesaran and Smith 1995). Slopes
 d may differ freely across units. 
 d
-d KW: panbel data
+d KW: panel data
 d KW: cross-sectional dependence
 d
 d Requires: Stata version 14

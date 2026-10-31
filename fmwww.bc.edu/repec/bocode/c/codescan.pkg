@@ -1,0 +1,48 @@
+d 'CODESCAN': module to scan wide-format code variables for pattern matches
+d
+d  codescan scans wide-format code variables, such as dx1-dx30 or
+d proc1-proc20 in registry and claims data, for pattern matches
+d using regular expressions or prefix matching, with rules given
+d inline or read from a reusable CSV or Stata code dictionary. It
+d creates binary indicators or per-row counts for each defined
+d condition, supports exclusion patterns, applies lookback and
+d lookforward time windows around a reference date, reports
+d prevalence, and can collapse to patient-level summaries or merge
+d them back onto the rows. Results are returned in r() and can be
+d placed in a named frame, saved as a dataset, or exported to CSV
+d or Excel. Diagnostics include per-variable contributions,
+d pairwise co-occurrence, and multi-window sensitivity with
+d denominators. The companion command codescan_describe inventories
+d the code values in the same variables before any rules are
+d written and can draft a starter codefile. It works with ICD, KVA,
+d CPT, ATC, OPCS, or any string code system. 
+d
+d KW: ICD codes
+d KW: diagnosis codes
+d KW: procedure codes
+d KW: drug codes
+d KW: registry data
+d KW: claims data
+d KW: pattern matching
+d KW: regular expressions
+d KW: comorbidity
+d KW: code lists
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261030
+d
+d Author: Timothy P Copeland, Karolinska Institutet
+d Support: email timothy.copeland@@ki.se
+d
+f codescan.ado
+f ../_/_codescan_engine.ado
+f ../_/_codescan_codefile.ado
+f ../_/_codescan_definitions.ado
+f ../_/_codescan_outputs.ado
+f ../_/_codescan_parse_filespec.ado
+f ../_/_codescan_validate_path.ado
+f ../_/_codescan_tostring.ado
+f codescan.sthlp
+f codescan_describe.ado
+f codescan_describe.sthlp

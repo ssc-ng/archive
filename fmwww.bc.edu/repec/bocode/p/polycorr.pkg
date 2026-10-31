@@ -1,0 +1,37 @@
+d 'POLYCORR': module to compute polychoric, polyserial and Pearson correlations with a joint covariance matrix, bivariate-normality diagnostics and positive-definite repair
+d
+d      polycorr estimates the correlation between every pair of
+d variables in varlist. Each variable is classified as ordinal or  
+d  continuous. For two ordinal variables it estimates the
+d polychoric correlation, for one ordinal and one continuous
+d variable the	  polyserial correlation, and for two continuous
+d variables the Pearson correlation. With two categories these
+d become the	tetrachoric and biserial correlations.	  Unlike
+d earlier implementations, polycorr is an e-class estimation
+d command.  e(b) holds all k(k-1)/2 correlations and e(V) their   
+d joint asymptotic covariance matrix. The covariance matrix is
+d obtained from the influence functions of the two-step estimator,
+d so	it allows for the estimated thresholds, means and standard
+d deviations. It can be heteroskedasticity robust, cluster robust
+d or	design based (Taylor linearization). It is the matrix
+d needed to compare or test correlations against each other, and to
+d fit	 ordinal structural equation models by weighted least
+d squares. 
+d
+d KW: polychoric correlations
+d KW: polyserial correlations
+d KW: Pearson correlations
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261030
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f polycorr.ado
+f polycorr.sthlp
+f polyindex.ado
+f polyindex.sthlp
+f polycorr_examples.do
+f polycorr_cert.do

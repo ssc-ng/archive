@@ -1,0 +1,1427 @@
+{smcl}
+{* *! version 1.0.0  20oct2026}{...}
+{vieweralsosee "[G] graph twoway" "help twoway"}{...}
+{vieweralsosee "estimates store" "help estimates store"}{...}
+{viewerjumpto "Syntax" "eplot##syntax"}{...}
+{viewerjumpto "Description" "eplot##description"}{...}
+{viewerjumpto "Options" "eplot##options"}{...}
+{viewerjumpto "Remarks" "eplot##remarks"}{...}
+{viewerjumpto "Examples" "eplot##examples"}{...}
+{viewerjumpto "Stored results" "eplot##results"}{...}
+{viewerjumpto "Also see" "eplot##alsosee"}{...}
+{viewerjumpto "Author" "eplot##author"}{...}
+
+{title:Title}
+
+{p2colset 5 14 16 2}{...}
+{p2col:{cmd:eplot} {hline 2}}Unified effect plotting for forest plots and coefficient plots{p_end}
+{p2colreset}{...}
+
+
+{marker syntax}{...}
+{title:Syntax}
+
+{pstd}
+Plot effects from data in memory:
+
+{p 8 16 2}
+{cmd:eplot} {it:esvar} {it:lcivar} {it:ucivar} {ifin} [{cmd:,} {it:options}]
+
+
+{pstd}
+Plot coefficients from stored estimates (single or multiple models):
+
+{p 8 16 2}
+{cmd:eplot} [{it:namelist}] [{cmd:,} {it:options}]
+
+
+{pstd}
+Plot from matrix:
+
+{p 8 16 2}
+{cmd:eplot} {cmd:,} {opt m:atrix(matname)} [{it:options}]
+
+{pstd}
+Plot from a graph-ready frame:
+
+{p 8 16 2}
+{cmd:eplot} [{cmd:if}] [{cmd:in}] {cmd:,} {opt fr:ame(framename)} [{it:options}]
+
+
+{synoptset 32 tabbed}{...}
+{synopthdr}
+{synoptline}
+{syntab:Data specification}
+{synopt:{opt m:atrix(matname)}}use a matrix of estimates as input{p_end}
+{synopt:{opt fr:ame(framename)}}use a graph-ready frame as input{p_end}
+{synopt:{opt lab:els(varname)}}variable containing row labels{p_end}
+{synopt:{opt wei:ghts(varname)}}variable for marker/box sizing{p_end}
+{synopt:{opt t:ype(varname)}}row type indicator{p_end}
+{synopt:{opt pv:alue(varname)}}p-values for stars and {cmd:r(pvalues)}{p_end}
+{synopt:{opt est:imate(varname)}}frame estimate variable{p_end}
+{synopt:{opt ll(varname)}}frame lower-limit variable; default {cmd:ll}{p_end}
+{synopt:{opt ul(varname)}}frame upper-limit variable; default {cmd:ul}{p_end}
+{synopt:{opt rowt:ype(varname)}}frame synonym for {opt type()}{p_end}
+
+{syntab:Coefficient selection}
+{synopt:{opt keep(coeflist)}}keep specified coefficients{p_end}
+{synopt:{opt drop(coeflist)}}drop specified coefficients{p_end}
+{synopt:{opt ren:ame(spec)}}rename coefficients (estimates mode){p_end}
+{synopt:{opt nocons:tant}}drop the constant (_cons){p_end}
+
+{syntab:Labeling}
+{synopt:{opt coefl:abels(spec)}}custom coefficient/effect labels{p_end}
+{synopt:{opt gr:oups(spec)}}define groups of effects with labels{p_end}
+{synopt:{opt head:ers(spec)}}insert section headers{p_end}
+{synopt:{opt head:ings(spec)}}alias for {opt headers()}{p_end}
+{synopt:{opt gap(#)}}space between adjacent groups{p_end}
+
+{syntab:Transform}
+{synopt:{opt eform}}exponentiate estimates (for OR, HR, RR){p_end}
+{synopt:{opt logs:cale}}logarithmic effect axis{p_end}
+{synopt:{opt res:cale(#)}}multiply estimates by #{p_end}
+
+{syntab:Reference lines}
+{synopt:{opt xl:ine(numlist[, line_options label(strlist[, opts])])}}add reference lines; repeatable{p_end}
+{synopt:{opt xlab:el(spec)}}effect-axis tick specification{p_end}
+{synopt:{opt nogr:id}}suppress the effect-axis grid{p_end}
+{synopt:{opt null(#[, line_options])}}null hypothesis line position and style{p_end}
+{synopt:{opt nonull}}suppress null line{p_end}
+
+{syntab:Confidence intervals}
+{synopt:{opt lev:el(#)}}CI level; default is {cmd:c(level)}{p_end}
+{synopt:{opt noci}}suppress all interval geometry{p_end}
+{synopt:{opt cic:ap}}draw capped CI lines{p_end}
+
+{syntab:Display}
+{synopt:{opt dp(#)}}decimal places; default is 2{p_end}
+{synopt:{opt eff:ect(string[, atnull])}}effect-axis title{p_end}
+{synopt:{opt val:ues}}annotate rows with formatted effects{p_end}
+{synopt:{opt vf:ormat(fmt)}}format for values; default {cmd:%24.2f}{p_end}
+{synopt:{opt vg:ap(#)}}values-column gap; default 0.15{p_end}
+{synopt:{opt vs:ize(textsizestyle)}}values text size; default {cmd:vsmall}{p_end}
+{synopt:{opt vc:olor(colorstyle)}}values text color; default {cmd:gs4}{p_end}
+{synopt:{opt vti:tle(string)}}values-column header; default {opt effect()}{p_end}
+{synopt:{opt vmiss:ing(string)}}values text for type 2 rows{p_end}
+{synopt:{opt base:levels}}show base levels as reference rows{p_end}
+{synopt:{opt vref:erence(string)}}values text for base-level rows{p_end}
+{synopt:{opt labsize(textsizestyle)}}row-label text size; default {cmd:small}{p_end}
+{synopt:{opt star:s}}add significance stars to values{p_end}
+{synopt:{opt sigc:olors}}color markers by CI significance{p_end}
+{synopt:{opt sigc:olor(color)}}significant-effect color{p_end}
+{synopt:{opt insignc:olor(color)}}non-significant-effect color{p_end}
+{synopt:{opt sty:le(name)}}plot style preset{p_end}
+{synopt:{opt f:avors(left right[, suboptions])}}directional annotation text{p_end}
+
+{syntab:Prediction intervals (data and frame modes)}
+{synopt:{opt pi(lci_var uci_var)}}draw prediction-interval whiskers{p_end}
+
+{syntab:Heterogeneity (data and frame modes)}
+{synopt:{opt i:2(string)}}display I-squared value in note{p_end}
+{synopt:{opt tau:2(string)}}display tau-squared value in note{p_end}
+{synopt:{opt q:stat(string)}}display Q statistic in note{p_end}
+{synopt:{opt het:row}}show the statistics as a row{p_end}
+
+{syntab:Layout}
+{synopt:{opt hor:izontal}}horizontal layout (default){p_end}
+{synopt:{opt vert:ical}}vertical layout{p_end}
+{synopt:{opt sort}}sort coefficients by effect size{p_end}
+{synopt:{opt ord:er(coeflist)}}explicit coefficient ordering{p_end}
+
+{syntab:Multi-model (estimates mode)}
+{synopt:{opt modell:abels(strlist)}}custom legend labels for each model{p_end}
+{synopt:{opt off:set(#)}}set between-model spacing{p_end}
+{synopt:{opt pal:ette(colorlist)}}color palette for models{p_end}
+{synopt:{opt leg:endopts(string)}}additional legend options{p_end}
+
+{syntab:Markers}
+{synopt:{opt mc:olor(color)}}marker color{p_end}
+{synopt:{opt msy:mbol(symbol)}}marker symbol; default is {cmd:O}{p_end}
+{synopt:{opt msi:ze(size)}}marker size; default is {cmd:medium}{p_end}
+{synopt:{opt boxs:cale(#)}}scale weighted boxes; default {cmd:100}{p_end}
+{synopt:{opt nobox}}suppress weighted boxes{p_end}
+{synopt:{opt nodi:amonds}}replace pooled diamonds with markers{p_end}
+{synopt:{opt diamondc:olor(colors)}}overall [subgroup] diamond colors{p_end}
+{synopt:{opt cico:lor(color)}}CI line color{p_end}
+{synopt:{opt ciw:idth(lwstyle)}}CI line width{p_end}
+
+{syntab:Graph options}
+{synopt:{opt ti:tle(string)}}graph title{p_end}
+{synopt:{opt sub:title(string)}}graph subtitle{p_end}
+{synopt:{opt note(string)}}graph note{p_end}
+{synopt:{opt name(string)}}graph name{p_end}
+{synopt:{opt sav:ing(filename)}}save graph to file{p_end}
+{synopt:{opt scheme(schemename)}}graph scheme{p_end}
+{synopt:{opt plotr:egion(options)}}plot region options{p_end}
+{synopt:{opt exp:ort(frame[, replace])}}write the plotted rows to a frame{p_end}
+{synopt:{opt graphr:egion(options)}}graph region options{p_end}
+{synopt:{opt asp:ect(#)}}aspect ratio{p_end}
+{synopt:{opt xsc:ale(axis_suboptions)}}x-axis style; range set by {cmd:eplot}{p_end}
+{synopt:{opt ysc:ale(axis_suboptions)}}y-axis style; range set by {cmd:eplot}{p_end}
+{synopt:{it:twoway_options}}other {help twoway} options{p_end}
+{synoptline}
+
+
+{marker description}{...}
+{title:Description}
+
+{pstd}
+{cmd:eplot} creates forest plots and coefficient plots from data in memory, stored
+estimation results, matrices, or graph-ready frames. Instead of switching
+between separate plotting commands for different workflows, {cmd:eplot} provides one
+interface for all four sources.
+
+{pstd}
+{bf:Quick start.} Run a regression and see the coefficients immediately:
+
+	{cmd:. sysuse auto, clear}
+	{cmd:. regress price mpg weight foreign}
+	{cmd:. eplot ., drop(_cons) cicap}
+
+{pstd}
+{cmd:eplot} supports four input modes. It detects the mode automatically
+from the arguments you supply:
+
+{phang2}
+{bf:1. Data mode} — you supply three numeric variables ({it:esvar lcivar ucivar}). {cmd:eplot}
+treats them as point estimates and confidence limits. This is the mode for
+meta-analysis results, pre-computed estimates, or any tabular effect data that
+already lives in your dataset. An effect row needs an estimate and both
+limits. A row with no estimate, or with neither limit, is left out of the plot, and
+{cmd:eplot} prints a note naming each such row (by its {opt labels()} text, or
+by observation number); to keep it in the plot as a labelled row, give it
+{opt type()} code 2 (see {opt vmissing()}). Limits come in pairs: a row with
+exactly one missing limit exits with {cmd:r(198)}, as an incomplete
+{opt pi()} pair does. An estimate that lies outside its own interval is drawn
+as given, with a note naming the row (usually a variable given in the wrong
+position). Frame mode applies the same rules. Each row label travels in the
+graph command, so the number of rows is bounded by Stata's macro length
+({cmd:c(macrolen)}, raised by {help set_maxvar:set maxvar}); past it
+{cmd:eplot} exits with {cmd:r(920)} before drawing.
+
+{phang2}
+{bf:2. Estimates mode} — you supply nothing, a single {cmd:.} (for the active model), or
+a list of stored estimate names. {cmd:eplot} reads coefficients directly from the
+estimation results. This is the fastest path from model to plot: run a
+regression, then type {cmd:eplot .} to see the coefficients. Multiple stored
+estimates can be overlaid for model comparison.
+
+{pmore}
+For estimation results with multiple equations, repeated coefficient names
+retain their equation prefix so distinct effects are not overlaid. Single-equation
+models continue to align by coefficient name in multi-model comparisons. Plotting
+named estimates preserves the caller's active estimation results, including an
+initially empty {cmd:e()} state or results posted by {cmd:ereturn post} without
+{cmd:e(cmd)}. Parameters in the {cmd:/} equation (cutpoints, variance
+components, and ancillary parameters such as {cmd:/lnalpha} or {cmd:/ln_p}) are
+always omitted with a note: Stata reports no Wald {it:p}-value for them and
+computes their confidence intervals on a transformed metric. The same holds
+for the variance components of {cmd:mixed}, {cmd:xtmixed}, {cmd:meqrlogit},
+{cmd:meqrpoisson}, {cmd:xtmelogit}, and {cmd:xtmepoisson}, which they post in
+equations of their own ({cmd:lns1_1_1}, {cmd:atr1_1_1_2}, {cmd:lnsig_e},
+...): only the first {cmd:e(k_f)} coefficients, the fixed effects, are
+plotted. Ancillary parameters posted in named equations rather than in
+{cmd:/} are omitted with a note too: the last {cmd:e(k_aux)} equations, which
+Stata displays as {cmd:/}{it:name} (for example {cmd:lnsigma} after
+{cmd:intreg}, {cmd:lnsig2v} and {cmd:lnsig2u} after {cmd:frontier}, the
+cutpoints and {cmd:sigma2_u} after {cmd:xtologit}), and {cmd:sigma_u} and
+{cmd:sigma_e} after {cmd:xtreg, mle}.
+
+{pmore}
+Intervals and p-values follow each model's estimation distribution: {cmd:eplot}
+uses the t distribution when {cmd:e(df_r)} is available and positive, and the
+normal distribution otherwise. When the estimator posts parameter-specific
+degrees of freedom whose column stripe matches {cmd:e(b)} ({cmd:e(df_mi)} after
+{cmd:mi estimate, post}; {cmd:e(df)} after {cmd:mixed, dfmethod()}), each
+coefficient uses its own degrees of freedom, as in Stata's own coefficient
+table. The limits of {cmd:proportion} (and {cmd:svy: proportion}) are not
+{it:b} +/- {it:t}*{it:se}: they are read from Stata's own table, replayed at
+{opt level()}, so they are logit-transformed by default and follow a
+{cmd:citype()} given when the model was fitted. When {cmd:e(V_df)} is posted with {cmd:e(b)}'s stripe (after
+{cmd:mixed, dfmethod(kroger)}), the standard errors come from it rather than
+{cmd:e(V)}, matching Stata's Kenward-Roger table. In multi-model plots this
+choice is made separately for each stored result. Omitted and base-level
+terms, which carry exactly zero variance, are not plotted; any other
+coefficient with zero variance (one constrained to a fixed value) is omitted
+with a note naming it. Results from {cmd:mi estimate} must be posted with its {cmd:post}
+option, because {cmd:e(b)} and {cmd:e(V)} are otherwise absent.
+
+{phang2}
+{bf:3. Matrix mode} — you specify {opt matrix(matname)}. {cmd:eplot} reads a
+Stata matrix with either 2 columns ({it:b}, {it:se}) or 3 columns ({it:b},
+{it:lci}, {it:uci}). Row names become labels. This is useful when results
+come from post-estimation commands or custom calculations. Standard errors
+must be nonnegative, lower limits may not exceed upper limits, and every
+required matrix cell must be nonmissing. A row label that cannot be
+represented as a Stata matrix stripe (one longer than 32 characters, or with a
+{cmd:.} that reads as an operator) gets the positional name {cmd:row}{it:#}
+in returned matrices, in every mode, while the graph retains the full label; the
+other rows keep their names.
+
+{phang2}
+{bf:4. Frame mode} — you specify {opt frame(framename)}. {cmd:eplot} reads a
+named Stata frame containing graph-ready variables. By default the frame must
+contain numeric {cmd:estimate}, {cmd:ll}, and {cmd:ul}; if present, string
+{cmd:label}, numeric or string {cmd:rowtype} or {cmd:type}, numeric
+{cmd:weight} or {cmd:weights}, and numeric {cmd:pvalue} are used automatically. Use {opt estimate()}, {opt ll()},
+{opt ul()}, {opt labels()}, {opt rowtype()}, {opt type()}, {opt weights()}, or
+{opt pvalue()} to override those defaults. An automatically used {cmd:weight}
+or {cmd:type} variable that is not a usable weight or row-type variable (a
+weight missing for an effect row, or unrelated text in {cmd:type}) is ignored
+with a note; named in {opt weights()} or {opt type()}, the same variable is
+refused with {cmd:r(198)}.
+
+{pstd}
+{bf:Choosing the right mode.}
+
+{p2colset 9 24 26 2}{...}
+{p2col:Situation}Mode to use{p_end}
+{p2line}
+{p2col:Just ran a regression}Estimates: {cmd:eplot .}{p_end}
+{p2col:Comparing two models}Estimates: {cmd:eplot m1 m2}{p_end}
+{p2col:Have effect sizes in variables}Data: {cmd:eplot es lci uci}{p_end}
+{p2col:Results in a matrix}Matrix: {cmd:eplot, matrix(R)}{p_end}
+{p2col:Results in a graph-ready frame}Frame: {cmd:eplot, frame(F)}{p_end}
+{p2colreset}{...}
+
+{pstd}
+When {opt eform} is specified, the constant ({cmd:_cons}) is automatically
+suppressed because exp(_cons) is not interpretable. A note is displayed only
+when a constant is actually dropped.
+
+{pstd}
+{bf:Mode detection.} Mode detection gives precedence to data mode when the first
+three tokens are numeric variables. If stored estimate names happen to match
+numeric variable names in memory, {cmd:eplot} will treat the call as data mode,
+with a note naming the clash. In
+ambiguous cases, use {cmd:eplot .} to force estimates mode, {opt matrix()} to force matrix
+mode, or {opt frame()} to force frame mode.
+
+
+{marker options}{...}
+{title:Options}
+
+{pstd}
+Not every option works in every mode. The availability tags below indicate
+which modes accept each option: {bf:[D]} = data mode, {bf:[E]} = estimates mode, {bf:[M]} =
+matrix mode, {bf:[F]} = frame mode. Options without a tag work in all four modes.
+
+{dlgtab:Data specification}
+
+{phang}
+{opt m:atrix(matname)} {bf:[M]}
+names a Stata matrix of estimates and selects matrix mode; it may not be
+combined with {opt frame()}. A 2-column matrix
+is read as (b, se) and {cmd:eplot} constructs symmetric normal-approximation
+limits at {opt level()}; standard errors must be nonmissing and nonnegative. A
+3-column matrix is read as (b, lci, uci) and the supplied limits are used as
+given, so lower limits may not exceed upper limits. Row names become the row
+labels, including names that contain spaces; unnamed rows are labeled
+{cmd:r1}, {cmd:r2}, and so on. When a row name repeats, every row keeps its
+equation prefix ({it:eq}{cmd::}{it:name}), as in estimates mode, so the rows
+remain distinguishable and selectable by {opt keep()} and {opt drop()}. Rows containing
+missing values are rejected rather than silently dropped. Only a 2-column
+matrix carries standard errors, so {opt stars} and {cmd:r(pvalues)} require
+that form.
+
+{phang}
+{opt frame(framename)} {bf:[F]}
+specifies a named Stata frame containing graph-ready effect rows. The default
+variable contract is numeric {cmd:estimate}, {cmd:ll}, and {cmd:ul}, with
+optional string {cmd:label}, numeric or string {cmd:rowtype} or {cmd:type},
+numeric {cmd:pvalue}, and numeric {cmd:weight} or {cmd:weights}. The active dataset and active graph
+scheme are left unchanged unless the user supplies normal graph options such as
+{opt scheme()}. Rows with a missing estimate or interval are handled as in data
+mode: noted and left out, or refused when exactly one limit is missing.
+
+{phang}
+{opt labels(varname)} {bf:[D,F]} specifies a string variable containing labels for each
+row (e.g., study names). If omitted, rows are labeled "Row 1", "Row 2", etc.,
+by observation number in the dataset (or frame), also under {cmd:if} and
+{cmd:in}.
+
+{phang}
+{opt weights(varname)} {bf:[D,F]}
+specifies a numeric variable that controls marker (or box) size. In a forest
+plot this typically represents study weights; larger values produce larger
+markers. When {opt weights()} is specified, markers are drawn as filled
+squares whose area is proportional to the weight. Every plotted regular-effect
+row (type 1 with a nonmissing estimate) must then carry a nonmissing, strictly
+positive weight, because a missing, zero, or negative weight would drop that
+row's marker while leaving the row in {cmd:r(table)} and in its interval
+layer. Structural, subgroup, and overall rows need no weight. With
+{opt sigcolors}, significant and non-significant boxes share one size scale,
+so equal weights draw equal boxes. Add {opt nobox}
+to plot weighted data without weight-proportional squares.
+
+{phang}
+{opt type(varname)} {bf:[D,F]}
+specifies a variable indicating the role of each row in the plot. This lets
+you include headers, subgroup summaries, and overall pooled estimates in one
+dataset. Accepted values:
+
+{p2colset 9 20 22 2}{...}
+{p2col:Value}Meaning{p_end}
+{p2line}
+{p2col:0}Header or label row (no point or CI){p_end}
+{p2col:1}Regular effect (individual study or coefficient){p_end}
+{p2col:2}Missing or excluded row (see {opt vmissing()}){p_end}
+{p2col:3}Subgroup pooled effect (drawn as a diamond){p_end}
+{p2col:4}Heterogeneity information row{p_end}
+{p2col:5}Overall pooled effect (drawn as a diamond){p_end}
+{p2col:6}Blank spacer row{p_end}
+{p2colreset}{...}
+
+{pmore}
+If {opt type()} is a string variable, {cmd:"effect"} and {cmd:"regular"} map
+to type 1; {cmd:"header"} and {cmd:"section"} map to type 0; {cmd:"missing"}
+and {cmd:"reference"} map to type 2; and {cmd:"subgroup"}, {cmd:"hetinfo"},
+{cmd:"overall"}, and {cmd:"blank"} map to types 3 through 6. Numeric values
+must be integer codes from 0 through 6. Unknown string or numeric codes are
+rejected. If {opt type()} is omitted, all
+rows are treated as regular effects (type 1).
+
+{phang}
+{opt pvalue(varname)} {bf:[D,F]}
+specifies a numeric p-value variable. In data and frame modes, {opt stars}
+uses this variable for significance stars when {opt values} is specified, and
+{cmd:eplot} returns it in {cmd:r(pvalues)} for plotted effect rows. Nonmissing
+p-values must lie between 0 and 1.
+
+{phang}
+{opt estimate(varname)} {bf:[F]}, {opt ll(varname)} {bf:[F]}, and
+{opt ul(varname)} {bf:[F]}
+override the default frame-mode point estimate, lower confidence limit, and
+upper confidence limit variables. These options are needed only when the frame
+does not use the default names {cmd:estimate}, {cmd:ll}, and {cmd:ul}.
+
+{phang}
+{opt rowtype(varname)} {bf:[F]}
+is a frame-mode synonym for {opt type()}. If neither is specified,
+{cmd:eplot} automatically uses {cmd:rowtype} when that variable exists, then
+falls back to {cmd:type} when present.
+
+{dlgtab:Coefficient selection}
+
+{phang}
+{opt keep(coeflist)}
+specifies which coefficients to keep. All others are dropped. Wildcards
+{cmd:*} and {cmd:?} are supported. Example: {cmd:keep(mpg weight)} keeps only
+those two coefficients. In data and frame modes the names are matched against
+the source {opt labels()} values, including structural rows such as headers and
+spacers, before {opt coeflabels()} renames anything. In estimates and matrix
+modes a name matches the plotted name, the name without its equation prefix,
+or the full {it:eq}{cmd::}{it:name}, so {cmd:keep(price:mpg)} and
+{cmd:keep(price:*)} select by equation whether or not the plotted names show
+it. Every name or pattern must match at least one row: one that matches
+nothing exits with {cmd:r(198)} and names the unmatched term, as in
+{opt order()}. Selection that leaves no rows, or no plottable effect rows, is
+an error rather than an empty graph.
+
+{phang}
+{opt drop(coeflist)}
+specifies which coefficients to drop. All others are kept. Wildcards are
+supported. Example: {cmd:drop(_cons)} removes the constant. Names are matched
+as described under {opt keep()} (in data and frame modes, against the source
+{opt labels()} values). A name or pattern that matches no coefficient of the
+model exits with {cmd:r(198)}; one that names a coefficient already removed by
+{opt keep()}, a base level, or a coefficient omitted for zero variance is not
+an error, and neither is {cmd:drop(_cons)} for a model without a constant.
+
+{phang}
+{opt noconstant}
+drops the constant ({cmd:_cons}) from the plot. As with {cmd:drop(_cons)}, it
+is not an error when there is no constant; the same holds for the constant
+that {opt eform} suppresses automatically.
+
+{phang}
+{opt rename(spec)} {bf:[E]} renames coefficients for
+display. Syntax: {cmd:rename(oldname = newname oldname2 = newname2)}. Each
+mapping must contain nonempty names around {cmd:=}, and every source name must
+match a coefficient. All mappings apply at once to the original names, so a
+swap ({cmd:rename(mpg = weight weight = mpg)}) and a chain
+({cmd:rename(a = b b = c)}) rename each coefficient exactly once; naming the
+same source twice exits with {cmd:r(198)}. Mapping two coefficients of the
+same model to one name exits with {cmd:r(198)}; mapping coefficients of
+different models to one name aligns them on a shared row. Automatic variable
+labels and {opt coeflabels()} follow the NEW name: a coefficient renamed to
+{cmd:weight} is labelled with the variable label of {cmd:weight}, and
+{cmd:coeflabels()} must name it as {cmd:weight}.
+
+{dlgtab:Labeling}
+
+{phang}
+{opt coeflabels(spec)} assigns custom labels to coefficients or
+effects. Syntax: {cmd:coeflabels(coef1 = "Label 1" coef2 = "Label 2")}. In data
+and frame modes, labels are matched against the {opt labels()} variable. Each
+mapping must be well formed, and every named effect must exist. In every mode
+{opt coeflabels()} is applied last: {opt keep()}, {opt drop()}, {opt ord:er()},
+{opt groups()}, and {opt headers()} all key on the original coefficient or
+label values, so a call such as
+{cmd:coeflabels(x = "Exposure") groups(x = "Domain")} is well defined.
+
+{phang}
+{opt groups(spec)} {bf:[D,F]} {bf:[E single-model]} groups coefficients under
+section headers.{p_end}
+
+{pmore}
+Syntax: {cmd:groups(coef1 coef2 = "Group A" coef3 coef4 = "Group B")}. Group
+headers appear as bold text above the first coefficient in each group. Each
+group must have a nonempty coefficient list and label, every named effect
+must exist, and a coefficient may belong to only one group; listing it in two
+groups exits with {cmd:r(198)}. In data and frame modes a label with spaces is
+named in quotes: {cmd:groups("Study A" "Study B" = "Trials")}.{p_end}
+
+{pmore}
+The members of a group are always displayed together: they move to the
+position of the group's first member in display order (after
+{opt order()}), keep their display order among themselves, and the header is
+placed directly above them. Rows outside every group keep their order. So
+with coefficients displayed as {cmd:mpg weight length},
+{cmd:groups(mpg length = "G1" weight = "G2")} shows {bf:G1}, {cmd:mpg},
+{cmd:length}, {bf:G2}, {cmd:weight}, and the order of names within a group
+list does not matter.{p_end}
+
+{phang}
+{opt gap(#)} {bf:[D,F]} {bf:[E single-model]} adds extra vertical space between adjacent
+{opt groups()} blocks: a blank row follows every group except the last one
+displayed. The value sets the gap size in row-height units; the default
+is {cmd:0} (no extra space) and must be nonmissing and nonnegative. Useful for visually separating clinical domains in
+forest plots without inserting blank rows in the source data.
+
+{phang}
+{opt headers(spec)} {bf:[D,F]} {bf:[E single-model]} inserts a section header before a specified
+coefficient. Syntax: {cmd:headers(coef1 = "Section Header")}. Use this when you want
+a header above a single coefficient rather than grouping multiple
+coefficients. Each mapping must be well formed and match an effect; when
+several rows share the label, the header goes above the first of them, and
+headers given for one row appear in the order given. {opt headings()}
+is accepted as an alias.
+
+{dlgtab:Transform}
+
+{phang}
+{opt eform} exponentiates the point estimates and confidence limits before
+plotting. Use this after models estimated on the log scale — for example,
+{cmd:logit} (odds ratios), {cmd:stcox} (hazard ratios), or {cmd:poisson} (incidence-rate
+ratios). The null line is automatically set to 1 instead of 0. In single-model
+estimates mode, the x-axis label names the column the command's own table
+names: "Odds Ratio" after {cmd:logit}, {cmd:logistic}, {cmd:clogit},
+{cmd:ologit}, and their {cmd:xt} and {cmd:me} forms; "RRR" after
+{cmd:mlogit}; "IRR" after {cmd:poisson}, {cmd:xtpoisson}, {cmd:mepoisson}, {cmd:nbreg},
+{cmd:menbreg}, {cmd:zip}, {cmd:tpoisson}, {cmd:tnbreg}, and {cmd:gnbreg}; "SHR" after
+{cmd:stcrreg}; "Hazard Ratio" after {cmd:stcox} and proportional-hazards
+{cmd:streg} or {cmd:mestreg}; "Time Ratio" after accelerated failure-time
+{cmd:streg} or {cmd:mestreg}; for {cmd:glm}, "Odds Ratio" with a logit link and
+"Risk Ratio" or "IRR" with a log link (binomial, or Poisson and negative
+binomial families); and the label {cmd:binreg} posts. Other models, whose
+table reads {cmd:exp(b)}, keep the generic "Effect". In estimates mode {opt eform} follows Stata's own rule for which
+parameters are exponentiated: only coefficients of the first {cmd:e(k_eform)}
+equations (the first equation when {cmd:e(k_eform)} is not set) are
+transformed, and coefficients of further equations, such as the selection
+equation of {cmd:heckman}, are omitted with a note. In matrix mode, rows in the
+{cmd:/} or {cmd:_diparm}{it:#} equations of a transposed {cmd:r(table)} are
+omitted under {opt eform}.
+
+{phang}
+{opt logscale} draws the effect axis on a logarithmic scale, which is the
+natural presentation for ratio effects such as odds, hazard, risk, and
+incidence-rate ratios. Axis padding is multiplicative rather than additive, so
+the padded limits stay strictly positive, and the ticks are placed on a decade
+lattice (for example {cmd:0.5 1 2 5 10 20}) instead of an evenly spaced linear
+one; a range wider than twelve decades labels every {it:k}th decade, at most
+twelve ticks. When the data span less than a 3-fold range and contain the null, the
+default ticks are instead {it:null}*{it:r}^{it:k} for the smallest {it:r} of
+1.1, 1.25, 1.5, and 2 giving 4 to 9 ticks (e.g. {cmd:0.8 1 1.25 1.56 1.95 2.44}
+for data from 0.8 to 2), which
+are symmetric about the null on the log axis. Every plotted value, including a point estimate that lies outside its own
+interval, must be strictly positive; {cmd:eplot} exits with {cmd:r(198)}
+otherwise, as it does for a nonpositive {opt xlabel()} tick. The null line defaults to {cmd:1} under {opt logscale}
+even without {opt eform}, and {opt null()} and {opt xline()} positions must be
+positive.
+
+{phang}
+{opt rescale(#)} multiplies all estimates and confidence limits by {it:#} on
+the estimation scale. Useful for rescaling units (e.g., per 10-unit increase). With
+{opt eform} the multiplication comes first, so {cmd:rescale(10)} plots
+exp(10{it:b}), the ratio per 10 units. With a negative multiplier, {cmd:eplot}
+swaps the transformed endpoints so the lower limit remains less than or equal
+to the upper limit. The factor must be nonmissing and nonzero.
+
+{dlgtab:Reference lines}
+
+{phang}
+{opt null(#[, line_options])}
+sets the position of the null hypothesis line. Default is {cmd:0} (or
+{cmd:1} when {opt eform} is specified). Override to use a different reference
+value. The position must be a nonmissing number. {it:line_options} after a
+comma replace the default dashed gray style, e.g.,
+{cmd:null(1, lcolor(black) lpattern(solid))}. When every interval lies on
+one side of the null, the axis keeps the data range and {cmd:eplot} notes that
+the null line is not drawn (and does not emit it); add the null to
+{opt xlabel()} or {opt xline()} to show it. With {opt favors()} the range
+always includes the null, because the labels read away from it. A null above
+the data is still drawn when {opt values} is specified, because the values
+column extends the axis past it.
+
+{phang}
+{opt nonull}
+suppresses the null hypothesis line entirely.
+
+{phang}
+{opt xline(numlist[, line_options label(strlist)])}
+adds additional vertical reference lines at the specified positions. The effect
+axis extends to every position. By default
+the added lines use a light dashed style; supply {it:line_options} after a comma
+(for example, {cmd:xline(0.5, lpattern(dash) lcolor(red))}) to override the
+appearance of every added line. {opt xline()} may be repeated to give lines
+different styles, e.g., {cmd:xline(0.5, lcolor(red)) xline(2, lcolor(blue))}; every
+occurrence extends the axis and is checked like the first.
+
+{pmore}
+{opt label(strlist)} labels the lines, one string per position in the order
+given, e.g., {cmd:xline(1.13 1.30, label("Women vs men, 18-39" ""))}; an empty
+string leaves that line unlabelled, and a single line's label need not be
+quoted. Each label is drawn at the top of the plot, just right of its line (just
+left of it for a line in the right half of the effect range, so it stays inside
+the plot), clear of the rows and of the {opt favors()} text; with {opt values} it
+sits a row above the values-column header. Suboptions after a comma inside
+{opt label()} style the text: {cmd:size()}, {cmd:color()}, and
+{cmd:placement(auto|e|w|ne|nw|se|sw|c)}, e.g.,
+{cmd:xline(1.3, label("Cut-off", size(small) color(black)))}; the defaults are
+{cmd:size(vsmall)}, {cmd:color(gs5)}, and {cmd:placement(auto)}. Text after a
+comma that is not one of these stays part of an unquoted label. In vertical layout
+the label sits above the line beside the first row. A count that does not match
+the positions exits with {cmd:r(198)}.
+
+{phang}
+{opt xlabel(spec)}
+controls the tick marks on the effect axis. In horizontal layout this maps
+to Stata's {cmd:xlabel()}; in vertical layout it maps to {cmd:ylabel()}, so
+you can control the effect scale without worrying about orientation. The
+effect-axis range is extended to include every numeric tick position given, on
+a linear or a {opt logscale} axis, so no labelled tick falls off the axis; identical
+{opt xlabel()} lists therefore give separate graphs a common effect
+range when the outermost ticks lie beyond each graph's data plus {cmd:eplot}'s
+5% padding and {opt values} is not specified. With the
+default ticks {cmd:eplot} draws a light grid; a user {opt xlabel()} draws no grid,
+including one the scheme would draw, unless its suboptions include {cmd:grid}
+(e.g., {cmd:xlabel(0.5 1 2, grid)}).
+
+{phang}
+{opt nogrid} suppresses the effect-axis grid that {cmd:eplot} draws with its
+default ticks. It may not be combined with {cmd:xlabel(..., grid)}.
+
+{dlgtab:Confidence intervals}
+
+{phang}
+{opt level(#)} sets the confidence level for interval construction in
+estimates and matrix modes. The default is the current {cmd:c(level)}. In data
+and frame modes, confidence limits are taken directly from the supplied
+variables, so {opt level()} only labels them: it sets the "{it:#}% CI" text of
+the default {opt effect()} title, which reads 95 without {opt level()}
+whatever {cmd:c(level)} is, and changes no interval.
+
+{phang}
+{opt noci}
+suppresses all interval geometry. Regular-effect whiskers are omitted, and
+pooled rows (data/frame {opt type()} 3 and 5) are drawn as plain markers
+instead of diamonds, because the diamond encodes the interval in its
+width. Only point estimates are plotted, and the axis range is set by them
+rather than by the hidden intervals.
+
+{phang}
+{opt cic:ap}
+draws capped confidence interval lines (using {cmd:rcap}) instead of the
+default uncapped lines ({cmd:rspike}). Caps add horizontal end bars to each
+whisker.
+
+{dlgtab:Display}
+
+{phang}
+{opt dp(#)}
+sets the number of decimal places used in {opt values} annotation. Default
+is {cmd:2}. Must be an integer from 0 to 20 (beyond 20 places Stata's fixed
+formats no longer print the value), and the default format is
+{cmd:%}{it:w}{cmd:.}{it:dp}{cmd:f} with {it:w} = {it:dp} + 22. Ignored if
+{opt vformat()} is specified.
+
+{phang}
+{opt effect(string[, atnull])} sets the x-axis title (or y-axis title in vertical
+layout). Default is "Estimate (95% CI)", or "Effect (95% CI)" when {opt eform} is
+specified; estimates mode uses "Coefficient ({it:#}% CI)" at the {opt level()}
+in effect, and matrix mode reports that level in place of 95. Override with a custom label such as
+{cmd:effect("Odds Ratio (95% CI)")}. In data and frame modes the default label
+always reads "95% CI" because the confidence limits are supplied directly and
+{cmd:eplot} cannot know their level; set {opt effect()} explicitly if your intervals are
+not 95%. With {opt values}, {opt effect()} also heads the values column unless
+{opt vtitle()} is specified; when {opt effect()} is not given either, the
+column header takes the default text and the axis title drops its
+" ({it:#}% CI)" suffix, so the two do not repeat each other.
+
+{pmore}
+With {opt values} (horizontal layout), the plot region runs on under the values
+column, so the title is centred on the drawn effect axis instead of on the plot
+region, drawn the way an {cmd:atnull} title is. A passed-through {cmd:xtitle()}
+may give the text and {cmd:size()} and {cmd:color()}, which are carried over. {cmd:twoway}
+places the title itself, centred on the plot region, when
+{cmd:xtitle("")} suppresses it, when {cmd:xtitle()} has any other suboption
+(such as {cmd:placement()}, {cmd:justification()}, {cmd:orientation()}, or
+{cmd:margin()}) or is given more than once (in both cases a note says so), and
+when {cmd:xscale(alt)} moves the axis to the top or {cmd:xscale(off)} hides it. An
+option naming {cmd:axis(2)} exits with error 198, as {cmd:eplot} draws a
+single effect axis.
+
+{pmore}
+{cmd:atnull} places the title directly under the {opt null()} value on its own
+row, instead of centred on the effect axis. For example,
+{cmd:effect("Time ratio", atnull)}. {cmd:effect(, atnull)} keeps the default
+title. A title that itself ends in ", atnull" is read as the suboption. The
+title's size and color still come from {cmd:xtitle(, size() color())}
+({cmd:ytitle()} in vertical layout), but its text must come from
+{opt effect()}: {cmd:xtitle()} text with {cmd:atnull} is an error. The title is
+drawn as the only label of a second effect axis on the same side, so do not
+add options to {cmd:axis(2)}; with {cmd:favors(, below)} it is instead added
+text on the null, below the favors labels. When the null lies outside the effect axis the
+title is centred as usual and a note says so.
+
+{phang}
+{opt values} {bf:[D,F]} {bf:[E single-model]} {bf:[M]} annotates each row with formatted text
+showing the point estimate and confidence interval (e.g., "0.85 (0.72,
+0.99)"). Requires horizontal layout. See also {opt vformat()} for custom
+formatting. The x range runs on to the values column, so {cmd:eplot} draws the
+effect axis
+line itself and stops it at the end of the effect range rather than under the
+column; line styling given in {cmd:xscale()} ({cmd:lcolor()}, {cmd:lwidth()},
+{cmd:lpattern()}, {cmd:lstyle()}) is applied to it. With {cmd:xscale(noline)},
+{cmd:xscale(line)}, {cmd:xscale(off)}, or a {opt plotregion(margin())} of your
+own, the axis line is twoway's own. A {opt plotregion()} without {cmd:margin()}
+is merged with the values-column margin; a {cmd:margin()} of explicit sides
+({cmd:l+2 t=1} ...) without a right side gets the column's right margin added,
+and any other {cmd:margin()} is used as given, with a note.
+
+{phang}
+{opt vformat(fmt)} sets the numeric format for the {opt values} annotation. Default
+is {cmd:%24.2f} (or {cmd:%}{it:w}{cmd:.}{it:dp}{cmd:f}, {it:w} = {it:dp} + 22,
+when {opt dp()} is specified); leading blanks are not printed. For example
+{cmd:vformat(%6.3f)}. With a fixed ({cmd:f}) format the estimate and both
+limits are rounded half away from zero on their decimal values, so 2.675
+prints as {cmd:2.68}, -0.125 as {cmd:-0.13}, and 12.5 as {cmd:13} at
+{cmd:dp(0)}; a value that rounds to zero prints as {cmd:0.00} and never as
+{cmd:-0.00}; this holds for a comma-decimal format such as {cmd:%9,2f} too. When
+a number is too wide for the format, all three numbers of that row are
+shown in exponent notation, each of its own value. Other formats ({cmd:%g},
+{cmd:%e}) are applied as given, and no blanks are printed on either side. {cmd:eplot} automatically widens the values column
+margin when formatted text or the {opt vtitle()} header is longer than the
+default layout, up to half the graph width; a column that needs more is held
+there, may be cut off at the right edge, and a note suggests a smaller
+{opt vsize()}, a shorter {opt vtitle()} or format, or a wider graph with
+{cmd:xsize()}. {it:fmt} must be
+a {cmd:%f}, {cmd:%g}, or {cmd:%e} display format; {cmd:eplot} exits with
+{cmd:r(198)} otherwise, including for date, time, and hexadecimal formats.
+
+{phang}
+{opt vgap(#)} {bf:[D,F]} {bf:[E single-model]} {bf:[M]} sets the gap between the
+effect axis and the {opt values} column as a fraction of the axis span (of its
+log span under {opt logscale}); default is 0.15. The column starts to the right of
+the widest interval, the null line when it is drawn and the last labelled tick,
+so no reference line or tick label runs through it.
+
+{phang}
+{opt vsize(textsizestyle)} {bf:[D,F]} {bf:[E single-model]} {bf:[M]} sets the size of
+the {opt values} text and its column header; default is {cmd:vsmall}, one step
+smaller than the row labels, and {cmd:vsize(small)} matches the default row
+labels. Any {help textsizestyle} is accepted, and {cmd:*}{it:#} is relative to
+{cmd:vsmall}. A larger size widens the values margin accordingly, and an
+unknown size exits with {cmd:r(198)}.
+
+{phang}
+{opt vcolor(colorstyle)} {bf:[D,F]} {bf:[E single-model]} {bf:[M]} sets the color of
+the {opt values} text; default is {cmd:gs4}. It must name one valid color.
+
+{phang}
+{opt vtitle(string)} {bf:[D,F]} {bf:[E single-model]} {bf:[M]} sets the bold header
+above the {opt values} column. The default is the {opt effect()} text, which
+remains the axis title, so {cmd:effect("Time ratio") vtitle("Time ratio (95% CI)")}
+gives each its own wording.
+
+{phang}
+{opt vmissing(string)} {bf:[D,F]} sets the {opt values} text printed on type 2
+(missing or excluded) rows; default is "Not estimated". {cmd:vmissing("")} leaves
+those rows blank. Rows whose string {opt type()} is {cmd:"reference"} also map to
+type 2 but are reference categories, not missing estimates, so they stay blank.
+
+{phang}
+{opt baselevels} {bf:[E single-model]} shows the base level of each factor
+variable (e.g. {cmd:1b.rep78}) as a reference row in its stripe position, with
+no marker or interval. With {opt values} its text is "1.00 (reference)" under
+{opt eform} and "0.00 (reference)" otherwise (in the {opt vformat()}
+format); {opt vreference(string)} replaces it. Reference rows count in {cmd:r(N)} but not
+in {cmd:r(k)} or {cmd:r(table)}. Base levels of interactions and omitted
+(collinear) terms are not shown, and neither are those of an equation with no
+estimated coefficient, such as the base outcome of {cmd:mlogit}. Multi-model
+calls exit with {cmd:r(198)}.
+
+{phang}
+{opt labsize(textsizestyle)} sets the size of the row labels; default is
+{cmd:small}. {cmd:*}{it:#} is relative to {cmd:small}.
+
+{phang}
+{opt stars} {bf:[D,F]} {bf:[E single-model]} {bf:[M 2-col]}
+appends significance stars to the {opt values} annotation: {cmd:*} for
+p < 0.05, {cmd:**} for p < 0.01, {cmd:***} for p < 0.001. In data and frame
+modes, {opt pvalue()} or an auto-detected frame variable named {cmd:pvalue}
+supplies the p-values. In estimates mode, p-values are computed from the
+coefficient and its standard error. In matrix mode, this requires a 2-column
+matrix (b and se); 3-column matrices (b, lci, uci) do not carry standard
+errors so stars are not available.
+
+{phang}
+{opt sigc:olors} {bf:[D,F]} {bf:[E single-model]} {bf:[M]}
+colors markers and CI lines by statistical significance. Effects whose
+confidence interval excludes the null value are drawn in {opt sigcolor()}
+(default {cmd:cranberry}); non-significant effects are drawn in
+{opt insigncolor()} (default {cmd:gs10}). Significance is determined
+relative to the {opt null()} position. When plotting pre-exponentiated
+ratios without {opt eform}, set {cmd:null(1)} to use the correct reference.
+
+{phang}
+{opt sigc:olor(color)} {bf:[D,F]} {bf:[E single-model]} {bf:[M]}
+color for statistically significant effects when {opt sigcolors} is
+specified. Default is {cmd:cranberry}. {opt sigcolor()} and
+{opt insigncolor()} require {opt sigcolors}; without it they exit with
+{cmd:r(198)} rather than being ignored.
+
+{phang}
+{opt insignc:olor(color)} {bf:[D,F]} {bf:[E single-model]} {bf:[M]} color for
+non-significant effects when {opt sigc:olors} is
+specified. Default is {cmd:gs10}.
+
+{pstd}
+In estimates mode, explicitly supplying {opt values}, {opt stars},
+{opt sigcolors}, {opt sigcolor()}, or {opt insigncolor()} with more than one
+model is an error. Multi-model plots use {opt palette()} for model colors.
+
+{phang}
+{opt style(name)}
+applies a style preset. Presets set sensible defaults for common journal
+and plot styles; any option you specify explicitly overrides the preset. A
+preset's {opt values} component applies only where {opt values} itself does,
+so multi-model estimates plots take only the preset's marker and interval
+settings; a preset's colors are defaults that yield to the per-model
+{opt palette()} there.
+
+{p2colset 9 22 24 2}{...}
+{p2col:Preset}What it sets{p_end}
+{p2line}
+{p2col:{cmd:forest}}values annotation, navy markers{p_end}
+{p2col:{cmd:coef}}capped CIs, circle markers{p_end}
+{p2col:{cmd:lancet}}cranberry diamonds, capped CIs{p_end}
+{p2col:{cmd:jama}}black squares, values annotation{p_end}
+{p2col:{cmd:nejm}}dark navy circles, capped CIs, values{p_end}
+{p2col:{cmd:bmj}}black squares, capped CIs, values{p_end}
+{p2colreset}{...}
+
+{phang}
+{opt favors(left right[, suboptions])} adds directional annotation text
+(horizontal layout only). Provide exactly two nonempty labels, quoting labels
+that contain spaces, e.g., {cmd:favors("Favors Treatment" "Favors Control")}. Useful in forest plots to show
+the clinical interpretation of each direction. Each label is anchored at
+{opt null()} and reads outward from it: the left label ends, and the right
+label starts, {cmd:gap()} from the null, whatever the length of the text, the
+tick span, or the size of the graph, so neither crosses the null line or its
+tick label, in {cmd:graph combine} too. By default the labels sit in a row
+below the last effect, in the size of the effect-axis tick labels, with the
+null line running between them; grid lines, when drawn, cross the row (use
+{cmd:below} to keep the labels clear of every line). Suboptions:
+
+{p2colset 9 20 22 2}{...}
+{p2col:{cmd:ends}}anchor the labels at the left and right ends of the effect axis, reading inward, clear of lines near the null{p_end}
+{p2col:{cmd:below}}draw the labels below the axis tick labels, where no reference line crosses them{p_end}
+{p2col:{cmd:arrows}}add arrows pointing away from the null, e.g., "{c -}> Favors Control"{p_end}
+{p2col:{cmd:size(}{it:textsizestyle}{cmd:)}}text size; default is the {cmd:xlabel(, labsize())} size, or the scheme's tick-label size{p_end}
+{p2col:{cmd:color(}{it:colorstyle}{cmd:)}}text color; default {cmd:gs5}{p_end}
+{p2col:{cmd:gap(}{it:#}{cmd:)}}the gap between each label and the null, in relative size units (as in {cmd:margin()}); default {cmd:1.5}; {cmd:gap(*}{it:#}{cmd:)} scales the default{p_end}
+{p2colreset}{...}
+
+{pmore}
+{cmd:ends} and {cmd:below} may not be combined, and {cmd:gap()} may not be
+combined with {cmd:ends}. {cmd:twoway} centres axis labels on their position,
+so {cmd:below} draws the labels as added text hung from the bottom edge of the
+plot region, under the tick labels by the scheme's tick length, tick-label gap,
+and tick-label size (or the
+{cmd:xlabel(, labsize() labgap() tlength() tposition())} values); it sets the bottom plot-region margin to 0, with a note
+when {cmd:plotregion(margin())} gave one, and moves the effect-axis title down
+to clear the labels. With {cmd:effect(, atnull)} the title is hung on the null
+the same way, below the labels. Rotated ({cmd:angle()}) or multi-line tick
+labels, and sizes in absolute units (such as {cmd:labsize(10pt)} or
+{cmd:size(10pt)}), cannot be measured, so the labels then sit inside the plot
+and a note says so. In either row a long label is not clipped at the edge of
+the plot region and nothing warns when it runs past the graph; shorten it or
+widen the axis on that side with {cmd:xlabel()} or {cmd:xscale(range())}. When {opt null()} is
+not strictly inside the labelled tick span, one side has no room, so
+{cmd:eplot} places the labels at the axis ends and says so in a note.
+
+{dlgtab:Prediction intervals (data and frame modes)}
+
+{phang}
+{opt pi(lci_var uci_var)} {bf:[D,F]}
+draws prediction interval whiskers as dashed lines behind the confidence
+interval whiskers. Specify two numeric variables for the lower and upper
+prediction limits. Prediction intervals are wider than confidence intervals
+and show the range within which a future study's true effect is expected to
+fall. For plotted effect and pooled rows, limits must be supplied as complete
+pairs and the lower limit may not exceed the upper limit. Negative
+{opt rescale()} factors preserve lower/upper ordering.
+
+{dlgtab:Heterogeneity (data and frame modes)}
+
+{phang}
+{opt i:2(string)} {bf:[D,F]}
+displays the I-squared (I{c 178}) heterogeneity value in the graph note. The value
+is displayed as-is — {cmd:eplot} does not compute it. Include any desired
+percent sign, for example {cmd:i2("42.1%")}.
+
+{phang}
+{opt tau:2(string)} {bf:[D,F]}
+displays the between-study variance ({it:tau}{c 178}) in the graph note.
+
+{phang}
+{opt qstat(string)} {bf:[D,F]} displays the Q statistic (Cochran's Q) in the graph
+note. Example: {cmd:qstat("8.63, df=5, p=0.125")}.
+
+{phang}
+{opt hetrow} {bf:[D,F]} shows the {opt i2()}, {opt tau2()}, and {opt qstat()}
+text as a row under the last overall (type 5) row, as "I{c 178} = ..., {it:tau}{c 178}
+= ..., Q = ...", instead of in the graph note. It requires at least one of
+them.
+
+{dlgtab:Layout}
+
+{phang}
+{opt horizontal}
+creates a horizontal plot with effect sizes on the x-axis and row labels on
+the y-axis. This is the default and is the standard orientation for forest
+plots.
+
+{phang}
+{opt vertical}
+creates a vertical plot with effect sizes on the y-axis. It may not be combined
+with {opt horizontal}.
+
+{phang}
+{opt sort}
+sorts coefficients by effect size, smallest at top. Only regular effects are
+sorted, and only within their block: headers, pooled estimates, het-info and
+blank rows (including those added by {opt groups()} and {opt headers()}) keep
+their positions, the effects between two of them are sorted among themselves,
+and each {opt groups()} list is sorted within its own rows. Without such rows
+the sort is global. In multi-model estimates mode coefficients are sorted by
+the first model's estimate.
+
+{phang}
+{opt ord:er(coeflist)}
+specifies an explicit ordering of coefficients. List the coefficient names
+(or labels, in data mode) in the desired display order. Rows not listed keep
+their relative order after the listed ones, and rows that share a label keep
+their input order. A listed name that matches no
+coefficient exits with {cmd:r(198)}, as in {opt keep()} and {opt drop()}. It
+may not be combined with {opt sort}.
+
+{dlgtab:Multi-model (estimates mode)}
+
+{phang}
+{opt modellabels(strlist)} {bf:[E]} specifies custom legend labels for each
+model. Provide one label per model, in the same order as the estimate
+names. Quoted strings are supported: {cmd:modellabels("Base Model" "Adjusted")}. This
+option requires multiple models and its label count must match exactly.
+
+{phang}
+{opt offset(#)} {bf:[E]}
+controls the vertical spacing between models when overlaying multiple
+estimates on the same coefficient row. Default is {cmd:0.15}, reduced to
+0.6/({it:models}-1) with more than five models so one coefficient's markers
+never span more than 0.6 of a row; a larger {opt offset()} that spreads them
+over 0.9 rows or more draws a note. Increase for more visual separation; decrease
+for tighter grouping. The value must be
+nonmissing and nonnegative, and the option requires multiple models.
+
+{phang}
+{opt palette(colorlist)} {bf:[E]} specifies the color palette for multi-model
+plots. Default is
+{cmd:navy cranberry forest_green dkorange purple teal maroon olive_teal}. Provide
+exactly one Stata color per model, quoting RGB triplets such as
+{cmd:"0 128 0"}. This option requires multiple
+models. The default palette cycles beyond its eight colors: model {it:m} uses
+color
+{cmd:mod(}{it:m}{cmd:-1, 8) + 1}, so a ninth model is navy again and a tenth is
+cranberry. A user-supplied {opt palette()} must have exactly one color per
+model, so it never cycles.
+
+{phang}
+{opt legendopts(string)} {bf:[E]}
+passes additional options to the graph legend. Default is
+{cmd:rows(1) pos(6) size(small)}. This option requires multiple models.
+
+{dlgtab:Markers}
+
+{phang}
+{opt mcolor(color)}
+sets the marker color. Default is {cmd:navy}. A color given as an RGB
+triplet is drawn as specified, for example {cmd:mcolor("0 128 0")}. Every
+color option ({opt mcolor()}, {opt cicolor()}, {opt sigcolor()},
+{opt insigncolor()}, and each {opt palette()} entry) must name exactly one
+valid color: a color name, optionally with intensity and opacity
+({cmd:navy*.5}, {cmd:navy%50}), or a quoted RGB, CMYK, or HSV value (see
+{help colorstyle}): RGB is three integers from 0 to 255, CMYK four integers
+from 0 to 255 or four proportions from 0 to 1, and HSV a hue from 0 to 360
+with a saturation and value from 0 to 1. A list of colors where one is
+expected, an unknown name, or a value out of range exits with {cmd:r(198)}; {cmd:twoway}
+would otherwise draw the default color. In
+multi-model estimates mode, {opt mcolor()} takes either one color, applied to
+every model, or exactly one color per model; quote each RGB triplet in a list,
+for example {cmd:mcolor("255 0 0" "0 0 255")}. Without {opt mcolor()} the
+per-model colors come from {opt palette()}; the two options may not be
+combined, because both set the per-model marker colors.
+
+{phang}
+{opt msymbol(symbol)}
+sets the marker symbol. Default is {cmd:O} (filled circle). The symbol is any
+{help symbolstyle}: a synonym such as {cmd:O}, {cmd:Dh}, or {cmd:x}, or a
+style name such as {cmd:circle_hollow}; names are case-sensitive, and an
+unknown name exits with {cmd:r(198)}. Outside multi-model estimates mode,
+{opt msymbol()} takes one symbol, and a list exits with {cmd:r(198)}. In
+multi-model estimates mode, it takes either one symbol, applied to every
+model, or exactly one symbol per model, for example {cmd:msymbol(O D T)}; models
+are otherwise told apart by color alone, which is lost in greyscale
+print and weak for readers with color-vision deficiency, so a per-model symbol
+list is recommended when the graph may be printed in grey.
+
+{phang}
+{opt msize(size)}
+sets the marker size. Default is {cmd:medium} for single-model plots and
+{cmd:medsmall} for multi-model plots. It must be one size: a named size, a
+number, {cmd:*}{it:#}, or {it:#} with a unit such as {cmd:pt}; anything else
+exits with {cmd:r(198)}, where {cmd:twoway} would draw the default size.
+
+{phang}
+{opt boxs:cale(#)} {bf:[D,F]}
+scales the weighted-box marker size. The value is a percentage; default is
+{cmd:100}. Use {cmd:boxscale(150)} for 50% larger boxes or {cmd:boxscale(50)}
+for half-sized boxes. The value must be nonmissing and positive.
+
+{phang}
+{opt nobox} {bf:[D,F]}
+suppresses weighted square markers. Effects are drawn with the standard
+marker symbol instead of weight-proportional squares.
+
+{phang}
+{opt nodiamonds} {bf:[D,F]}
+draws pooled effects (type 3 and 5 rows) as standard markers instead of
+diamonds.
+
+{phang}
+{opt diamondcolor(overall [subgroup])} {bf:[D,F]}
+sets the outline color of the overall (type 5) and subgroup (type 3)
+diamonds; default {cmd:black} and {cmd:maroon}. One color serves both, e.g.,
+{cmd:diamondcolor(cranberry)}; quote an RGB triplet.
+
+{phang}
+{opt cico:lor(color)}
+sets the CI line color. Default matches the marker color. In multi-model
+estimates mode it takes either one color, applied to every model, or exactly
+one color per model, and it may be combined with {opt palette()} (for
+example, colored markers with gray intervals).
+
+{phang}
+{opt ciwidth(lwstyle)}
+sets the CI line width. Default is {cmd:medium}. As with {opt msize()}, it must
+be one width, or eplot exits with {cmd:r(198)}.
+
+{dlgtab:Graph options}
+
+{phang}
+{opt title(string)}, {opt subtitle(string)}, and {opt note(string)}
+set the graph title, subtitle, and note. Without {opt note()}, data and frame
+modes write an automatic note when pooled diamonds or heterogeneity statistics
+are drawn; {cmd:note("")} removes it. With a {opt values} column the title and
+subtitle are centred on the whole graph ({cmd:span}), as the plot region then
+runs on under the column; suboptions given in {opt title()} and
+{opt subtitle()} still apply, and {cmd:title(}{it:...}{cmd:, nospan)} centres a
+title on the plot region again.
+
+{phang}
+{opt export(framename[, replace])} writes the plotted rows, in display order,
+to a new frame: {cmd:label}, {cmd:estimate}, {cmd:ll}, {cmd:ul}, {cmd:pos} (the
+row position), {cmd:type} (data and estimates modes), {cmd:weight} (data mode),
+{cmd:model_id} (estimates mode), {cmd:pvalue} when available (in matrix mode,
+with {opt stars} and a 2-column matrix), and
+{cmd:values} (the values-column text) with {opt values}. The values are as
+plotted, after {opt eform} and {opt rescale()}, and inserted header and spacer
+rows are included, so {cmd:eplot, frame(}{it:framename}{cmd:)} redraws a
+single-model plot without those options; add {cmd:null(1)} (and
+{opt logscale} if it was used) when the original used {opt eform}, since the
+read-back values are already ratios. An existing frame requires
+{cmd:replace}; the current frame and, in frame mode, the {opt frame()} source
+may not be named. The frame is written before the graph is drawn, so, like
+the returned results, it is kept when drawing or saving the graph fails; run
+again with {cmd:replace}.
+
+{phang}
+{opt name(string)} names the graph in memory. {opt saving(filename)} saves
+the graph; include standard {cmd:saving()} suboptions such as {cmd:replace}
+inside the option argument when needed.
+
+{phang}
+{opt scheme(schemename)} applies a Stata graph scheme. An unknown scheme exits
+with {cmd:r(198)}, where {cmd:graph} would fall back to {cmd:s2color}.
+
+{phang}
+{opt plotregion(options)}, {opt graphregion(options)}, and {opt aspect(#)}
+pass plot-region, graph-region, and aspect-ratio settings to {cmd:twoway}.
+
+{phang}
+{opt xscale(axis_suboptions)} and {opt yscale(axis_suboptions)} style the axes,
+e.g., {cmd:xscale(lcolor(black) lwidth(medthin) fextend)} to match another
+panel's axis line, or {cmd:yscale(line)} to draw the row axis line {cmd:eplot}
+hides by default. {cmd:eplot} computes each axis's range itself and emits its own
+{opt xscale()}/{opt yscale()}; your suboptions are merged into them. Geometry
+suboptions {cmd:range()}, {cmd:log}, {cmd:nolog}, {cmd:reverse},
+{cmd:noreverse}, and {cmd:axis()} are rejected with {cmd:r(198)} rather than
+silently overriding the computed range. Use {opt logscale} for a logarithmic
+effect axis.
+
+{phang}
+{it:twoway_options} are any other options accepted by {help twoway}. They are
+appended to the generated graph command; inspect {cmd:r(cmd)} when debugging
+passthrough behavior.
+
+
+{marker examples}{...}
+{title:Examples}
+
+{pstd}
+{bf:Example 1: Basic forest plot from data}
+
+{phang2}{stata "clear":. clear}{p_end}
+{phang2}{cmd:. input str20 study es lci uci weight}{p_end}
+{phang2}{cmd:. "Smith 2020"    -0.16  -0.36  0.03  15.2}{p_end}
+{phang2}{cmd:. "Jones 2021"    -0.33  -0.54 -0.12  18.4}{p_end}
+{phang2}{cmd:. "Brown 2022"    -0.09  -0.25  0.06  22.1}{p_end}
+{phang2}{cmd:. "Wilson 2023"   -0.39  -0.65 -0.12  12.8}{p_end}
+{phang2}{cmd:. "Overall"       -0.24  -0.34 -0.13   .}{p_end}
+{phang2}{cmd:. end}{p_end}
+{phang2}{stata `"gen byte type = cond(study=="Overall", 5, 1)"':. gen byte type = cond(study=="Overall", 5, 1)}{p_end}
+{phang2}{stata "eplot es lci uci, labels(study) weights(weight) type(type)":. eplot es lci uci, labels(study) weights(weight) type(type)}{p_end}
+
+{pstd}
+{bf:Example 2: Forest plot with values annotation}
+
+{phang2}{cmd:. eplot es lci uci, labels(study) weights(weight) type(type) values}{p_end}
+
+{pstd}
+{bf:Example 3: Coefficient plot from regression}
+
+{phang2}{stata "sysuse auto, clear":. sysuse auto, clear}{p_end}
+{phang2}{stata "regress price mpg weight foreign":. regress price mpg weight foreign}{p_end}
+{phang2}{cmd:. eplot ., drop(_cons) coeflabels(mpg = "Miles per Gallon" weight = "Vehicle Weight" foreign = "Foreign Make") cicap}{p_end}
+
+{pstd}
+{bf:Example 4: Multi-model comparison}
+
+{phang2}{stata "sysuse auto, clear":. sysuse auto, clear}{p_end}
+{phang2}{stata "quietly regress price mpg weight foreign":. quietly regress price mpg weight foreign}{p_end}
+{phang2}{stata "estimates store base":. estimates store base}{p_end}
+{phang2}{stata "quietly regress price mpg weight length foreign headroom":. quietly regress price mpg weight length foreign headroom}{p_end}
+{phang2}{stata "estimates store extended":. estimates store extended}{p_end}
+{phang2}{cmd:. eplot base extended, drop(_cons) modellabels("Base" "Extended")}{p_end}
+
+{pstd}
+{bf:Example 5: Sorted coefficients with custom colors}
+
+{phang2}{stata "regress price mpg weight length foreign":. regress price mpg weight length foreign}{p_end}
+{phang2}{cmd:. eplot ., drop(_cons) sort cicap mcolor(cranberry)}{p_end}
+
+{pstd}
+{bf:Example 6: Using groups}
+
+{phang2}{stata "regress price mpg weight length turn foreign rep78":. regress price mpg weight length turn foreign rep78}{p_end}
+{phang2}{cmd:. eplot ., drop(_cons) groups(mpg weight length turn = "Vehicle Characteristics" foreign rep78 = "Other Factors")}{p_end}
+
+{pstd}
+{bf:Example 7: Matrix mode}
+
+{phang2}{cmd:. matrix R = (1.5, 1.1, 2.0 \ 0.8, 0.6, 1.2 \ 1.2, 0.9, 1.6)}{p_end}
+{phang2}{cmd:. matrix rownames R = "Treatment_A" "Treatment_B" "Treatment_C"}{p_end}
+{phang2}{cmd:. eplot, matrix(R) effect("Odds Ratio") null(1)}{p_end}
+
+{pstd}
+{bf:Example 8: Frame mode}
+
+{phang2}{stata "clear":. clear}{p_end}
+{phang2}{cmd:. input str20 label double(estimate ll ul pvalue) str10 rowtype}{p_end}
+{phang2}{cmd:. "Age"      1.12 1.04 1.20 0.004 "effect"}{p_end}
+{phang2}{cmd:. "Sex"      0.86 0.70 1.06 0.150 "effect"}{p_end}
+{phang2}{cmd:. "Overall"  1.03 0.97 1.10 0.320 "overall"}{p_end}
+{phang2}{cmd:. end}{p_end}
+{phang2}{cmd:. frame put label estimate ll ul pvalue rowtype, into(effects)}{p_end}
+{phang2}{cmd:. eplot, frame(effects) values stars effect("Ratio (95% CI)") null(1)}{p_end}
+
+{pstd}
+{bf:Example 9: Logistic regression with eform}
+
+{phang2}{stata "sysuse auto, clear":. sysuse auto, clear}{p_end}
+{phang2}{stata "logit foreign mpg weight length":. logit foreign mpg weight length}{p_end}
+{phang2}{cmd:. eplot ., drop(_cons) eform values effect("Odds Ratio")}{p_end}
+
+{pstd}
+{bf:Example 9b: Odds ratios on a logarithmic effect axis}
+
+{phang2}{stata "sysuse auto, clear":. sysuse auto, clear}{p_end}
+{phang2}{stata "logit foreign mpg weight length":. logit foreign mpg weight length}{p_end}
+{phang2}{cmd:. eplot ., noconstant eform logscale values effect("Odds Ratio")}{p_end}
+
+{pstd}
+{bf:Example 10: Noconstant, auto-labels, and significance stars}
+
+{phang2}{stata "sysuse auto, clear":. sysuse auto, clear}{p_end}
+{phang2}{stata "regress price mpg weight foreign":. regress price mpg weight foreign}{p_end}
+{phang2}{cmd:. eplot ., noconstant stars values}{p_end}
+
+{pstd}
+{bf:Example 11: Color-coded significance}
+
+{phang2}{cmd:. eplot ., noconstant sigcolors sigcolor(navy) insigncolor(gs12) cicap}{p_end}
+
+{pstd}
+{bf:Example 12: Style presets}
+
+{phang2}{cmd:. eplot ., noconstant style(lancet)}{p_end}
+
+{pstd}
+{bf:Example 13: Factor variable labels}
+
+{phang2}{stata "sysuse auto, clear":. sysuse auto, clear}{p_end}
+{phang2}{stata "logit foreign mpg weight i.rep78":. logit foreign mpg weight i.rep78}{p_end}
+{phang2}{cmd:. eplot ., noconstant eform cicap}{p_end}
+
+{pstd}
+{bf:Example 14: Meta-analysis forest plot with heterogeneity}
+
+{phang2}{stata "clear":. clear}{p_end}
+{phang2}{cmd:. input str20 study es lci uci weight byte type}{p_end}
+{phang2}{cmd:. "Smith 2018"   -0.42  -0.78  -0.06  12.3  1}{p_end}
+{phang2}{cmd:. "Jones 2019"   -0.31  -0.58  -0.04  16.8  1}{p_end}
+{phang2}{cmd:. "Brown 2020"   -0.18  -0.41   0.05  21.5  1}{p_end}
+{phang2}{cmd:. "Lee 2021"     -0.55  -0.93  -0.17  10.2  1}{p_end}
+{phang2}{cmd:. "Garcia 2022"  -0.27  -0.49  -0.05  19.1  1}{p_end}
+{phang2}{cmd:. "Patel 2023"   -0.09  -0.35   0.17  20.1  1}{p_end}
+{phang2}{cmd:. "Overall"      -0.28  -0.41  -0.15   .    5}{p_end}
+{phang2}{cmd:. end}{p_end}
+{phang2}{cmd:. eplot es lci uci, labels(study) weights(weight) type(type) values vformat(%4.2f) i2("42.1%") tau2("0.021") qstat("8.63, df=5, p=0.125") effect("Mean Difference (95% CI)")}{p_end}
+
+{pstd}
+{bf:Example 15: Labelled reference line, matched text sizes, and favors at the axis ends}
+
+{pstd}
+The type 2 row prints "Not estimated" in the values column. {opt effect()} titles
+the axis, {opt vtitle()} heads the values column, and {opt vsize(small)} draws the
+values at the row-label size. The extra line is labelled at the top of the plot,
+and the {opt favors()} text sits at the axis ends, away from both lines.
+
+{phang2}{stata "clear":. clear}{p_end}
+{phang2}{cmd:. input str14 group tr lci uci byte type}{p_end}
+{phang2}{cmd:. "Men, 18-39"     1.20 1.05 1.37 1}{p_end}
+{phang2}{cmd:. "Men, 40-59"     1.10 0.98 1.24 1}{p_end}
+{phang2}{cmd:. "Men, 60+"       .    .    .    2}{p_end}
+{phang2}{cmd:. "Women, 18-39"   1.35 1.18 1.55 1}{p_end}
+{phang2}{cmd:. "Women, 40-59"   0.92 0.80 1.06 1}{p_end}
+{phang2}{cmd:. end}{p_end}
+{phang2}{cmd:. eplot tr lci uci, labels(group) type(type) values logscale effect("Time ratio") vtitle("Time ratio (95% CI)") vsize(small) xlabel(0.8 1 1.2 1.5) xscale(lcolor(black) fextend) xline(1.13, label("Women vs men, 18-39")) favors("Shorter" "Longer", ends arrows)}{p_end}
+
+
+{marker remarks}{...}
+{title:Remarks}
+
+{pstd}
+{bf:Choosing a mode.} Use {it:data mode} when you have pre-computed effect sizes in
+variables (e.g., from {cmd:metan}, {cmd:meta summarize}, or another meta-analysis
+package). Use {it:estimates mode} for the fastest path from regression to plot: run
+a model, then {cmd:eplot .} to see the coefficients immediately. Use {it:matrix mode}
+when results live in a Stata matrix from post-estimation commands or custom
+calculations.
+
+{pstd}
+{bf:Journal presets.} The {opt style()} option provides ready-made looks modeled on
+journal conventions: {cmd:lancet} (cranberry diamonds, capped CIs), {cmd:jama} (black
+squares, values), {cmd:nejm} (dark navy circles, capped CIs, values), and {cmd:bmj} (black
+squares, capped CIs, values). The two generic presets, {cmd:forest} and {cmd:coef}, are
+useful starting points for general-purpose plots. User-specified options
+always override preset defaults.
+
+{pstd}
+{bf:Eform and auto-labels.} When {opt eform} is specified in single-model estimates
+mode, {cmd:eplot}
+automatically detects the estimation command and sets the x-axis label: "Odds
+Ratio" after {cmd:logit}/{cmd:logistic}, "Hazard Ratio" after {cmd:stcox}, "IRR" after
+{cmd:poisson}/{cmd:nbreg}. Multi-model plots use the generic default because
+the models may come from different estimators; set {opt effect()} explicitly
+there. Override with {opt effect(string)}. In data mode and matrix mode,
+{opt eform} exponentiates the supplied values (useful when they are on the log
+scale) and shifts the null line to 1.
+
+{pstd}
+{bf:Layering options.} Options in {cmd:eplot} are designed to be layered. Start with a
+bare {cmd:eplot .} call, then add {opt cicap}, {opt values}, {opt sigcolors}, {opt groups()}, or {opt style()}
+incrementally until the plot looks right. Because {opt style()} presets are
+overridden by explicit options, you can start from a preset and customize
+individual elements.
+
+{pstd}
+{bf:Values annotation.} When {opt values} is specified, {cmd:eplot} prints the point estimate
+and confidence interval next to each marker (e.g., "0.85 (0.72, 0.99)"). The
+column width adjusts automatically to accommodate long formatted strings. Use
+{opt vformat()} for custom formatting.
+
+{pstd}
+{bf:Significance visualization.} Two complementary tools are available. {opt stars}
+appends asterisks to the values text. {opt sigcolors} draws significant and
+non-significant effects in contrasting colors. Both can be used together.
+
+{pstd}
+{bf:Prediction intervals and heterogeneity.} In data mode, {opt pi()} overlays prediction
+intervals as dashed whiskers behind the confidence intervals — useful for
+meta-analysis plots that distinguish between the uncertainty around the pooled
+estimate (CI) and the expected range of true effects across studies
+(PI). {opt i2()}, {opt tau2()}, and {opt qstat()} add heterogeneity statistics as a graph note.
+
+{pstd}
+{bf:Working with factor variables.} In estimates mode, {cmd:eplot} recognizes
+factor-variable notation (e.g., {cmd:i.rep78}) and uses Stata's value labels as
+coefficient labels automatically. No {opt coeflabels()} needed unless you want
+custom text.
+
+{pstd}
+{bf:Common patterns.}
+
+{p2colset 9 42 44 2}{...}
+{p2col:Goal}Command{p_end}
+{p2line}
+{p2col:Quick coefficient plot}{cmd:eplot ., noconstant cicap}{p_end}
+{p2col:Odds ratios after logit}{cmd:eplot ., eform values}{p_end}
+{p2col:Compare two models}{cmd:eplot m1 m2, drop(_cons)}{p_end}
+{p2col:Lancet-style forest plot}{cmd:eplot es lci uci, style(lancet)}{p_end}
+{p2col:Significance coloring}{cmd:eplot ., noconstant sigcolors}{p_end}
+{p2colreset}{...}
+
+
+{marker results}{...}
+{title:Stored results}
+
+{pstd}
+{cmd:eplot} stores the following in {cmd:r()}:
+
+{synoptset 18 tabbed}{...}
+{p2col 5 18 22 2: Scalars}{p_end}
+{synopt:{cmd:r(N)}}display rows, including header and gap rows{p_end}
+{synopt:{cmd:r(k)}}plotted regular effects (coefficients){p_end}
+{synopt:{cmd:r(n_models)}}number of models plotted (estimates mode only){p_end}
+
+{p2col 5 18 22 2: Macros}{p_end}
+{synopt:{cmd:r(cmd)}}the full {cmd:twoway} command that was executed{p_end}
+
+{p2col 5 18 22 2: Matrices}{p_end}
+{synopt:{cmd:r(table)}}plotted effects ({it:b}, {it:ll}, {it:ul}); no reference rows{p_end}
+{synopt:{cmd:r(pvalues)}}p-values per plotted effect, when available{p_end}
+
+{pstd}
+{cmd:r(pvalues)} is returned in data and frame modes when {opt pvalue()} is
+supplied, in estimates mode for a single model, and in 2-column matrix mode
+when {opt stars} is specified; in matrix mode it has one row per
+{cmd:r(table)} row, missing for a row with a zero standard error. Neither
+matrix is returned for more than {cmd:c(max_matdim)} rows (a note says so).
+
+{pstd}
+{cmd:r(N)} counts every display row: effect rows plus the header rows that
+{opt groups()} and {opt headers()} generate, the blank spacer rows that
+{opt gap()} adds between groups, {opt baselevels} reference rows, and the
+{opt hetrow} row. In data and frame modes, supplied non-effect rows retained
+through {opt type()} are also included. {cmd:r(k)} excludes headers, gaps,
+diamonds, and reference rows. {cmd:r(table)} has three columns
+({it:b}, {it:ll}, {it:ul}) for one model and three columns per model for a
+multi-model estimates plot. In data and frame modes, pooled subgroup and
+overall rows appear in {cmd:r(table)} even though {cmd:r(k)} counts only
+regular type-1 effects. In estimates mode, {cmd:r(k)} is the number of distinct
+coefficient rows, not the number of model-by-coefficient entries.
+
+{pstd}
+Returned matrices use plotted labels as row names when Stata permits them. Labels
+that cannot be represented as matrix stripes leave the graph unchanged
+but cause all returned row names to fall back to {cmd:row1}, {cmd:row2}, and so on.
+
+
+{marker references}{...}
+{title:References}
+
+{pstd}
+In estimates mode, {cmd:eplot} reproduces the intervals and p-values of
+Stata's own coefficient table from the posted results. The rules it follows
+are documented in these entries of the Stata manuals:
+
+{phang}
+StataCorp. {browse "https://www.stata.com/manuals/pereturn.pdf":[P] ereturn}
+{hline 2} Post the estimation results. In
+{it:Stata Programming Reference Manual}. College Station, TX: Stata
+Press. Grounds the choice of t statistics with {cmd:e(df_r)} degrees of
+freedom when it is posted, and normal statistics otherwise.{p_end}
+
+{phang}
+StataCorp. {browse "https://www.stata.com/manuals/memixed.pdf":[ME] mixed}
+{hline 2} Multilevel mixed-effects linear regression. In
+{it:Stata Multilevel Mixed-Effects Reference Manual}. College Station,
+TX: Stata Press. Grounds the parameter-specific degrees of freedom in
+{cmd:e(df)} after {cmd:dfmethod()}, and the variance matrix {cmd:e(V_df)}
+after {cmd:dfmethod(kroger)}.{p_end}
+
+{phang}
+StataCorp. {browse "https://www.stata.com/manuals/mimiestimate.pdf":[MI] mi estimate}
+{hline 2} Estimation using multiple imputations. In
+{it:Stata Multiple-Imputation Reference Manual}. College Station, TX: Stata
+Press. Grounds the parameter-specific degrees of freedom in
+{cmd:e(df_mi)}, and the rule that {cmd:e(b)} and {cmd:e(V)} are stored only
+with {cmd:post}.{p_end}
+
+{phang}
+StataCorp. {browse "https://www.stata.com/manuals/rml.pdf":[R] ml}
+{hline 2} Maximum likelihood estimation, options for use with
+{cmd:ml display}. In {it:Stata Base Reference Manual}. College Station,
+TX: Stata Press. Grounds the {opt eform} scope: only the first
+{cmd:e(k_eform)} equations are exponentiated, by default the first equation
+alone.{p_end}
+
+
+{marker author}{...}
+{title:Author}
+
+{pstd}Timothy P Copeland, Karolinska Institutet{p_end}
+{pstd}Version 1.0.0, 2026-10-20{p_end}
+
+{pstd}Report bugs and suggestions at{break}
+{browse "https://github.com/tpcopeland/Stata-Tools":https://github.com/tpcopeland/Stata-Tools}{p_end}
+
+{pstd}Check GitHub for the most up-to-date release; it may be newer than the version installed here.{p_end}
+
+
+{marker alsosee}{...}
+{title:Also see}
+
+{psee}
+Help: {help twoway}, {help graph}, {help estimates store}, {help graph combine}
+
+{psee}
+{help meta forestplot} (official meta-analysis forest plots)
+
+{psee}
+User-written: {cmd:coefplot} (Ben Jann, SSC), {cmd:metan} (SSC)
+
+{hline}

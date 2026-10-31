@@ -1,0 +1,1060 @@
+*! crosstab Version 1.0.0  2026/10/20
+*! Cross-tabulation with association measures
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass
+
+/*
+DESCRIPTION:
+    Cross-tabulation table with association measures (OR, RR, RD),
+    Chi-squared or Fisher's exact tests, and trend tests.
+
+SYNTAX:
+    crosstab rowvar colvar [if] [in] [weight], xlsx(filename)
+        [colpct rowpct totalpct exact fisher
+        or rr rd trend cochran label missing smallcells(integer)
+        sheet(string) title(string)
+        footnote(string) font(string) fontsize(integer) borderstyle(string)
+        boldp(real) zebra headershade headercolor(string) zebracolor(string)
+        csv(filename) frame(name) open]
+*/
+
+program define crosstab, rclass
+    version 17.0
+    tempname _caller_r
+    _return hold `_caller_r'
+    local _own_r_posted = 0
+    local _orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    tempname _xlsx_book
+
+capture noisily {
+
+    capture putexcel close
+
+    * Auto-load shared helper programs
+    capture _tabtools_helpers_ready
+    if !_rc capture mata: assert(findexternal("_tt_sep_parse()") != NULL)
+    if _rc {
+        capture findfile _tabtools_common.ado
+        if _rc == 0 {
+            run "`r(fn)'"
+            capture _tabtools_helpers_ready
+            if _rc {
+                display as error "_tabtools_common.ado failed to load fully; reinstall tabtools"
+                exit 111
+            }
+        }
+        else {
+            display as error "_tabtools_common.ado not found; reinstall tabtools"
+            exit 111
+        }
+    }
+    _tabtools_require_helpers
+
+**# Syntax and Validation
+    syntax varlist(min=2 max=2) [if] [in] [fweight], ///
+        [xlsx(string) excel(string) sheet(string) ///
+        COLpct ROWpct TOTALpct EXact FIsher ///
+        OR RR RD TRend COCHran LABel MISsing ///
+        Level(cilevel) ///
+        DIGits(integer -1) ///
+        title(string) ///
+        FOOTnote(string) FONT(string) FONTSIZE(integer -1) BORDERstyle(string) ///
+        HEADERShade HEADERColor(string) ZEBRAColor(string) ///
+        BOLDp(real -1) zebra ///
+        csv(string) MARKdown(string) MDAPPend FRAme(string) ///
+        SMALLCells(string) NOSMALLCells open]
+
+    gettoken rowvar colvar : varlist
+    * The level as shown: at most 15 significant digits, so 99.9 never prints
+    * as the double's 17-digit 99.90000000000001; r(ci_level) stays numeric.
+    local _level_txt = strtrim(ustrregexra(string(`level', "%21.15g"), "-(?=[0.,]+\z)", ""))
+
+    capture confirm numeric variable `rowvar'
+    if _rc {
+        noisily display as error "rowvar and colvar must be numeric categorical variables"
+        exit 109
+    }
+    capture confirm numeric variable `colvar'
+    if _rc {
+        noisily display as error "rowvar and colvar must be numeric categorical variables"
+        exit 109
+    }
+
+    * Accept excel() as synonym
+    if `"`macval(xlsx)'"' == "" & `"`macval(excel)'"' != "" mata: st_local("xlsx", st_local("excel"))
+    * Session destinations (tabtools set workbook/markdown) apply only when
+    * sheet() asks for a sheet; an explicit option wins.
+    local _sess_xlsx 0
+    local _sess_md 0
+    if `"`macval(sheet)'"' != "" {
+        _tabtools_set_sinks resolve, xlsx(`"`xlsx'"') markdown(`"`markdown'"') `mdappend'
+        local xlsx `"`_ss_xlsx'"'
+        local markdown `"`_ss_md'"'
+        local mdappend "`_ss_mdappend'"
+        local _sess_xlsx = `_ss_xlsx_sess'
+        local _sess_md = `_ss_md_sess'
+        if `"`xlsx'"' == "" display as text "(tabtools: sheet() ignored; no xlsx() and no session workbook)"
+    }
+    local _has_xlsx = `"`macval(xlsx)'"' != ""
+    if "`open'" != "" & !`_has_xlsx' {
+        noisily display as error "open requires xlsx() or excel()"
+        exit 198
+    }
+
+    * Resolve persistent defaults
+    if `boldp' == -1 & "$TABTOOLS_BOLDP" != "" local boldp = $TABTOOLS_BOLDP
+    if `digits' == -1 {
+        if "$TABTOOLS_DIGITS" != "" local digits = $TABTOOLS_DIGITS
+        else local digits = 1
+    }
+    if `digits' < 0 | `digits' > 6 {
+        noisily display as error "digits() must be between 0 and 6"
+        exit 198
+    }
+    if `boldp' != -1 & (`boldp' <= 0 | `boldp' >= 1) {
+        noisily display as error "boldp() must be between 0 and 1"
+        exit 198
+    }
+    * smallcells(# [, primary]) / nosmallcells / session default.
+    _tabtools_smallcells_opt, smallcells(`smallcells') `nosmallcells'
+    local smallcells `"`_sc_k'"'
+    local _sc_primary = ("`_sc_mode'" == "primary")
+    local _sc_active = "`smallcells'" != ""
+    local _sc_note ""
+    if `_sc_active' {
+        local _sc_note "Counts below `smallcells' are shown as <`smallcells'; complementary cells are shown as ≥`smallcells' to prevent exact reconstruction."
+        if `_sc_primary' local _sc_note "Counts from 1 to `=`smallcells' - 1' are shown as <`smallcells' without a percentage (primary suppression only: no complementary cells are masked). This protects printed counts only."
+        if strpos(`"`macval(footnote)'"', `"`_sc_note'"') == 0 {
+            if `"`macval(footnote)'"' == "" local footnote `"`_sc_note'"'
+            * A footnote in paragraphs (" \ ") gets the notice as its own
+            * last paragraph.
+            else if strpos(`"`macval(footnote)'"', " \ ") {
+                local footnote `"`macval(footnote)' \ `_sc_note'"'
+            }
+            else {
+                local footnote `"`macval(footnote)' `_sc_note'"'
+            }
+        }
+    }
+
+    * Defaults
+    if `"`macval(sheet)'"' == "" local sheet "Crosstab"
+    _tabtools_validate_sheet `"`macval(sheet)'"' "sheet()"
+    if `_has_xlsx' {
+        if !strmatch(lower(`"`macval(xlsx)'"'), "*.xlsx") {
+            noisily display as error "xlsx() must have .xlsx extension"
+            exit 198
+        }
+        _tabtools_validate_path `"`macval(xlsx)'"' "xlsx()"
+    }
+    if "`csv'" != "" _tabtools_validate_path "`csv'" "csv()"
+    if "`mdappend'" != "" & `"`markdown'"' == "" {
+        noisily display as error "mdappend requires markdown()"
+        exit 198
+    }
+    if `"`markdown'"' != "" {
+        _tabtools_validate_path `"`markdown'"' "markdown()"
+        local _md_lower = lower(`"`markdown'"')
+        if !(strmatch(`"`_md_lower'"', "*.md") | ///
+             strmatch(`"`_md_lower'"', "*.markdown") | ///
+             strmatch(`"`_md_lower'"', "*.qmd") | ///
+             strmatch(`"`_md_lower'"', "*.rmd")) {
+            noisily display as error "markdown() must specify a .md, .markdown, .qmd, or .rmd file"
+            exit 198
+        }
+    }
+    _tabtools_check_sinks, xlsx(`"`xlsx'"') csv(`"`csv'"') markdown(`"`markdown'"')
+    * C2 (codex audit 2026-09-26): validate frame() before anything is
+    * written. It was checked only when the frame was stored, after the CSV
+    * and Markdown files, so an occupied or invalid frame returned an error
+    * after an existing report had already been overwritten.
+    if `"`frame'"' != "" {
+        _tabtools_frame_preflight `"`frame'"' "frame()"
+    }
+
+    if "`cochran'" != "" & "`trend'" != "" {
+        noisily display as error "cochran and trend are mutually exclusive; choose one trend test"
+        exit 198
+    }
+    if "`cochran'" != "" & "`missing'" != "" {
+        noisily display as error "cochran cannot be combined with missing (a missing category is not ordered)"
+        exit 198
+    }
+    * The Spearman trend test has the same problem: spearman drops the
+    * missing categories that the table displays, so the p for trend came
+    * from fewer rows than the table's N, with no note. Refuse it too.
+    if "`trend'" != "" & "`missing'" != "" {
+        noisily display as error "trend cannot be combined with missing (a missing category is not ordered)"
+        exit 198
+    }
+
+    local _pct_modes = 0
+    if "`colpct'" != "" local ++_pct_modes
+    if "`rowpct'" != "" local ++_pct_modes
+    if "`totalpct'" != "" local ++_pct_modes
+    if `_pct_modes' > 1 {
+        noisily display as error "Specify only one of colpct, rowpct, or totalpct"
+        exit 198
+    }
+
+    * Default to column percentages
+    if "`colpct'" == "" & "`rowpct'" == "" & "`totalpct'" == "" local colpct "colpct"
+
+    marksample touse, novarlist
+    if "`missing'" == "" markout `touse' `rowvar' `colvar'
+
+    quietly count if `touse'
+    if r(N) == 0 {
+        noisily display as error "no observations"
+        noisily display as error "Hint: check your {bf:if}/{bf:in} conditions and whether variables have missing values"
+        exit 2000
+    }
+
+    * Resolve formatting
+    _tabtools_resolve_format, font(`"`font'"') fontsize(`fontsize') borderstyle(`borderstyle') headershade(`headershade') zebra(`zebra')
+    if "`headershade'" != "" local _headershade 1
+
+    _tabtools_resolve_colors, headercolor(`"`headercolor'"') zebracolor(`"`zebracolor'"')
+
+**# Cross-tabulation
+    preserve
+    qui keep if `touse'
+    local _missing_opt ""
+    if "`missing'" != "" local _missing_opt "missing"
+
+    * Get levels
+    qui levelsof `rowvar', local(row_levels) `missing'
+    qui levelsof `colvar', local(col_levels) `missing'
+    local n_rows : word count `row_levels'
+    local n_cols : word count `col_levels'
+    if ("`trend'" != "" | "`cochran'" != "") & (`n_rows' < 2 | `n_cols' < 2) {
+        noisily display as error "the requested trend test requires at least two analyzable row and column levels"
+        restore
+        exit 498
+    }
+    if "`cochran'" != "" & `n_rows' != 2 {
+        noisily display as error "cochran requires a binary row (outcome) variable; `rowvar' has `n_rows' levels"
+        restore
+        exit 198
+    }
+    local _assoc_requested = ("`or'" != "" | "`rr'" != "" | "`rd'" != "")
+    if `_assoc_requested' & (`n_rows' != 2 | `n_cols' != 2) {
+        noisily display as error "or, rr, and rd require a 2x2 table"
+        restore
+        exit 198
+    }
+
+    * Row and column labels
+    forvalues r = 1/`n_rows' {
+        local _rlv : word `r' of `row_levels'
+        local _rlv_is_missing = missing(real(`"`_rlv'"'))
+        if "`label'" != "" {
+            if `_rlv_is_missing' & "`_rlv'" == "." local _rlbl "Missing"
+            else if `_rlv_is_missing' local _rlbl "Missing (`_rlv')"
+            else local _rlbl : label (`rowvar') `_rlv'
+        }
+        else {
+            if `_rlv_is_missing' & "`_rlv'" == "." local _rlbl "Missing"
+            else if `_rlv_is_missing' local _rlbl "Missing (`_rlv')"
+            else local _rlbl "`_rlv'"
+        }
+        if `"`macval(_rlbl)'"' == "" local _rlbl "`_rlv'"
+        local rlabel_`r' : copy local _rlbl
+    }
+    forvalues c = 1/`n_cols' {
+        local _clv : word `c' of `col_levels'
+        local _clv_is_missing = missing(real(`"`_clv'"'))
+        if "`label'" != "" {
+            if `_clv_is_missing' & "`_clv'" == "." local _clbl "Missing"
+            else if `_clv_is_missing' local _clbl "Missing (`_clv')"
+            else local _clbl : label (`colvar') `_clv'
+        }
+        else {
+            if `_clv_is_missing' & "`_clv'" == "." local _clbl "Missing"
+            else if `_clv_is_missing' local _clbl "Missing (`_clv')"
+            else local _clbl "`_clv'"
+        }
+        if `"`macval(_clbl)'"' == "" local _clbl "`_clv'"
+        local clabel_`c' : copy local _clbl
+    }
+
+    * Variable labels. C1 (codex audit 2026-09-26): labels are data; every
+    * later use is macval()-protected, so a $word or a backtick in a variable
+    * or value label is exported as typed.
+    local _rowlabel : variable label `rowvar'
+    if `"`macval(_rowlabel)'"' == "" local _rowlabel "`rowvar'"
+    local _collabel : variable label `colvar'
+    if `"`macval(_collabel)'"' == "" local _collabel "`colvar'"
+
+    * Tabulate with matcell
+    tempname _freq _rowsum _colsum
+    qui tab `rowvar' `colvar' [`weight'`exp'], matcell(`_freq') `_missing_opt'
+    local _total_n = r(N)
+
+    * Row and column marginals
+    matrix `_rowsum' = `_freq' * J(`n_cols', 1, 1)
+    matrix `_colsum' = J(1, `n_rows', 1) * `_freq'
+
+    * Decide suppression while exact numeric lineage is still available.
+    tempname _scmask _scrowmask _sccolmask _sc_exact _sc_sensitive
+    tempname _sc_rowexact _sc_rowsens _sc_colexact _sc_colsens
+    local _sc_totalmask 0
+    local _sc_nprimary 0
+    local _sc_nsecondary 0
+    local _sc_nderived 0
+    local _sc_suppress_derived 0
+    if `_sc_active' {
+        matrix `_sc_exact' = J(`n_rows', `n_cols', 1)
+        matrix `_sc_sensitive' = J(`n_rows', `n_cols', 1)
+        matrix `_sc_rowexact' = J(`n_rows', 1, 1)
+        matrix `_sc_rowsens' = J(`n_rows', 1, 1)
+        matrix `_sc_colexact' = J(1, `n_cols', 1)
+        matrix `_sc_colsens' = J(1, `n_cols', 1)
+        capture noisily _tabtools_smallcells, counts(`_freq') ///
+            exact(`_sc_exact') sensitive(`_sc_sensitive') ///
+            rowexact(`_sc_rowexact') rowsensitive(`_sc_rowsens') ///
+            colexact(`_sc_colexact') colsensitive(`_sc_colsens') ///
+            grandexact(1) grandsensitive(1) smallcells(`smallcells') ///
+            `=cond(`_sc_primary', "primary", "")'
+        if _rc {
+            local _sc_rc = _rc
+            restore
+            exit `_sc_rc'
+        }
+        matrix `_scmask' = r(mask)
+        matrix `_scrowmask' = r(rowmask)
+        matrix `_sccolmask' = r(colmask)
+        local _sc_totalmask = r(totalmask)
+        local _sc_nprimary = r(N_primary_suppressed)
+        local _sc_nsecondary = r(N_secondary_suppressed)
+        * primary mode protects printed counts only: tests and association
+        * measures are not count cells and stay as computed.
+        local _sc_suppress_derived = `_sc_nprimary' > 0 & !`_sc_primary'
+    }
+    else {
+        matrix `_scmask' = J(`n_rows', `n_cols', 0)
+        matrix `_scrowmask' = J(`n_rows', 1, 0)
+        matrix `_sccolmask' = J(1, `n_cols', 0)
+    }
+
+    * Chi-squared / Fisher's exact test
+    local _chi2 .
+    local _p .
+    local _test_name ""
+    * Check expected cell counts for auto-Fisher
+    local _min_expected = .
+    forvalues r = 1/`n_rows' {
+        forvalues c = 1/`n_cols' {
+            local _exp_cell = `_rowsum'[`r',1] * `_colsum'[1,`c'] / `_total_n'
+            if `_exp_cell' < `_min_expected' | missing(`_min_expected') {
+                local _min_expected = `_exp_cell'
+            }
+        }
+    }
+
+    if "`fisher'" != "" | "`exact'" != "" | `_min_expected' < 5 {
+        qui tab `rowvar' `colvar' [`weight'`exp'], exact `_missing_opt'
+        local _p = r(p_exact)
+        local _test_name "Fisher's exact test"
+    }
+    else {
+        qui tab `rowvar' `colvar' [`weight'`exp'], chi2 `_missing_opt'
+        local _chi2 = r(chi2)
+        local _p = r(p)
+        local _test_name "Pearson's chi-squared test"
+    }
+    * Association measures for 2x2 tables
+    local _or .
+    local _rr .
+    local _rd .
+    if `n_rows' == 2 & `n_cols' == 2 {
+        if `_assoc_requested' {
+            tempvar _assoc_row01 _assoc_col01
+            * Code the second observed row/column levels as 1 so OR/RR/RD
+            * keep the documented orientation: row level 2 by column level 2.
+            * The codes come from the values themselves (egen group, the same
+            * ascending order as levelsof), never from matching the levelsof
+            * text: a float level such as 0.1 prints as .1000000014901161,
+            * which equals no stored value, so the coding came out missing
+            * and a defined odds ratio was refused as undefined.
+            qui egen byte `_assoc_row01' = group(`rowvar'), `_missing_opt'
+            qui replace `_assoc_row01' = `_assoc_row01' - 1
+            qui egen byte `_assoc_col01' = group(`colvar'), `_missing_opt'
+            qui replace `_assoc_col01' = `_assoc_col01' - 1
+        }
+        if "`or'" != "" {
+            qui cc `_assoc_row01' `_assoc_col01' [`weight'`exp'], level(`level')
+            local _or = r(or)
+            if missing(`_or') {
+                noisily display as error "odds ratio is undefined for this 2x2 table"
+                restore
+                exit 498
+            }
+            local _or_lo = r(lb_or)
+            local _or_hi = r(ub_or)
+        }
+        if "`rr'" != "" | "`rd'" != "" {
+            qui cs `_assoc_row01' `_assoc_col01' [`weight'`exp'], level(`level')
+            if "`rr'" != "" {
+                local _rr = r(rr)
+                if missing(`_rr') {
+                    noisily display as error "risk ratio is undefined for this 2x2 table"
+                    restore
+                    exit 498
+                }
+                local _rr_lo = r(lb_rr)
+                local _rr_hi = r(ub_rr)
+            }
+            if "`rd'" != "" {
+                local _rd = r(rd)
+                if missing(`_rd') {
+                    noisily display as error "risk difference is undefined for this 2x2 table"
+                    restore
+                    exit 498
+                }
+                local _rd_lo = r(lb_rd)
+                local _rd_hi = r(ub_rd)
+            }
+        }
+    }
+
+	    * Trend test (Spearman rank correlation)
+	    local _p_trend .
+	    local _trend_method ""
+	    if "`trend'" != "" {
+	        tempfile _trend_snap
+	        qui save `_trend_snap'
+	        tempvar _trend_score
+	        qui egen `_trend_score' = group(`colvar')
+	        if "`weight'" == "fweight" {
+	            local _fwexp = substr("`exp'", 2, .)
+	            * expand keeps n<=0 rows, so zero/missing weights must be dropped
+	            * explicitly to match tabulate's fweight handling
+	            qui drop if missing(`_fwexp') | (`_fwexp') <= 0
+	            qui expand `_fwexp'
+	        }
+	        capture qui spearman `rowvar' `_trend_score'
+	        local _trend_rc = _rc
+	        if !`_trend_rc' local _p_trend = r(p)
+	        if `_trend_rc' | missing(`_p_trend') {
+	            noisily display as error "Spearman trend test could not be computed; check outcome/exposure variation and weights"
+	            restore
+	            exit 498
+	        }
+	        qui use `_trend_snap', clear
+	        local _trend_method "Spearman rank correlation"
+	    }
+
+	    * Cochran-Armitage trend test: linear trend in the proportion of the
+	    * higher row (outcome) level across ordered column scores. Scores are the
+	    * numeric colvar values, so recoding colvar sets the trend spacing.
+	    if "`cochran'" != "" {
+	        tempfile _ca_snap
+	        qui save `_ca_snap'
+	        if "`weight'" == "fweight" {
+	            local _cawexp = substr("`exp'", 2, .)
+	            * expand keeps n<=0 rows, so zero/missing weights must be dropped
+	            * explicitly to match tabulate's fweight handling
+	            qui drop if missing(`_cawexp') | (`_cawexp') <= 0
+	            qui expand `_cawexp'
+	        }
+	        * The event is the second row level, coded from the values (egen
+	        * group) rather than by matching levelsof text, which misses a
+	        * fractional float level.
+	        tempvar _ca_ev _ca_evs _ca_dev2 _ca_rgrp _ca_score
+	        qui egen byte `_ca_rgrp' = group(`rowvar')
+	        qui gen byte `_ca_ev' = (`_ca_rgrp' == 2) ///
+	            if !missing(`rowvar') & !missing(`colvar')
+	        qui count if !missing(`_ca_ev')
+	        local _ca_N = r(N)
+	        qui summarize `_ca_ev' if !missing(`_ca_ev'), meanonly
+	        local _ca_R = r(sum)
+	        local _ca_pbar = cond(`_ca_N' > 0, `_ca_R' / `_ca_N', .)
+	        * PROC FREQ's score numerator is sum(y * (score - mean(score))).
+	        * Remove the origin before summing: sum(y*score)-R*mean(score)
+	        * loses the trend when, for example, scores 0/2/4 are shifted 1e16.
+	        * A positive rescaling preserves z and keeps squared scores finite.
+	        tempname _ca_origin _ca_scale _ca_mean
+	        qui summarize `colvar' if !missing(`_ca_ev'), meanonly
+	        scalar `_ca_origin' = r(min)
+	        scalar `_ca_scale' = max(abs(r(min)), abs(r(max)))
+	        qui gen double `_ca_score' = `colvar' - scalar(`_ca_origin') if !missing(`_ca_ev')
+	        qui count if missing(`_ca_score') & !missing(`_ca_ev')
+	        if r(N) > 0 {
+	            * Opposite extreme finite scores can overflow the subtraction.
+	            qui replace `_ca_score' = `colvar'/scalar(`_ca_scale') - ///
+	                scalar(`_ca_origin')/scalar(`_ca_scale') if !missing(`_ca_ev')
+	        }
+	        qui summarize `_ca_score' if !missing(`_ca_ev'), meanonly
+	        scalar `_ca_scale' = r(max)
+	        qui replace `_ca_score' = `_ca_score'/scalar(`_ca_scale') if !missing(`_ca_ev')
+	        qui summarize `_ca_score' if !missing(`_ca_ev'), meanonly
+	        scalar `_ca_mean' = r(mean)
+	        qui gen double `_ca_evs' = `_ca_ev' * (`_ca_score' - scalar(`_ca_mean')) if !missing(`_ca_ev')
+	        qui summarize `_ca_evs' if !missing(`_ca_ev'), meanonly
+	        local _ca_T = r(sum)
+	        qui gen double `_ca_dev2' = (`_ca_score' - scalar(`_ca_mean'))^2 if !missing(`_ca_ev')
+	        qui summarize `_ca_dev2' if !missing(`_ca_ev'), meanonly
+	        local _ca_varT = `_ca_pbar' * (1 - `_ca_pbar') * r(sum)
+	        if `_ca_varT' > 0 & !missing(`_ca_varT') {
+	            local _ca_z = `_ca_T' / sqrt(`_ca_varT')
+	            * Parenthesised: the macro expands to the signed text, and
+	            * Stata binds ^ tighter than unary minus, so -0.6^2 is -0.36.
+	            * A decreasing trend gave a negative chi2 and p for trend 1.
+	            local _ca_chi2 = (`_ca_z')^2
+	            local _p_trend = chi2tail(1, `_ca_chi2')
+	        }
+	        if missing(`_p_trend') {
+	            noisily display as error "Cochran-Armitage trend test could not be computed; the outcome and ordered exposure must both vary"
+	            restore
+	            exit 498
+	        }
+	        qui use `_ca_snap', clear
+	        local _trend_method "Cochran-Armitage"
+	    }
+
+**# Build Output Dataset
+    clear
+    local out_ncols = `n_cols' + 2
+    forvalues c = 1/`out_ncols' {
+        qui gen str244 c`c' = ""
+    }
+    qui gen str244 title = ""
+
+    * Row 1: Title
+    local row 1
+    qui set obs `row'
+    qui replace title = `"`macval(title)'"' in `row'
+
+    * Row 2: Column headers
+    local row = `row' + 1
+    qui set obs `row'
+    qui replace c1 = `"`macval(_rowlabel)'"' in `row'
+    forvalues c = 1/`n_cols' {
+        local _col = `c' + 1
+        qui replace c`_col' = `"`macval(clabel_`c')'"' in `row'
+    }
+    qui replace c`out_ncols' = "Total" in `row'
+
+    * Data rows
+    forvalues r = 1/`n_rows' {
+        local row = `row' + 1
+        qui set obs `row'
+        qui replace c1 = `"`macval(rlabel_`r')'"' in `row'
+        local _row_total = `_rowsum'[`r', 1]
+        forvalues c = 1/`n_cols' {
+            local _col = `c' + 1
+            local _freq_val = `_freq'[`r', `c']
+            local _col_total = `_colsum'[1, `c']
+            local _sc_cell_code = `_scmask'[`r', `c']
+            local _sc_denom_code 0
+            if "`colpct'" != "" local _sc_denom_code = `_sccolmask'[1, `c']
+            else if "`rowpct'" != "" local _sc_denom_code = `_scrowmask'[`r', 1]
+            else if "`totalpct'" != "" local _sc_denom_code = `_sc_totalmask'
+            local _sc_pct_blocked = `_sc_active' & ///
+                (`_sc_cell_code' > 0 | `_sc_denom_code' > 0)
+            if `_sc_cell_code' > 0 {
+                _tabtools_smallcells_render, value(`_freq_val') ///
+                    mask(`_sc_cell_code') smallcells(`smallcells')
+                local _cell_str `"`r(display)'"'
+            }
+            else local _cell_str = ustrregexra(string(`_freq_val', "%11.0fc"), "-(?=[0.,]+\z)", "")
+            if "`colpct'" != "" & !`_sc_pct_blocked' {
+                if `_col_total' > 0 {
+                    _tabtools_fmt_pct, value(`_freq_val' / `_col_total' * 100) format(%21.`digits'f)
+                    local _pct = strtrim(`"`r(text)'"')
+                    local _cell_str "`_cell_str' (`_pct'%)"
+                }
+            }
+            else if "`rowpct'" != "" & !`_sc_pct_blocked' {
+                if `_row_total' > 0 {
+                    _tabtools_fmt_pct, value(`_freq_val' / `_row_total' * 100) format(%21.`digits'f)
+                    local _pct = strtrim(`"`r(text)'"')
+                    local _cell_str "`_cell_str' (`_pct'%)"
+                }
+            }
+            else if "`totalpct'" != "" & !`_sc_pct_blocked' {
+                if `_total_n' > 0 {
+                    _tabtools_fmt_pct, value(`_freq_val' / `_total_n' * 100) format(%21.`digits'f)
+                    local _pct = strtrim(`"`r(text)'"')
+                    local _cell_str "`_cell_str' (`_pct'%)"
+                }
+            }
+            if `_sc_pct_blocked' local ++_sc_nderived
+            qui replace c`_col' = strtrim("`_cell_str'") in `row'
+        }
+        local _sc_row_code = `_scrowmask'[`r', 1]
+        if `_sc_row_code' > 0 {
+            _tabtools_smallcells_render, value(`_row_total') ///
+                mask(`_sc_row_code') smallcells(`smallcells')
+            qui replace c`out_ncols' = strtrim(`"`r(display)'"') in `row'
+        }
+        else qui replace c`out_ncols' = ustrregexra(string(`_row_total', "%11.0fc"), "-(?=[0.,]+\z)", "") in `row'
+    }
+
+    * Total row
+    local row = `row' + 1
+    qui set obs `row'
+    qui replace c1 = "Total" in `row'
+    forvalues c = 1/`n_cols' {
+        local _col = `c' + 1
+        local _sc_col_code = `_sccolmask'[1, `c']
+        if `_sc_col_code' > 0 {
+            local _sc_col_value = `_colsum'[1, `c']
+            _tabtools_smallcells_render, value(`_sc_col_value') ///
+                mask(`_sc_col_code') smallcells(`smallcells')
+            qui replace c`_col' = strtrim(`"`r(display)'"') in `row'
+        }
+        else qui replace c`_col' = ustrregexra(string(`_colsum'[1,`c'], "%11.0fc"), "-(?=[0.,]+\z)", "") in `row'
+    }
+    local _sc_safe_N = `_total_n'
+    if `_sc_totalmask' > 0 {
+        _tabtools_smallcells_render, value(`_total_n') ///
+            mask(`_sc_totalmask') smallcells(`smallcells')
+        qui replace c`out_ncols' = strtrim(`"`r(display)'"') in `row'
+        local _sc_safe_N = r(value)
+    }
+    else qui replace c`out_ncols' = ustrregexra(string(`_total_n', "%11.0fc"), "-(?=[0.,]+\z)", "") in `row'
+
+    * Track first measure row for formatting
+    local _first_measure_row = `row' + 1
+
+    * Test result row
+    local row = `row' + 1
+    qui set obs `row'
+    local _p_row = `row'
+    local _trend_row = 0
+    * The package p-value rule (regtab's): a truncated value carries its own
+    * operator, so the sentence uses r(phrase) ("p < 0.001"), never
+    * "p = <0.001".
+    _tabtools_format_p, pvalue(`_p')
+    local _p_phrase `"`r(phrase)'"'
+    if `"`_p_phrase'"' == "" local _p_phrase "p = ."
+    if `_sc_suppress_derived' {
+        qui replace c1 = `"`_test_name': Suppressed"' in `row'
+        local ++_sc_nderived
+    }
+    else if "`_test_name'" == "Fisher's exact test" {
+        qui replace c1 = `"`_test_name': `_p_phrase'"' in `row'
+    }
+    else {
+        local _chi2_str = ustrregexra(string(`_chi2', "%6.2f"), "-(?=[0.,]+\z)", "")
+        qui replace c1 = `"`_test_name': chi2 = `_chi2_str', `_p_phrase'"' in `row'
+    }
+
+    * Association measure row
+    if !missing(`_or') {
+        local row = `row' + 1
+        qui set obs `row'
+        if `_sc_suppress_derived' {
+            qui replace c1 = "OR = Suppressed" in `row'
+            local ++_sc_nderived
+        }
+        else qui replace c1 = "OR = " + strtrim(ustrregexra(string(`_or', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + " (`_level_txt'% CI: " + strtrim(ustrregexra(string(`_or_lo', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + ", " + strtrim(ustrregexra(string(`_or_hi', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + ")" in `row'
+    }
+    if !missing(`_rr') {
+        local row = `row' + 1
+        qui set obs `row'
+        if `_sc_suppress_derived' {
+            qui replace c1 = "RR = Suppressed" in `row'
+            local ++_sc_nderived
+        }
+        else qui replace c1 = "RR = " + strtrim(ustrregexra(string(`_rr', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + " (`_level_txt'% CI: " + strtrim(ustrregexra(string(`_rr_lo', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + ", " + strtrim(ustrregexra(string(`_rr_hi', "%21.`digits'f"), "-(?=[0.,]+\z)", "")) + ")" in `row'
+    }
+    if !missing(`_rd') {
+        local row = `row' + 1
+        qui set obs `row'
+        if `_sc_suppress_derived' {
+            qui replace c1 = "RD = Suppressed" in `row'
+            local ++_sc_nderived
+        }
+        else qui replace c1 = "RD = " + strtrim(ustrregexra(string(`_rd', "%21.`=`digits'+2'f"), "-(?=[0.,]+\z)", "")) + " (`_level_txt'% CI: " + strtrim(ustrregexra(string(`_rd_lo', "%21.`=`digits'+2'f"), "-(?=[0.,]+\z)", "")) + ", " + strtrim(ustrregexra(string(`_rd_hi', "%21.`=`digits'+2'f"), "-(?=[0.,]+\z)", "")) + ")" in `row'
+    }
+    if !missing(`_p_trend') {
+        local row = `row' + 1
+        qui set obs `row'
+        local _trend_row = `row'
+        _tabtools_format_p, pvalue(`_p_trend')
+        * "P for trend < 0.001", not "P for trend = <0.001"
+        local _pt_phr = substr(`"`r(phrase)'"', 3, .)
+        if `"`_pt_phr'"' == "" local _pt_phr "= ."
+        local _trend_lbl = cond("`cochran'" != "", "P for trend (Cochran-Armitage)", "P for trend")
+        if `_sc_suppress_derived' {
+            qui replace c1 = `"`_trend_lbl' = Suppressed"' in `row'
+            local ++_sc_nderived
+        }
+        else qui replace c1 = `"`_trend_lbl' `_pt_phr'"' in `row'
+    }
+
+    local num_rows = _N
+    local num_cols = `out_ncols' + 1
+    local _header_row = 2
+    local _data_start = `_header_row' + 1
+    local _total_row = `_data_start' + `n_rows'
+    local _first_measure_row = `_total_row' + 1
+
+    * Build return matrix
+    tempname _rtable
+    matrix `_rtable' = `_freq'
+    if `_sc_active' {
+        forvalues r = 1/`n_rows' {
+            forvalues c = 1/`n_cols' {
+                if `_scmask'[`r', `c'] == 1 matrix `_rtable'[`r', `c'] = .p
+                else if `_scmask'[`r', `c'] == 2 matrix `_rtable'[`r', `c'] = .s
+            }
+        }
+    }
+    matrix rownames `_rtable' = `row_levels'
+    matrix colnames `_rtable' = `col_levels'
+    order title c*
+
+**# Console Display
+    noisily _tabtools_console_display `out_ncols' `"`macval(title)'"'
+    * An SMCL paragraph wraps the note at word boundaries, not mid-word.
+    if `_sc_active' noisily display as text `"{p 0 0 2}`_sc_note'{p_end}"'
+
+**# CSV Export
+    if "`csv'" != "" {
+        _tabtools_csv_write using "`csv'", reservedrow title(`"`macval(title)'"') footnote(`"`macval(footnote)'"')
+        noisily display as text "CSV exported to `csv'"
+    }
+
+**# Markdown Export
+    local _ret_markdown ""
+    local _ret_markdown_rows .
+    local _ret_markdown_cols .
+    if `"`markdown'"' != "" {
+        local _mdappend_opt ""
+        if "`mdappend'" != "" local _mdappend_opt "append"
+        capture noisily _tabtools_markdown_write using `"`markdown'"', ///
+            `_mdappend_opt' title(`"`macval(title)'"') footnote(`"`macval(footnote)'"') strictheaders
+        if _rc {
+            local _md_rc = _rc
+            noisily display as error "Failed to export Markdown to `markdown'"
+            restore
+            exit `_md_rc'
+        }
+        local _ret_markdown `"`markdown'"'
+        local _ret_markdown_rows = r(n_rows)
+        local _ret_markdown_cols = r(n_cols)
+        noisily display as text "Markdown exported to `markdown'"
+        if `_sess_md' _tabtools_set_sinks mddone
+    }
+
+**# Frame Output
+    if `"`frame'"' != "" {
+        _tabtools_frame_put `"`frame'"'
+        local frame `"`_frame_name'"'
+        frame `frame': char _dta[tabtools_ci_level] "`_level_txt'"
+        frame `frame': char _dta[tabtools_source] "crosstab"
+        if `_sc_active' {
+            frame `frame': char _dta[tabtools_smallcells] "`smallcells'"
+            frame `frame': char _dta[tabtools_suppression_codes] "0 visible; 1 primary; 2 complementary; 3 derived"
+            if `_sc_primary' frame `frame': char _dta[tabtools_suppression_scope] "printed counts only (primary); single invocation; all sinks"
+            else frame `frame': char _dta[tabtools_suppression_scope] "exact disclosure; single invocation; all sinks"
+        }
+    }
+
+    * Methods paragraph
+    local _methods `"Cross-tabulation was performed for `macval(_rowlabel)' by `macval(_collabel)'."'
+    local _methods `"`macval(_methods)' Statistical significance was assessed using `_test_name'."'
+    if `_sc_suppress_derived' {
+        local _methods `"`macval(_methods)' Count-dependent tests and association measures were suppressed under smallcells(`smallcells')."'
+    }
+    else {
+        if !missing(`_or') {
+            local _methods `"`macval(_methods)' The odds ratio comparing column `macval(clabel_2)' versus `macval(clabel_1)' for row `macval(rlabel_2)' versus `macval(rlabel_1)' is reported with a `_level_txt'% confidence interval."'
+        }
+        if !missing(`_rr') {
+            local _methods `"`macval(_methods)' The risk ratio comparing column `macval(clabel_2)' versus `macval(clabel_1)' for row `macval(rlabel_2)' versus `macval(rlabel_1)' is reported with a `_level_txt'% confidence interval."'
+        }
+        if !missing(`_rd') {
+            local _methods `"`macval(_methods)' The risk difference comparing column `macval(clabel_2)' versus `macval(clabel_1)' for row `macval(rlabel_2)' versus `macval(rlabel_1)' is reported with a `_level_txt'% confidence interval."'
+        }
+        if !missing(`_p_trend') & "`cochran'" != "" {
+            local _methods `"`macval(_methods)' A Cochran-Armitage test for trend in the proportion of `macval(rlabel_2)' across ordered column levels is also reported."'
+        }
+        else if !missing(`_p_trend') {
+            local _methods `"`macval(_methods)' A Spearman rank-correlation test for trend across ordered column levels is also reported."'
+        }
+    }
+    local _methods `"`macval(_methods)' Analysis performed in Stata `c(stata_version)' (StataCorp, College Station, TX)."'
+
+    * Post the safe analytical payload before optional workbook side effects.
+    * These returns intentionally survive a later nonzero export rc; copy the
+    * matrices because the successful return gate below still needs them.
+    local _own_r_posted = 1
+    return clear
+    if `_sc_suppress_derived' {
+        return scalar chi2 = .d
+        return scalar p = .d
+    }
+    else {
+        return scalar chi2 = `_chi2'
+        return scalar p = `_p'
+    }
+    if !missing(`_or') {
+        if `_sc_suppress_derived' return scalar or = .d
+        else return scalar or = `_or'
+    }
+    if !missing(`_rr') {
+        if `_sc_suppress_derived' return scalar rr = .d
+        else return scalar rr = `_rr'
+    }
+    if !missing(`_rd') {
+        if `_sc_suppress_derived' return scalar rd = .d
+        else return scalar rd = `_rd'
+    }
+    if !missing(`_p_trend') {
+        if `_sc_suppress_derived' return scalar p_trend = .d
+        else return scalar p_trend = `_p_trend'
+        return local trend_method "`_trend_method'"
+    }
+    if "`cochran'" != "" & !missing(`_p_trend') {
+        if `_sc_suppress_derived' {
+            return scalar chi2_trend = .d
+            return scalar z_trend = .d
+        }
+        else {
+            return scalar chi2_trend = `_ca_chi2'
+            return scalar z_trend = `_ca_z'
+        }
+    }
+    return scalar N = `_sc_safe_N'
+    return scalar ci_level = `level'
+    return local methods `"`macval(_methods)'"'
+    if "`frame'" != "" return local frame "`frame'"
+    if `"`_ret_markdown'"' != "" {
+        return local markdown `"`_ret_markdown'"'
+        return scalar markdown_rows = `_ret_markdown_rows'
+        return scalar markdown_cols = `_ret_markdown_cols'
+    }
+    if `_sc_active' {
+        return scalar smallcells = `smallcells'
+        return local smallcells_mode = cond(`_sc_primary', "primary", "full")
+        return scalar N_primary_suppressed = `_sc_nprimary'
+        return scalar N_secondary_suppressed = `_sc_nsecondary'
+        return scalar N_derived_suppressed = `_sc_nderived'
+        return matrix suppression = `_scmask', copy
+    }
+    return matrix table = `_rtable', copy
+
+**# Excel Export
+    local _xlsx_ok 0
+    if `_has_xlsx' {
+        order title c*
+        if `_sess_xlsx' _tabtools_set_sinks xlsxstart
+        capture noisily _tabtools_xlsx_write using "`xlsx'", sheet(`"`macval(sheet)'"') book(`_xlsx_book')
+        if _rc {
+            local _export_rc = _rc
+            noisily display as error "Failed to export to `xlsx'"
+            restore
+            exit `_export_rc'
+        }
+
+        * Pre-compute column B width
+        local _rlbl_maxlen : strlen local _rowlabel
+        forvalues _ri = 1/`n_rows' {
+            local _rlen : strlen local rlabel_`_ri'
+            if `_rlen' > `_rlbl_maxlen' local _rlbl_maxlen = `_rlen'
+        }
+        local _b_width = max(12, ceil(`_rlbl_maxlen' * 0.85) + 2)
+
+        capture {  // stata-dev-ignore: capture-rc — _rc is tested at the closing brace of this block, beyond the lint look-ahead window
+            local _hborder_code = 1
+            if "`_hborder'" == "medium" local _hborder_code = 2
+            if "`_hborder'" == "thick" local _hborder_code = 3
+            if "`_hborder'" == "none" local _hborder_code = 4
+
+            tempname _style_rules
+            matrix `_style_rules' = (13, 1, 1, 1, 1, 1, 0, 0, 0)
+            matrix `_style_rules' = `_style_rules' \ ///
+                (13, 1, 1, 2, 2, `_b_width', 0, 0, 0)
+            forvalues _wc = 3/`num_cols' {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (13, 1, 1, `_wc', `_wc', 14, 0, 0, 0)
+            }
+
+            matrix `_style_rules' = `_style_rules' \ ///
+                (1, 1, `num_rows', 1, `num_cols', `_fontsize', 1, 0, 0) \ ///
+                (1, 1, 1, 1, `num_cols', `=`_fontsize'+2', 1, 0, 0) \ ///
+                (14, 1, 1, 1, `num_cols', 0, 0, 0, 0) \ ///
+                (2, 1, 1, 1, 1, 0, 1, 0, 0) \ ///
+                (4, 1, 1, 1, 1, 0, 1, 0, 0) \ ///
+                (5, 1, 1, 1, 1, 0, 1, 0, 0) \ ///
+                (6, 1, 1, 1, 1, 0, 2, 0, 0) \ ///
+                (8, `_header_row', `_header_row', 2, `num_cols', 0, `_hborder_code', 0, 0) \ ///
+                (9, `_header_row', `_header_row', 2, `num_cols', 0, `_hborder_code', 0, 0) \ ///
+                (2, `_header_row', `_header_row', 2, `num_cols', 0, 1, 0, 0) \ ///
+                (5, `_header_row', `_header_row', 2, `num_cols', 0, 2, 0, 0)
+            if "`_headershade'" == "1" {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (7, `_header_row', `_header_row', 2, `num_cols', 0, -1, 0, 0)
+            }
+            if `num_rows' >= `_data_start' & `num_cols' >= 3 {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (5, `_data_start', `num_rows', 3, `num_cols', 0, 2, 0, 0)
+            }
+            matrix `_style_rules' = `_style_rules' \ ///
+                (8, `_total_row', `_total_row', 2, `num_cols', 0, `_hborder_code', 0, 0) \ ///
+                (9, `_total_row', `_total_row', 2, `num_cols', 0, `_hborder_code', 0, 0)
+
+            local _fm = `_first_measure_row'
+            if `_fm' <= `num_rows' {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (8, `_fm', `_fm', 2, `num_cols', 0, `_hborder_code', 0, 0)
+                forvalues _mr = `_fm'/`num_rows' {
+                    matrix `_style_rules' = `_style_rules' \ ///
+                        (14, `_mr', `_mr', 2, `num_cols', 0, 0, 0, 0) \ ///
+                        (5, `_mr', `_mr', 2, 2, 0, 1, 0, 0) \ ///
+                        (6, `_mr', `_mr', 2, 2, 0, 2, 0, 0)
+                }
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (9, `num_rows', `num_rows', 2, `num_cols', 0, `_hborder_code', 0, 0)
+            }
+            * Non-academic styles box the table body and close the row-label
+            * column, as regtab/desctab/stratetab do; academic keeps horizontal
+            * rules only. The row-label rule stops at the Total row: the
+            * association-measure rows below it are merged across the table.
+            if "`borderstyle'" != "academic" {
+                local _vborder_code = cond("`borderstyle'" == "medium", 2, 1)
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (10, `_header_row', `num_rows', 2, 2, 0, `_vborder_code', 0, 0) \ ///
+                    (11, `_header_row', `num_rows', `num_cols', `num_cols', 0, `_vborder_code', 0, 0) \ ///
+                    (11, `_header_row', `_total_row', 2, 2, 0, `_vborder_code', 0, 0)
+            }
+            if `boldp' != -1 & !`_sc_suppress_derived' & !missing(`_p') & `_p' < `boldp' {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (2, `_p_row', `_p_row', 2, `num_cols', 0, 1, 0, 0)
+            }
+            if `boldp' != -1 & !`_sc_suppress_derived' & !missing(`_p_trend') & `_p_trend' < `boldp' & `_trend_row' > 0 {
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (2, `_trend_row', `_trend_row', 2, `num_cols', 0, 1, 0, 0)
+            }
+            if "`zebra'" != "" {
+                forvalues _zr = `=`_data_start'+1'(2)`_total_row' {
+                    matrix `_style_rules' = `_style_rules' \ ///
+                        (7, `_zr', `_zr', 2, `num_cols', 0, -2, 0, 0)
+                }
+            }
+            if `"`macval(footnote)'"' != "" {
+                local _fn_row = `num_rows' + 1
+                local _fn_fontsize = max(`_fontsize' - 2, 6)
+                mata: `_xlsx_book'.put_string(`_fn_row', 2, st_local("footnote"))
+                matrix `_style_rules' = `_style_rules' \ ///
+                    (14, `_fn_row', `_fn_row', 2, `num_cols', 0, 0, 0, 0) \ ///
+                    (5, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0) \ ///
+                    (6, `_fn_row', `_fn_row', 2, 2, 0, 2, 0, 0) \ ///
+                    (4, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0) \ ///
+                    (1, `_fn_row', `_fn_row', 2, 2, `_fn_fontsize', 1, 0, 0) \ ///
+                    (3, `_fn_row', `_fn_row', 2, 2, 0, 1, 0, 0)
+            }
+
+            _tabtools_xlsx_apply_styles, defer book(`_xlsx_book') sheet(`"`macval(sheet)'"') ///
+                rules(`_style_rules') font("`_font'") ///
+                color1("`_headercolor'") color2("`_zebracolor'")
+            mata: `_xlsx_book'.close_book()
+
+            * xl() appends a style record for every styled cell instead of
+            * reusing one per distinct format, so collapse the pools here;
+            * a workbook that keeps growing would otherwise reach Stata's
+            * 65,536-record ceiling and fail with r(16147).
+            _tabtools_xlsx_compact_styles using "`xlsx'"
+        }
+        if _rc {
+            local _format_rc = _rc
+            capture mata: `_xlsx_book'.close_book()  // stata-dev-ignore: capture-rc — error-path teardown of the workbook handle; an already-closed handle is the expected failure
+            capture mata: mata drop `_xlsx_book'
+            noisily display as error "Excel formatting failed with error `_format_rc'"
+            restore
+            exit `_format_rc'
+        }
+        capture mata: mata drop `_xlsx_book'
+        capture confirm file "`xlsx'"
+        if _rc {
+            noisily display as error "Export command succeeded but file not found"
+            restore
+            exit 601
+        }
+        local _xlsx_ok 1
+        noisily _tabtools_export_done using `"`xlsx'"', sheet(`"`macval(sheet)'"')
+    }
+
+    restore
+
+    if "`open'" != "" & `_xlsx_ok' _tabtools_open_file "`xlsx'"
+
+**# Return Results
+    return clear
+    if `_sc_suppress_derived' {
+        return scalar chi2 = .d
+        return scalar p = .d
+    }
+    else {
+        return scalar chi2 = `_chi2'
+        return scalar p = `_p'
+    }
+    if !missing(`_or') {
+        if `_sc_suppress_derived' return scalar or = .d
+        else return scalar or = `_or'
+    }
+    if !missing(`_rr') {
+        if `_sc_suppress_derived' return scalar rr = .d
+        else return scalar rr = `_rr'
+    }
+    if !missing(`_rd') {
+        if `_sc_suppress_derived' return scalar rd = .d
+        else return scalar rd = `_rd'
+    }
+    if !missing(`_p_trend') {
+        if `_sc_suppress_derived' return scalar p_trend = .d
+        else return scalar p_trend = `_p_trend'
+        return local trend_method "`_trend_method'"
+    }
+    if "`cochran'" != "" & !missing(`_p_trend') {
+        if `_sc_suppress_derived' {
+            return scalar chi2_trend = .d
+            return scalar z_trend = .d
+        }
+        else {
+            return scalar chi2_trend = `_ca_chi2'
+            return scalar z_trend = `_ca_z'
+        }
+    }
+    return scalar N = `_sc_safe_N'
+    return scalar ci_level = `level'
+    return local methods `"`macval(_methods)'"'
+    if "`frame'" != "" return local frame "`frame'"
+    if `"`_ret_markdown'"' != "" {
+        return local markdown `"`_ret_markdown'"'
+        return scalar markdown_rows = `_ret_markdown_rows'
+        return scalar markdown_cols = `_ret_markdown_cols'
+    }
+    if `_xlsx_ok' {
+        return local xlsx "`xlsx'"
+        return local sheet `"`macval(sheet)'"'
+    }
+    if `_sc_active' {
+        return scalar smallcells = `smallcells'
+        return local smallcells_mode = cond(`_sc_primary', "primary", "full")
+        return scalar N_primary_suppressed = `_sc_nprimary'
+        return scalar N_secondary_suppressed = `_sc_nsecondary'
+        return scalar N_derived_suppressed = `_sc_nderived'
+        return matrix suppression = `_scmask'
+    }
+    return matrix table = `_rtable'
+
+} // end capture noisily
+    local _rc = _rc
+    set varabbrev `_orig_varabbrev'
+    if `_rc' {
+        * Refusals before our analytic payload preserve the caller's r().
+        * Published analytic returns still survive a later export failure.
+        if !`_own_r_posted' {
+            _return restore `_caller_r'
+            return add
+        }
+        exit `_rc'
+    }
+end

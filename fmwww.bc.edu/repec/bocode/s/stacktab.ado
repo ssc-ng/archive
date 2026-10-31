@@ -1,0 +1,2001 @@
+*! stacktab Version 1.0.0  2026/10/20
+*! Assemble multi-sheet composite Excel tables from source blocks
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass
+
+/*
+Imports row/column blocks from specified sheets in a source workbook,
+stacks them, applies column-merge and label transforms, then exports the
+composite with tabtools-style Excel geometry and formatting.
+
+Syntax:
+  stacktab using OUTBOOK.xlsx,
+    blocks(BLOCKSPEC) sheet("Sheet Name")
+    [layout(vstack|hstack)] [title(STRING)] [note(STRING)|footnote(STRING)]
+    [columnmerge(MERGESPEC)] [style(STYLESPEC)] [borders(BORDERSPEC)]
+    [frame(NAME[, replace])] [csv(FILE)] [append|sheetreplace]
+*/
+
+program define stacktab, rclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    * I3 (2.3.0): frames(name "label" [\ ...]) stacks in-memory frames as
+    * labelled panels through puttab's panel() rendering; it shares none of
+    * the workbook-block machinery below, so it is routed to its own program.
+    local _st_rhs ""
+    * stata-dev-ignore: capture-rc, capture_rc — a failed parse leaves _st_rhs empty, which routes the call to the workbook syntax and its own errors
+    capture _parse comma _st_lhs _st_rhs : 0
+    * A call that also names blocks() stays on the workbook route, whose
+    * syntax then refuses frames().
+    if regexm(`"`macval(_st_rhs)'"', "(^|[ ,])[Ff][Rr][Aa][Mm][Ee][Ss][(]") & ///
+        !regexm(`"`macval(_st_rhs)'"', "(^|[ ,])[Bb][Ll][Oo]?[Cc]?[Kk]?[Ss]?[(]") {
+        capture noisily _stacktab_frames `macval(0)'
+        local rc = _rc
+        set varabbrev `_vao'
+        if `rc' exit `rc'
+        return add
+        exit
+    }
+    local _restore_needed = 0
+    local _stage_frame_created = 0
+    local _backup_frame_created = 0
+    local _preserve_backups = 0
+    local _stage_book ""
+    local _stage_csv ""
+    local _stage_markdown ""
+    local _backup_book ""
+    local _backup_csv ""
+    local _backup_markdown ""
+    tempname _stage_frame _backup_frame
+    capture noisily {
+
+        syntax [using/] , ///
+            BLocks(string asis) ///
+            SHeet(string) ///
+            [LAYout(string) ///
+             TItle(string asis) ///
+             NOte(string asis) ///
+             FOOTnote(string asis) ///
+             COLumnmerge(string asis) ///
+             STyle(string asis) ///
+             BOrders(string asis) ///
+             SPacing(integer 0) ///
+             CSV(string asis) ///
+             MARKdown(string asis) ///
+             MDAPPend ///
+             FRAme(string asis) ///
+             DISplay ///
+             APPend ///
+             SHEetreplace]
+
+        capture _tabtools_helpers_ready
+        if !_rc capture mata: assert(findexternal("_tt_sep_parse()") != NULL)
+        if _rc {
+            capture findfile _tabtools_common.ado
+            if _rc == 0 {
+                run "`r(fn)'"
+            }
+        }
+        _tabtools_require_helpers
+
+        tempvar _xblock _xorder _rowid
+
+        _tabtools_validate_sheet `"`macval(sheet)'"' "sheet()"
+
+        if "`layout'" == "" local layout "vstack"
+        local layout = lower("`layout'")
+        if !inlist("`layout'", "vstack", "hstack") {
+            display as error "layout() must be vstack or hstack"
+            exit 198
+        }
+        if "`append'" != "" & "`sheetreplace'" != "" {
+            display as error "append and sheetreplace may not be combined"
+            exit 198
+        }
+        if `"`macval(note)'"' != "" & `"`macval(footnote)'"' != "" {
+            display as error "note() and footnote() may not be combined"
+            exit 198
+        }
+        if `"`macval(note)'"' == "" & `"`macval(footnote)'"' != "" {
+            local note `"`macval(footnote)'"'
+        }
+        if `spacing' < 0 {
+            display as error "spacing() must be nonnegative"
+            exit 198
+        }
+        * These options are parsed asis: peel one outer layer of compound
+        * (`"..."') or plain quotes. copy local and macval() keep the text
+        * literal, so a title or note holding a local-macro reference or a
+        * $word is never expanded.
+        foreach opt in title note csv markdown {
+            local _sq_v : copy local `opt'
+            local _sq_n = strlen(`"`macval(_sq_v)'"')
+            if `_sq_n' >= 4 & substr(`"`macval(_sq_v)'"', 1, 2) == char(96) + char(34) & ///
+                substr(`"`macval(_sq_v)'"', -2, 2) == char(34) + char(39) {
+                local `opt' = substr(`"`macval(_sq_v)'"', 3, `_sq_n' - 4)
+            }
+            else if `_sq_n' >= 2 & substr(`"`macval(_sq_v)'"', 1, 1) == char(34) & ///
+                substr(`"`macval(_sq_v)'"', -1, 1) == char(34) {
+                local `opt' = substr(`"`macval(_sq_v)'"', 2, `_sq_n' - 2)
+            }
+        }
+        * Session destinations (tabtools set workbook/markdown): without
+        * using, the session workbook is both the source of the blocks and
+        * the target sheet; an explicit using or markdown() wins. stacktab
+        * reads the book it writes, so it records the write with xlsxdone
+        * (below) and never takes the first-write erase.
+        _tabtools_set_sinks resolve, xlsx(`"`using'"') markdown(`"`markdown'"') `mdappend'
+        local using `"`_ss_xlsx'"'
+        local markdown `"`_ss_md'"'
+        local mdappend "`_ss_mdappend'"
+        if `"`using'"' == "" {
+            display as error "using required, or set a session workbook with tabtools set workbook"
+            exit 100
+        }
+
+        if !strmatch(lower(`"`using'"'), "*.xlsx") {
+            display as error "using file must have a .xlsx extension"
+            exit 198
+        }
+        _tabtools_validate_path `"`using'"' "using"
+        confirm file `"`using'"'
+        if `"`csv'"' != "" & !strmatch(lower(`"`csv'"'), "*.csv") {
+            display as error "csv() must have a .csv extension"
+            exit 198
+        }
+        if `"`csv'"' != "" _tabtools_validate_path `"`csv'"' "csv()"
+        if "`mdappend'" != "" & `"`markdown'"' == "" {
+            display as error "mdappend requires markdown()"
+            exit 198
+        }
+        if `"`markdown'"' != "" {
+            _tabtools_validate_path `"`markdown'"' "markdown()"
+            local _md_lower = lower(`"`markdown'"')
+            if !(strmatch(`"`_md_lower'"', "*.md") | ///
+                 strmatch(`"`_md_lower'"', "*.markdown") | ///
+                 strmatch(`"`_md_lower'"', "*.qmd") | ///
+                 strmatch(`"`_md_lower'"', "*.rmd")) {
+                display as error "markdown() must specify a .md, .markdown, .qmd, or .rmd file"
+                exit 198
+            }
+        }
+        _tabtools_check_sinks, xlsx(`"`using'"') csv(`"`csv'"') ///
+            markdown(`"`markdown'"') xlsxname("using")
+
+        * ================================================================
+        * PARSE BLOCKSPEC: split on \ and parse each block
+        * ================================================================
+        * C8/C9 (codex audit 2026-09-26): one quote- and parenthesis-aware
+        * tokenizer, in Mata, reads the whole specification. A block is a
+        * sequence of top-level name(value) suboptions; only the documented
+        * names are accepted, each at most once, and any other text is an
+        * error. The old parser searched for the first substring such as
+        * "rows(" anywhere in the block (so text inside label() became a row
+        * selection, and an unknown rowz() was silently ignored), and its
+        * separator scan moved single characters through macros, so a quoted
+        * label stopped it with r(132). Nothing here is expanded as macro
+        * syntax.
+        local n_blocks = 0
+        local _stb_err ""
+        mata: _stacktab_blocks(st_local("blocks"))
+        if `"`macval(_stb_err)'"' != "" {
+            display as error `"`macval(_stb_err)'"'
+            exit 198
+        }
+
+        if `n_blocks' == 0 {
+            display as error "stacktab: blocks() parsed no valid blocks"
+            exit 198
+        }
+
+        * ================================================================
+        * IMPORT AND STACK BLOCKS
+        * ================================================================
+        tempvar section_marker
+        preserve
+        local _restore_needed = 1
+
+        clear
+        local composite_n = 0
+        local composite_ncols = 0
+        local hstack_rows = .
+        local hstack_next_col = 1
+
+        forvalues b = 1/`n_blocks' {
+            local bsh : copy local bsheet_`b'
+            local brow : copy local brows_`b'
+            local bcol : copy local bcols_`b'
+
+            if `"`macval(bsh)'"' == "" {
+                display as error "stacktab: block `b' missing sheet()"
+                exit 198
+            }
+
+            * Build cellrange from rows() and cols()
+            local cellrange ""
+            local row_lo ""
+            local row_hi ""
+            local col_s ""
+            local col_e ""
+            if `"`brow'"' != "" {
+                _stacktab_parse_rows `"`brow'"'
+                local row_lo = r(first)
+                local row_hi = r(last)
+            }
+            if `"`bcol'"' != "" {
+                _stacktab_parse_cols `"`bcol'"'
+                local col_s `"`r(first)'"'
+                local col_e `"`r(last)'"'
+            }
+            if `"`bcol'"' != "" & `"`brow'"' != "" {
+                local cellrange `"`col_s'`row_lo':`col_e'`row_hi'"'
+            }
+
+            * Import block from source workbook
+            *
+            * rows() counts sheet rows. With cols() it becomes a cellrange in
+            * sheet coordinates; alone, the whole used range is imported and
+            * filtered by observation number. That range starts at the first
+            * used row, so on a sheet whose content begins below row 1 (a
+            * tabtools table starts at B2) rows(2/3) alone used to select
+            * sheet rows 3-4. The used range's first row is read here and the
+            * filter below is shifted by it.
+            local _first_row = 1
+            * stata-dev-ignore: capture-rc — _rc is consumed by the "if _rc" on the first statement after the closing brace
+            capture {
+                if `"`brow'"' != "" & `"`bcol'"' == "" {
+                    quietly import excel `"`using'"', describe
+                    forvalues _ws = 1/`r(N_worksheet)' {
+                        if lower(`"`r(worksheet_`_ws')'"') == lower(`"`macval(bsh)'"') {
+                            if regexm(`"`r(range_`_ws')'"', "^[A-Za-z]+([0-9]+)") {
+                                local _first_row = real(regexs(1))
+                            }
+                        }
+                    }
+                }
+                if `"`cellrange'"' != "" {
+                    import excel `"`using'"', ///
+                        sheet(`"`macval(bsh)'"') cellrange(`"`cellrange'"') clear allstring("%24.17g")
+                }
+                else {
+                    import excel `"`using'"', sheet(`"`macval(bsh)'"') clear allstring("%24.17g")
+                }
+            }
+            if _rc {
+                display as error `"stacktab: could not import block `b' from sheet "`macval(bsh)'""'
+                exit _rc
+            }
+
+            * Apply row range filter if rows given but no cellrange
+            if `"`brow'"' != "" & `"`bcol'"' == "" {
+                * stata-dev-ignore: double-macro-transport — _first_row, row_lo and row_hi are integer sheet-row numbers, exact in a macro
+                quietly keep if inrange(_n + `_first_row' - 1, `row_lo', `row_hi')
+            }
+            if `"`bcol'"' != "" & `"`brow'"' == "" {
+                capture unab _col_keep : `col_s'-`col_e'
+                if _rc {
+                    display as error `"stacktab: cols(`bcol') not found in sheet "`macval(bsh)'""'
+                    exit 111
+                }
+                keep `_col_keep'
+            }
+
+            * Skip specified row (within imported block, 1-indexed)
+            if `"`macval(bskip_`b')'"' != "" {
+                capture confirm integer number `bskip_`b''
+                if _rc | real(`"`macval(bskip_`b')'"') < 1 {
+                    display as error "stacktab: block `b': skip() must be a positive integer"
+                    exit 198
+                }
+                quietly drop if _n == `bskip_`b''
+            }
+
+            quietly count
+            if r(N) == 0 {
+                display as error "stacktab: block `b' (sheet `macval(bsh)') imported 0 rows"
+                exit 198
+            }
+
+            quietly ds
+            local block_vars `r(varlist)'
+            local first_var : word 1 of `block_vars'
+
+            * Apply label to first column value of first row
+            if `"`macval(blabel_`b')'"' != "" {
+                quietly replace `first_var' = `"`macval(blabel_`b')'"' in 1
+            }
+
+            * Apply postfix to first column of all rows
+            if `"`macval(bpostfix_`b')'"' != "" {
+                quietly replace `first_var' = `first_var' + `" `macval(bpostfix_`b')'"'
+            }
+
+            quietly count
+            local block_rows = r(N)
+
+            local nvars = 0
+            foreach v of varlist _all {
+                local ++nvars
+            }
+
+            if "`layout'" == "vstack" {
+                * All source columns are renamed to the _xcol scaffolding first, so
+                * the _xblock/_xorder gens below cannot collide with a block column
+                * of the same name (it was already renamed away above; and block
+                * columns are always A/B/C from import excel without firstrow).
+                local vnum = 0
+                foreach v of varlist _all {
+                    local ++vnum
+                    rename `v' _xcol`vnum'
+                }
+                quietly gen long `_xblock' = `b'
+                quietly gen long `_xorder' = _n
+                quietly gen byte `section_marker' = (_n == 1)
+
+                if `spacing' > 0 & `b' < `n_blocks' {
+                    local old_n = _N
+                    quietly set obs `=`old_n' + `spacing''
+                    quietly replace `_xblock' = `b' if missing(`_xblock')
+                    quietly replace `_xorder' = _n if missing(`_xorder')
+                    quietly replace `section_marker' = 0 ///
+                        if missing(`section_marker')
+                    forvalues si = `=`old_n' + 1'/`=_N' {
+                        forvalues cn = 1/`nvars' {
+                            quietly replace _xcol`cn' = "" in `si'
+                        }
+                    }
+                }
+
+                if `composite_n' == 0 {
+                    tempfile composite
+                    quietly save `"`composite'"', replace
+                    local composite_ncols = `nvars'
+                }
+                else {
+                    if `nvars' > `composite_ncols' local composite_ncols = `nvars'
+                    quietly append using `"`composite'"'
+                    quietly save `"`composite'"', replace
+                }
+            }
+            else {
+                if `composite_n' == 0 {
+                    local hstack_rows = `block_rows'
+                }
+                else if `block_rows' != `hstack_rows' {
+                    display as error "stacktab: hstack blocks must have the same row count"
+                    exit 459
+                }
+                * Rename source columns to the _xcol scaffolding FIRST, then gen the
+                * row key, so the gen can never collide with a block column named
+                * _rowid. Not reachable today (blocks import via import excel without
+                * firstrow, so columns are always A/B/C), but defensive against any
+                * future non-Excel block source.
+                local vnum = 0
+                foreach v of local block_vars {
+                    local ++vnum
+                    local new_col = `hstack_next_col' + `vnum' - 1
+                    rename `v' _xcol`new_col'
+                }
+                local hstack_next_col = `hstack_next_col' + `nvars'
+                quietly gen long `_rowid' = _n
+
+                if `composite_n' == 0 {
+                    tempfile composite
+                    quietly save `"`composite'"', replace
+                }
+                else {
+                    quietly merge 1:1 `_rowid' using `"`composite'"', nogen
+                    quietly save `"`composite'"', replace
+                }
+                local composite_ncols = `hstack_next_col' - 1
+            }
+            local composite_n = `composite_n' + 1
+        }
+
+        quietly use `"`composite'"', clear
+        if "`layout'" == "vstack" {
+            sort `_xblock' `_xorder'
+            drop `_xblock' `_xorder'
+        }
+        else {
+            sort `_rowid'
+            drop `_rowid'
+        }
+        local section_rows ""
+        capture confirm variable `section_marker'
+        if !_rc {
+            quietly count
+            local _section_N = r(N)
+            forvalues sr = 1/`_section_N' {
+                if `section_marker'[`sr'] == 1 {
+                    local section_rows `"`section_rows' `sr'"'
+                }
+            }
+            local section_rows = strtrim("`section_rows'")
+            drop `section_marker'
+        }
+        capture confirm variable `_xblock'
+        if !_rc drop `_xblock'
+        forvalues cn = 1/`composite_ncols' {
+            capture confirm variable _xcol`cn'
+            if _rc == 0 {
+                order _xcol`cn', last
+            }
+        }
+
+        * ================================================================
+        * APPLY COLUMNMERGE
+        * ================================================================
+        if `"`macval(columnmerge)'"' != "" {
+            * Parse: B+C as "header" [\ D+E as "header2" ...]
+            * F09 (codex audit 2026-09-27): the rules are split and read in
+            * Mata, like blocks(). A backslash inside a quoted header is text,
+            * not a rule separator, and the header reaches the cell through
+            * st_local()/st_sstore(), so `name', $name and quotes in it are
+            * never expanded as macro syntax.
+            local _cm_n 0
+            local _stb_err ""
+            mata: _stacktab_cm_parse(st_local("columnmerge"))
+            if `"`macval(_stb_err)'"' != "" {
+                display as error `"`macval(_stb_err)'"'
+                if strpos(`"`macval(_stb_err)'"', "malformed") {
+                    display as error `"Expected syntax like B+C as "Header""'
+                }
+                exit 198
+            }
+            forvalues _cmk = 1/`_cm_n' {
+                local pair_str : copy local _cm_pair_`_cmk'
+                local pair_sp : subinstr local pair_str "+" " ", all
+                local col_a : word 1 of `pair_sp'
+                local col_b : word 2 of `pair_sp'
+                local col_extra : word 3 of `pair_sp'
+                if `"`col_a'"' == "" | `"`col_b'"' == "" | `"`col_extra'"' != "" {
+                    display as error `"stacktab: columnmerge() requires exactly two columns in "`macval(pair_str)'""'
+                    exit 198
+                }
+                _stacktab_resolve_col `"`col_a'"'
+                local col_a `"`r(name)'"'
+                _stacktab_resolve_col `"`col_b'"'
+                local col_b `"`r(name)'"'
+                if "`col_a'" == "`col_b'" {
+                    display as error "stacktab: columnmerge() cannot merge a column with itself"
+                    exit 198
+                }
+                confirm variable `col_a'
+                confirm variable `col_b'
+                * Concatenate the two columns
+                quietly replace `col_a' = `col_a' + " " + `col_b' ///
+                    if `col_b' != "" & `col_b' != "."
+                * Apply the requested header to EVERY block header row, not
+                * just the first. Under vstack each block contributes its own
+                * header row, and any block after the first would otherwise
+                * keep the raw concatenation of the two source headers
+                * ("aHR 95% CI") next to the requested one ("aHR (95% CI)").
+                * section_rows holds the first row of each stacked block; it is
+                * empty under hstack, where only row 1 is a header row.
+                mata: st_local("_cm_hlen", strofreal(strlen(st_local("_cm_hdr_`_cmk'"))))
+                local _cm_vt : type `col_a'
+                if "`_cm_vt'" != "strL" {
+                    local _cm_vw = real(substr("`_cm_vt'", 4, .))
+                    if `_cm_hlen' > `_cm_vw' {
+                        if `_cm_hlen' <= 2045 quietly recast str`_cm_hlen' `col_a'
+                        else quietly recast strL `col_a'
+                    }
+                }
+                local _cm_hdr_rows "1"
+                if `"`section_rows'"' != "" local _cm_hdr_rows `"`section_rows'"'
+                foreach _cm_hr of local _cm_hdr_rows {
+                    mata: st_sstore(`_cm_hr', "`col_a'", st_local("_cm_hdr_`_cmk'"))
+                }
+                drop `col_b'
+            }
+        }
+
+        quietly ds
+        local final_vars `r(varlist)'
+        local final_ncols : word count `final_vars'
+        quietly count
+        local logical_rows = r(N)
+
+        local width_values ""
+        foreach v of local final_vars {
+            tempvar _xlen
+            quietly gen int `_xlen' = length(`v')
+            quietly summarize `_xlen', meanonly
+            local _w = ceil(r(max) * .95) + 2
+            if "`v'" == "`: word 1 of `final_vars''" {
+                if `_w' < 14 local _w = 14
+                if `_w' > 45 local _w = 45
+            }
+            else {
+                if `_w' < 10 local _w = 10
+                if `_w' > 24 local _w = 24
+            }
+            local width_values `"`width_values' `_w'"'
+            drop `_xlen'
+        }
+        local width_values = strtrim("`width_values'")
+        local title_height = 30
+        local note_height = 45
+        local _style_clean : subinstr local style `"""' "", all
+        local trh_pos = strpos(lower(`"`_style_clean'"'), "titlerowheight(")
+        if `trh_pos' > 0 {
+            local trh_tail = substr(`"`_style_clean'"', `trh_pos' + 15, .)
+            local trh_end = strpos(`"`trh_tail'"', ")")
+            if `trh_end' > 0 local title_height = real(substr(`"`trh_tail'"', 1, `trh_end' - 1))
+        }
+        local nrh_pos = strpos(lower(`"`_style_clean'"'), "noterowheight(")
+        if `nrh_pos' > 0 {
+            local nrh_tail = substr(`"`_style_clean'"', `nrh_pos' + 14, .)
+            local nrh_end = strpos(`"`nrh_tail'"', ")")
+            if `nrh_end' > 0 local note_height = real(substr(`"`nrh_tail'"', 1, `nrh_end' - 1))
+        }
+
+        if "`display'" != "" {
+            * stacktab was the only display-capable command that rendered its
+            * own preview. A bare `list' inherits Stata's separator(5), which
+            * drew a rule after every fifth row that reads as a block boundary,
+            * and it handled neither title() nor note(). The shared helper keys
+            * off c1..cN, while the assembled table carries the _xcol
+            * scaffolding names, so rename onto the shared contract for the
+            * duration of the call and rename back before any sink reads the
+            * data. `final_vars' comes from `ds' above, so the map is by
+            * position and covers composite columns too.
+            local _disp_to ""
+            local _disp_ix = 0
+            foreach _dv of local final_vars {
+                local ++_disp_ix
+                local _disp_to `"`_disp_to' c`_disp_ix'"'
+            }
+            capture rename (`final_vars') (`_disp_to')
+            if _rc {
+                * A source column already named c# would collide; fall back to
+                * the unshared preview rather than failing the whole command.
+                noisily list, noobs noheader separator(0)
+                noisily display as text ""
+            }
+            else {
+                capture noisily _tabtools_console_display `final_ncols' ///
+                    `"`macval(title)'"', headerstart(1)
+                local _disp_rc = _rc
+                capture rename (`_disp_to') (`final_vars')
+                local _disp_ren_rc = _rc
+                if `_disp_rc' exit `_disp_rc'
+                if `_disp_ren_rc' exit `_disp_ren_rc'
+            }
+            if `"`macval(note)'"' != "" {
+                local _con_rest `"`macval(note)'"'
+                while `"`macval(_con_rest)'"' != "" {
+                    local _con_at = strpos(`"`macval(_con_rest)'"', " \ ")
+                    if `_con_at' == 0 {
+                        noisily display as text `"`macval(_con_rest)'"'
+                        local _con_rest ""
+                    }
+                    else {
+                        noisily display as text substr(`"`macval(_con_rest)'"', 1, `_con_at' - 1)
+                        local _con_rest = substr(`"`macval(_con_rest)'"', `_con_at' + 3, .)
+                    }
+                }
+            }
+        }
+
+        * Resolve the output worksheet and its full used range before mutating
+        * any optional frame/file sink. Excel worksheet names are
+        * case-insensitive, so retain the workbook's canonical spelling.
+        local existing_rows = 0
+        local export_title_row = 1
+        local export_start_row = 2
+        local export_start_col = 2
+        capture noisily _stacktab_xlsx_sheet_bounds using `"`using'"', ///
+            sheet(`"`macval(sheet)'"')
+        local _sheet_bounds_rc = _rc
+        if `_sheet_bounds_rc' == 0 {
+            mata: st_local("sheet", st_global("r(sheet)"))
+            local existing_rows = r(rows)
+        }
+        else if `_sheet_bounds_rc' != 601 {
+            exit `_sheet_bounds_rc'
+        }
+
+        if "`append'" == "" & "`sheetreplace'" == "" & ///
+            `_sheet_bounds_rc' == 0 {
+            display as error `"stacktab: sheet "`macval(sheet)'" already exists; specify append or sheetreplace"'
+            exit 602
+        }
+        if "`append'" != "" & `_sheet_bounds_rc' == 0 & `existing_rows' > 0 {
+            local export_title_row = `existing_rows' + 1
+            local export_start_row = `existing_rows' + 1
+            if `"`macval(title)'"' != "" local export_start_row = `existing_rows' + 2
+        }
+
+        * Preflight every optional sink before replacing any of them, so a
+        * refusal cannot surface after frame() or csv() has committed. An
+        * existing markdown() file is replaced like every other sink (the
+        * package-wide contract); mdappend appends to it.
+        local frame_name ""
+        local frame_replace ""
+        local frame_exists = 0
+        if `"`frame'"' != "" {
+            _stacktab_parse_frame, frame(`frame')
+            local frame_name `"`r(name)'"'
+            local frame_replace `"`r(replace)'"'
+
+            capture frame `frame_name': quietly count
+            local frame_exists = (_rc == 0)
+            if `frame_exists' & "`frame_replace'" == "" {
+                display as error `"frame "`frame_name'" already exists; specify frame(`frame_name', replace)"'
+                exit 110
+            }
+            * C2 (codex audit 2026-09-26): the shared preflight also refuses
+            * to replace the current frame here, before anything is staged; the
+            * refusal used to surface only at commit, as r(119) after a rollback.
+            local _st_pf_spec `"`frame_name'"'
+            if "`frame_replace'" != "" local _st_pf_spec `"`frame_name', replace"'
+            _tabtools_frame_preflight `"`_st_pf_spec'"' "frame()"
+        }
+
+        * The style()/borders() grammars are consumed at the very END of this
+        * command, by _stacktab_apply_style. Validate them HERE, while nothing
+        * has been written yet: a malformed specification used to surface as
+        * r(3499) after the frame, CSV, Markdown and workbook had all committed.
+        local _st_styleopt ""
+        if `"`style'"' != "" local _st_styleopt `"style(`style')"'
+        local _st_bordersopt ""
+        if `"`borders'"' != "" local _st_bordersopt `"borders(`borders')"'
+        if `"`style'"' != "" | `"`borders'"' != "" {
+            _stacktab_validate_style, `_st_styleopt' `_st_bordersopt'
+        }
+
+        * Stage every destination before committing any caller-visible state.
+        * This keeps a late workbook/style failure from leaving a new frame,
+        * CSV, or Markdown file behind.
+        tempfile finaldata
+        quietly save `"`finaldata'"', replace
+
+        tempfile _stage_book_token
+        local _stage_book `"`_stage_book_token'.xlsx"'
+        quietly copy `"`using'"' `"`_stage_book'"', replace
+
+        if `"`frame'"' != "" {
+            frame put _all, into(`_stage_frame')
+            local _stage_frame_created = 1
+        }
+
+        local _stage_csv ""
+        local _csv_existed = 0
+        if `"`csv'"' != "" {
+            capture confirm file `"`csv'"'
+            local _csv_existed = (_rc == 0)
+            tempfile _stage_csv_token
+            local _stage_csv `"`_stage_csv_token'.csv"'
+            quietly _tabtools_csv_write using `"`_stage_csv'"', reservedrow ///
+                title(`"`macval(title)'"') footnote(`"`macval(note)'"')
+        }
+
+        local _ret_markdown ""
+        local _ret_markdown_rows .
+        local _ret_markdown_cols .
+        local _stage_markdown ""
+        local _markdown_existed = 0
+        if `"`markdown'"' != "" {
+            capture confirm file `"`markdown'"'
+            local _markdown_existed = (_rc == 0)
+            tempfile _stage_markdown_token
+            local _stage_markdown `"`_stage_markdown_token'.md"'
+            * tempfile tracks only its extensionless token. Program-scoped
+            * tokens are reused on later calls, so remove any orphan carrying
+            * the appended Markdown extension before staging into that path.
+            capture confirm file `"`_stage_markdown'"'
+            if !_rc erase `"`_stage_markdown'"'
+            local _mdappend_opt ""
+            if "`mdappend'" != "" {
+                local _mdappend_opt "append"
+                if `_markdown_existed' {
+                    quietly copy `"`markdown'"' `"`_stage_markdown'"', replace
+                }
+            }
+            capture noisily _tabtools_markdown_write using `"`_stage_markdown'"', ///
+                `_mdappend_opt' headerstart(1) datastart(2) ///
+                title(`"`macval(title)'"') footnote(`"`macval(note)'"') strictheaders
+            if _rc {
+                local _md_rc = _rc
+                display as error "Failed to export Markdown to `markdown'"
+                exit `_md_rc'
+            }
+            local _ret_markdown `"`markdown'"'
+            local _ret_markdown_rows = r(n_rows)
+            local _ret_markdown_cols = r(n_cols)
+        }
+
+        quietly use `"`finaldata'"', clear
+
+        _stacktab_xlsx_write using `"`_stage_book'"', sheet(`"`macval(sheet)'"') ///
+            startrow(`export_start_row') startcol(`export_start_col') ///
+            `sheetreplace'
+
+        quietly count
+        local rows_written = r(N)
+        local rows_out = `export_start_row' + `rows_written' - 1
+        local note_row = .
+        if `"`macval(note)'"' != "" local note_row = `rows_out' + 1
+
+        * ================================================================
+        * APPLY TABTOOLS-STYLE EXCEL FORMATTING
+        * ================================================================
+            local _styleopt ""
+            if `"`style'"' != "" local _styleopt `"style(`style')"'
+            local _bordersopt ""
+            if `"`borders'"' != "" local _bordersopt `"borders(`borders')"'
+            local _sectionrowsopt ""
+            if `"`section_rows'"' != "" {
+                local _sectionrowsopt `"sectionrows(`section_rows')"'
+            }
+            _stacktab_apply_style, book(`"`_stage_book'"') sheet(`"`macval(sheet)'"') ///
+                `_styleopt' `_bordersopt' widths(`"`width_values'"') ///
+                rows(`rows_written') cols(`final_ncols') ///
+                startrow(`export_start_row') startcol(`export_start_col') ///
+                `_sectionrowsopt'
+
+        local last_sheet_col = `export_start_col' + `final_ncols' - 1
+        if `"`macval(title)'"' != "" & `export_title_row' > 0 {
+            mata: _stacktab_xlsx_put_text_mata(`"`_stage_book'"', `"`macval(sheet)'"', ///
+                `export_title_row', 1, 1, `last_sheet_col', st_local("title"), ///
+                12, `title_height', 1, 0)
+        }
+        if `"`macval(note)'"' != "" {
+            * One row per paragraph (" \ " separates them).
+            mata: _stacktab_put_note(`"`_stage_book'"', `"`macval(sheet)'"', ///
+                `note_row', `export_start_col', `last_sheet_col', ///
+                st_local("note"), `note_height')
+        }
+
+        * Every write into this workbook is done by now.  xl() appends a
+        * style record for each styled cell rather than reusing one per
+        * distinct format, and a composite workbook is exactly the shape that
+        * accumulates sheets, so collapse the pools before handing the file
+        * back; without it the run walks into Stata's 65,536-record ceiling
+        * and fails with r(16147).
+        _tabtools_xlsx_compact_styles using `"`_stage_book'"'
+
+        * Deterministic QA injection after every stage has succeeded and before
+        * any destination is committed.
+        if "$TABTOOLS_QA_STACK_FAIL" == "1" exit 459
+
+        * Back up replaceable destinations, then commit the staged transaction.
+        tempfile _backup_book_token
+        local _backup_book `"`_backup_book_token'.xlsx"'
+        quietly copy `"`using'"' `"`_backup_book'"', replace
+
+        local _backup_csv ""
+        if `"`csv'"' != "" & `_csv_existed' {
+            tempfile _backup_csv_token
+            local _backup_csv `"`_backup_csv_token'.csv"'
+            quietly copy `"`csv'"' `"`_backup_csv'"', replace
+        }
+
+        local _backup_markdown ""
+        if `"`markdown'"' != "" & `_markdown_existed' {
+            tempfile _backup_markdown_token
+            local _backup_markdown `"`_backup_markdown_token'.md"'
+            quietly copy `"`markdown'"' `"`_backup_markdown'"', replace
+        }
+
+        if `"`frame'"' != "" & `frame_exists' {
+            frame copy `frame_name' `_backup_frame'
+            local _backup_frame_created = 1
+        }
+
+        capture noisily {
+            quietly copy `"`_stage_book'"' `"`using'"', replace
+            if `"`csv'"' != "" {
+                quietly copy `"`_stage_csv'"' `"`csv'"', replace
+            }
+            if `"`markdown'"' != "" {
+                quietly copy `"`_stage_markdown'"' `"`markdown'"', replace
+            }
+            if `"`frame'"' != "" {
+                if `frame_exists' frame drop `frame_name'
+                frame rename `_stage_frame' `frame_name'
+                local _stage_frame_created = 0
+            }
+        }
+        local _commit_rc = _rc
+        if `_commit_rc' {
+            local _rollback_rc = 0
+            capture quietly copy `"`_backup_book'"' `"`using'"', replace
+            local _this_rollback_rc = _rc
+            if `_this_rollback_rc' & !`_rollback_rc' {
+                local _rollback_rc = `_this_rollback_rc'
+            }
+            if `"`csv'"' != "" {
+                if `_csv_existed' {
+                    capture quietly copy `"`_backup_csv'"' `"`csv'"', replace
+                    local _this_rollback_rc = _rc
+                    if `_this_rollback_rc' & !`_rollback_rc' {
+                        local _rollback_rc = `_this_rollback_rc'
+                    }
+                }
+                else {
+                    capture confirm file `"`csv'"'
+                    if !_rc {
+                        capture erase `"`csv'"'
+                        local _this_rollback_rc = _rc
+                        if `_this_rollback_rc' & !`_rollback_rc' {
+                            local _rollback_rc = `_this_rollback_rc'
+                        }
+                    }
+                }
+            }
+            if `"`markdown'"' != "" {
+                if `_markdown_existed' {
+                    capture quietly copy `"`_backup_markdown'"' `"`markdown'"', replace
+                    local _this_rollback_rc = _rc
+                    if `_this_rollback_rc' & !`_rollback_rc' {
+                        local _rollback_rc = `_this_rollback_rc'
+                    }
+                }
+                else {
+                    capture confirm file `"`markdown'"'
+                    if !_rc {
+                        capture erase `"`markdown'"'
+                        local _this_rollback_rc = _rc
+                        if `_this_rollback_rc' & !`_rollback_rc' {
+                            local _rollback_rc = `_this_rollback_rc'
+                        }
+                    }
+                }
+            }
+            if `"`frame'"' != "" {
+                capture frame `frame_name': quietly count
+                if !_rc {
+                    capture frame drop `frame_name'
+                    local _this_rollback_rc = _rc
+                    if `_this_rollback_rc' & !`_rollback_rc' {
+                        local _rollback_rc = `_this_rollback_rc'
+                    }
+                }
+                if `frame_exists' {
+                    capture frame copy `_backup_frame' `frame_name'
+                    local _this_rollback_rc = _rc
+                    if `_this_rollback_rc' & !`_rollback_rc' {
+                        local _rollback_rc = `_this_rollback_rc'
+                    }
+                }
+            }
+            if `_rollback_rc' {
+                local _preserve_backups = 1
+                noisily display as error ///
+                    "stacktab: commit failed with r(`_commit_rc'); rollback also failed with r(`_rollback_rc')"
+                foreach _recovery_path in `"`_backup_book'"' ///
+                    `"`_backup_csv'"' `"`_backup_markdown'"' {
+                    if `"`_recovery_path'"' != "" {
+                        noisily display as text ///
+                            `"recovery copy retained at `_recovery_path'"'
+                    }
+                }
+                if `_backup_frame_created' {
+                    noisily display as text ///
+                        "recovery frame retained as `_backup_frame'"
+                }
+            }
+            exit `_commit_rc'
+        }
+        * The workbook (and Markdown file) now hold this table: when either
+        * is a tabtools set session target, its first write has happened.
+        _tabtools_set_sinks xlsxdone, path(`"`using'"')
+        if `"`markdown'"' != "" _tabtools_set_sinks mddone, path(`"`markdown'"')
+        if `_backup_frame_created' {
+            frame drop `_backup_frame'
+            local _backup_frame_created = 0
+        }
+
+        local _ret_blocks_loaded = `n_blocks'
+        local _ret_rows_written = `rows_written'
+        local _ret_rows_out = `rows_out'
+        local _ret_cols_out = `final_ncols'
+        local _ret_append_start = `export_start_row'
+        local _ret_table_start "B`export_start_row'"
+        local _ret_title_cell ""
+        if `"`macval(title)'"' != "" & `export_title_row' > 0 local _ret_title_cell "A`export_title_row'"
+        local _ret_note_row = `note_row'
+        local _ret_sheet `"`macval(sheet)'"'
+        local _ret_book `"`using'"'
+        local _ret_layout `"`layout'"'
+        local _ret_frame `"`frame_name'"'
+        local _ret_csv `"`csv'"'
+    }
+    local rc = _rc
+    if `_restore_needed' {
+        capture restore
+    }
+    if `_stage_frame_created' capture frame drop `_stage_frame'
+    if `_backup_frame_created' & !`_preserve_backups' {
+        capture frame drop `_backup_frame'
+    }
+    * Appending required output extensions to tempfile tokens puts the actual
+    * files outside Stata's automatic tempfile registry. Remove every staged
+    * or backup artifact explicitly on both success and failure paths.
+    foreach _tmp_path in `"`_stage_book'"' `"`_stage_csv'"' ///
+        `"`_stage_markdown'"' {
+        capture confirm file `"`_tmp_path'"'
+        if !_rc {
+            capture erase `"`_tmp_path'"'
+            local _tmp_erase_rc = _rc
+            if `_tmp_erase_rc' & !`rc' {
+                noisily display as text ///
+                    `"note: stacktab could not remove temporary file `_tmp_path'"'
+            }
+        }
+    }
+    if !`_preserve_backups' {
+        foreach _tmp_path in `"`_backup_book'"' `"`_backup_csv'"' ///
+            `"`_backup_markdown'"' {
+            capture confirm file `"`_tmp_path'"'
+            if !_rc {
+                capture erase `"`_tmp_path'"'
+                local _tmp_erase_rc = _rc
+                if `_tmp_erase_rc' & !`rc' {
+                    noisily display as text ///
+                        `"note: stacktab could not remove temporary file `_tmp_path'"'
+                }
+            }
+        }
+    }
+    set varabbrev `_vao'
+    * Successful capture-based cleanup probes may leave _rc at 601 even though
+    * the public command succeeded. Reset that captured status before posting
+    * the return surface; the saved local rc still governs real failures.
+    capture version 17.0
+    local _rc_reset = _rc
+    if `_rc_reset' & !`rc' local rc = `_rc_reset'
+    if `rc' exit `rc'
+
+    return scalar blocks_loaded = `_ret_blocks_loaded'
+    return scalar rows_written  = `_ret_rows_written'
+    return scalar rows_out      = `_ret_rows_out'
+    return scalar cols_out      = `_ret_cols_out'
+    return scalar append_start  = `_ret_append_start'
+    if `_ret_note_row' < . return scalar note_row = `_ret_note_row'
+    return local  layout        `"`_ret_layout'"'
+    return local  sheet         `"`macval(_ret_sheet)'"'
+    return local  book          `"`_ret_book'"'
+    return local  table_start   `"`_ret_table_start'"'
+    if `"`_ret_title_cell'"' != "" return local title_cell `"`_ret_title_cell'"'
+    if `"`_ret_frame'"' != "" return local frame `"`_ret_frame'"'
+    if `"`_ret_csv'"' != "" return local csv `"`_ret_csv'"'
+    if `"`_ret_markdown'"' != "" {
+        return local markdown `"`_ret_markdown'"'
+        return scalar markdown_rows = `_ret_markdown_rows'
+        return scalar markdown_cols = `_ret_markdown_cols'
+    }
+
+    _tabtools_export_done using `"`using'"', sheet(`"`macval(_ret_sheet)'"')
+end
+
+
+capture program drop _stacktab_xlsx_write
+program define _stacktab_xlsx_write, rclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+        syntax using/ , SHEET(string) STARTRow(integer) STARTCol(integer) ///
+            [SHEETreplace]
+
+        if `startrow' < 1 {
+            display as error "startrow() must be positive"
+            exit 198
+        }
+        if `startcol' < 1 {
+            display as error "startcol() must be positive"
+            exit 198
+        }
+
+        quietly ds
+        local _vars `r(varlist)'
+        if "`_vars'" == "" {
+            display as error "No variables available for Excel export"
+            exit 111
+        }
+        quietly count
+        if r(N) == 0 {
+            display as error "No observations available for Excel export"
+            exit 2000
+        }
+
+        local _replace = ("`sheetreplace'" != "")
+        mata: _stacktab_xlsx_write_mata(`"`using'"', `"`macval(sheet)'"', ///
+            `"`_vars'"', `startrow', `startcol', `_replace')
+
+        return scalar n_rows = _N
+        return scalar n_cols = `: word count `_vars''
+        return scalar startrow = `startrow'
+        return scalar startcol = `startcol'
+        return local sheet `"`macval(sheet)'"'
+        return local xlsx `"`using'"'
+    }
+    local rc = _rc
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+end
+
+
+capture program drop _stacktab_xlsx_sheet_bounds
+program define _stacktab_xlsx_sheet_bounds, rclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+        syntax using/ , SHEET(string)
+
+        quietly import excel using `"`using'"', describe
+        local _n_sheets = r(N_worksheet)
+        local _actual_sheet ""
+        local _used_range ""
+        forvalues _s = 1/`_n_sheets' {
+            * Workbook sheet names are data: read them through Mata, never
+            * re-expanded as macro text.
+            mata: st_local("_candidate", st_global("r(worksheet_`_s')"))
+            if lower(`"`macval(_candidate)'"') == lower(`"`macval(sheet)'"') {
+                local _actual_sheet : copy local _candidate
+                local _used_range `"`r(range_`_s')'"'
+            }
+        }
+        if `"`macval(_actual_sheet)'"' == "" {
+            exit 601
+        }
+
+        local _used_range : subinstr local _used_range "$" "", all
+        local _last_cell `"`_used_range'"'
+        local _colon = strrpos(`"`_used_range'"', ":")
+        if `_colon' > 0 {
+            local _last_cell = substr(`"`_used_range'"', `_colon' + 1, .)
+        }
+        if !regexm(upper(`"`_last_cell'"'), "^([A-Z]+)([0-9]+)$") {
+            display as error `"could not parse used range "`_used_range'" for worksheet "`macval(_actual_sheet)'""'
+            exit 498
+        }
+        local _last_col_letters = regexs(1)
+        local _last_row = real(regexs(2))
+        local _last_col = 0
+        forvalues _i = 1/`=strlen("`_last_col_letters'")' {
+            local _last_col = `_last_col' * 26 + ///
+                strpos("ABCDEFGHIJKLMNOPQRSTUVWXYZ", ///
+                    substr("`_last_col_letters'", `_i', 1))
+        }
+        if `_last_col' < 1 | `_last_col' > 16384 | ///
+            `_last_row' < 1 | `_last_row' > 1048576 {
+            display as error `"invalid used range "`_used_range'" for worksheet "`macval(_actual_sheet)'""'
+            exit 498
+        }
+
+        return scalar rows = `_last_row'
+        return scalar cols = `_last_col'
+        return local range `"`_used_range'"'
+        return local sheet `"`macval(_actual_sheet)'"'
+        return local xlsx `"`using'"'
+    }
+    local rc = _rc
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+end
+
+
+capture program drop _stacktab_parse_frame
+program define _stacktab_parse_frame, rclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+        syntax , FRAme(string asis)
+        local spec `"`frame'"'
+        local spec = subinstr(`"`spec'"', `"""', "", .)
+        local spec = strtrim(`"`spec'"')
+        if `"`spec'"' == "" {
+            display as error "frame() requires a frame name"
+            exit 198
+        }
+
+        local comma = strpos(`"`spec'"', ",")
+        if `comma' {
+            local fname = strtrim(substr(`"`spec'"', 1, `comma' - 1))
+            local opts = lower(strtrim(substr(`"`spec'"', `comma' + 1, .)))
+        }
+        else {
+            local fname `"`spec'"'
+            local opts ""
+        }
+
+        capture confirm name `fname'
+        if _rc {
+            display as error `"frame() invalid frame name "`fname'""'
+            exit 198
+        }
+
+        local replace ""
+        if `"`opts'"' != "" {
+            local opts : subinstr local opts "," " ", all
+            foreach opt of local opts {
+                if "`opt'" == "replace" {
+                    local replace "replace"
+                }
+                else {
+                    display as error `"frame() invalid option "`opt'"; only replace is allowed"'
+                    exit 198
+                }
+            }
+        }
+
+        return local name `"`fname'"'
+        return local replace "`replace'"
+    }
+    local rc = _rc
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+end
+
+
+capture program drop _stacktab_resolve_col
+program define _stacktab_resolve_col, rclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+        args col
+        local col = strtrim(`"`col'"')
+        if regexm(`"`col'"', "^_xcol[0-9]+$") {
+            return local name `"`col'"'
+        }
+        else if regexm(`"`col'"', "^[A-Za-z]+$") {
+            local up = upper(`"`col'"')
+            local n = 0
+            forvalues i = 1/`=strlen(`"`up'"')' {
+                local c = substr(`"`up'"', `i', 1)
+                local n = (`n' * 26) + strpos("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "`c'")
+            }
+            return local name "_xcol`n'"
+        }
+        else {
+            return local name `"`col'"'
+        }
+    }
+    local rc = _rc
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+end
+
+
+capture program drop _stacktab_parse_rows
+program define _stacktab_parse_rows, rclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+        args spec
+        local spec = strtrim(`"`spec'"')
+        local pieces : subinstr local spec "/" " ", all
+        local first : word 1 of `pieces'
+        local last : word 2 of `pieces'
+        local extra : word 3 of `pieces'
+        if `"`first'"' == "" | `"`extra'"' != "" {
+            display as error `"stacktab: invalid rows(`spec')"'
+            exit 198
+        }
+        if `"`last'"' == "" local last "`first'"
+        capture confirm integer number `first'
+        if _rc {
+            display as error "stacktab: rows() bounds must be positive integers"
+            exit 198
+        }
+        capture confirm integer number `last'
+        if _rc {
+            display as error "stacktab: rows() bounds must be positive integers"
+            exit 198
+        }
+        if `first' < 1 | `last' < 1 | `last' < `first' {
+            display as error "stacktab: rows() must be a positive lo/hi range"
+            exit 198
+        }
+        return scalar first = `first'
+        return scalar last = `last'
+    }
+    local rc = _rc
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+end
+
+
+capture program drop _stacktab_parse_cols
+program define _stacktab_parse_cols, rclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+        args spec
+        local spec = strtrim(`"`spec'"')
+        local pieces : subinstr local spec "-" " ", all
+        local first : word 1 of `pieces'
+        local last : word 2 of `pieces'
+        local extra : word 3 of `pieces'
+        if `"`first'"' == "" | `"`extra'"' != "" {
+            display as error `"stacktab: invalid cols(`spec')"'
+            exit 198
+        }
+        if `"`last'"' == "" local last "`first'"
+        if !regexm(`"`first'"', "^[A-Za-z]+$") | !regexm(`"`last'"', "^[A-Za-z]+$") {
+            display as error "stacktab: cols() bounds must be Excel column letters"
+            exit 198
+        }
+        _stacktab_resolve_col `"`first'"'
+        local first_idx = real(subinstr(`"`r(name)'"', "_xcol", "", 1))
+        _stacktab_resolve_col `"`last'"'
+        local last_idx = real(subinstr(`"`r(name)'"', "_xcol", "", 1))
+        if `last_idx' < `first_idx' {
+            display as error "stacktab: cols() range must be left-to-right"
+            exit 198
+        }
+        local first = upper(`"`first'"')
+        local last = upper(`"`last'"')
+        return local first `"`first'"'
+        return local last `"`last'"'
+        return scalar first_index = `first_idx'
+        return scalar last_index = `last_idx'
+    }
+    local rc = _rc
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+end
+
+
+* ============================================================================
+* HELPER: Apply style() spec via mata-xl
+* ============================================================================
+* =============================================================================
+* _stacktab_validate_style: check the style()/borders() grammars, mutate nothing
+* =============================================================================
+* stacktab commits its frame, CSV, Markdown and workbook outputs and only then
+* calls _stacktab_apply_style, which is where a malformed style() first became
+* an error. style(colwidth(A nope)) therefore returned r(3499) with all four
+* destinations already written -- including a partly formatted worksheet -- so a
+* failed command could destroy valid prior outputs via the replace options.
+*
+* This program validates the same grammar _stacktab_apply_style consumes, but
+* creates and changes nothing, so stacktab can reject a bad specification before
+* the first write. It is deliberately called from the same preflight block as
+* the frame/Markdown checks.
+*
+* Grammar:
+*   style()   titlerowheight(#)  noterowheight(#)  colwidth(COL W [\ COL W ...])
+*   borders() outer(all)  top(row 1)  bottom(last)  bottom(row #)
+
+capture program drop _stacktab_validate_style
+program define _stacktab_validate_style, nclass
+    version 17.0
+    local _orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    capture noisily {
+    syntax , [STYLE(string asis) BORDERS(string asis)]
+
+    local style : subinstr local style `"""' "", all
+    local borders : subinstr local borders `"""' "", all
+
+    * ----- the whole grammar: known groups, each at most once -----
+    * F13 (codex audit 2026-09-27): the keys below were found with strpos
+    * and any other text was ignored, so a typo such as colwidh(A 80), a
+    * second colwidth() group, or trailing text was accepted and silently
+    * not applied. Each recognised key(...) group is consumed once; a
+    * repeat, a prefixed key, or anything left over is an error.
+    local _st_rest = lower(`"`style'"')
+    foreach key in titlerowheight noterowheight colwidth {
+        local _st_cnt = 0
+        while ustrregexm(`"`_st_rest'"', "(^|[\s,])`key'\([^()]*\)") {
+            local ++_st_cnt
+            local _st_rest = ustrregexrf(`"`_st_rest'"', "(^|[\s,])`key'\([^()]*\)", " ")
+        }
+        if `_st_cnt' > 1 {
+            display as error "style(): `key'() may be specified only once"
+            if "`key'" == "colwidth" display as error "list several columns inside one group: colwidth(A 20 \ B 80)"
+            exit 198
+        }
+    }
+    local _st_rest : subinstr local _st_rest "," " ", all
+    local _st_rest = strtrim(`"`_st_rest'"')
+    if `"`_st_rest'"' != "" {
+        display as error `"style(): unrecognised text: `_st_rest'"'
+        display as error "recognised: titlerowheight(#), noterowheight(#), colwidth(COL WIDTH [\ COL WIDTH ...])"
+        exit 198
+    }
+
+    * ----- numeric row-height keys -----
+    foreach key in titlerowheight noterowheight {
+        local klen = strlen("`key'") + 1
+        local pos = strpos(lower(`"`style'"'), "`key'(")
+        if `pos' > 0 {
+            local tail = substr(`"`style'"', `pos' + `klen', .)
+            local endp = strpos(`"`tail'"', ")")
+            if `endp' == 0 {
+                display as error "style(): `key'() is missing its closing parenthesis"
+                exit 198
+            }
+            local val = strtrim(substr(`"`tail'"', 1, `endp' - 1))
+            local num = real(`"`val'"')
+            if missing(`num') | `num' <= 0 {
+                display as error "style(): `key'() requires a positive number; got `val'"
+                exit 198
+            }
+        }
+    }
+
+    * ----- colwidth(COL WIDTH [\ COL WIDTH ...]) -----
+    local cw_pos = strpos(lower(`"`style'"'), "colwidth(")
+    if `cw_pos' > 0 {
+        local cw_tail = substr(`"`style'"', `cw_pos' + 9, .)
+        local cw_end = strpos(`"`cw_tail'"', ")")
+        if `cw_end' == 0 {
+            display as error "style(): colwidth() is missing its closing parenthesis"
+            exit 198
+        }
+        local cw_spec = substr(`"`cw_tail'"', 1, `cw_end' - 1)
+        if strtrim(`"`cw_spec'"') == "" {
+            display as error "style(): colwidth() is empty"
+            exit 198
+        }
+        local cw_remain `"`cw_spec'"'
+        while `"`cw_remain'"' != "" {
+            local cw_sep = strpos(`"`cw_remain'"', char(92))
+            if `cw_sep' > 0 {
+                local cw_piece = strtrim(substr(`"`cw_remain'"', 1, `cw_sep' - 1))
+                local cw_remain = strtrim(substr(`"`cw_remain'"', `cw_sep' + 1, .))
+            }
+            else {
+                local cw_piece = strtrim(`"`cw_remain'"')
+                local cw_remain ""
+            }
+            if `"`cw_piece'"' == "" continue
+
+            local cw_col : word 1 of `cw_piece'
+            local cw_width : word 2 of `cw_piece'
+            local cw_extra : word 3 of `cw_piece'
+            if `"`cw_width'"' == "" {
+                display as error `"style(): colwidth() entry "`cw_piece'" needs a column and a width"'
+                exit 198
+            }
+            if `"`cw_extra'"' != "" {
+                display as error `"style(): colwidth() entry "`cw_piece'" has more than a column and a width"'
+                exit 198
+            }
+            local wnum = real(`"`cw_width'"')
+            if missing(`wnum') | `wnum' <= 0 {
+                display as error "style(): colwidth() width must be a positive number; got `cw_width'"
+                exit 198
+            }
+            capture _stacktab_resolve_col `"`cw_col'"'
+            local _res_rc = _rc
+            local resolved `"`r(name)'"'
+            local cw_index = real(subinstr(`"`resolved'"', "_xcol", "", 1))
+            if `_res_rc' | missing(`cw_index') | `cw_index' < 1 {
+                display as error "style(): colwidth() column `cw_col' is not a valid column reference"
+                exit 198
+            }
+        }
+    }
+
+    * ----- borders(): every token must be one this command acts on -----
+    * _stacktab_apply_style matches border tokens with strpos, so an
+    * unrecognised token was previously accepted and silently ignored.
+    if strtrim(`"`borders'"') != "" {
+        local _b = lower(strtrim(`"`borders'"'))
+        local _b : subinstr local _b "outer(all)" "", all
+        local _b : subinstr local _b "top(row 1)" "", all
+        local _b : subinstr local _b "bottom(last)" "", all
+        local _guard = 0
+        while regexm(`"`_b'"', "bottom\(row [0-9]+\)") & `_guard' < 100 {
+            local _b = regexr(`"`_b'"', "bottom\(row [0-9]+\)", "")
+            local ++_guard
+        }
+        local _b : subinstr local _b "," " ", all
+        local _b = strtrim(`"`_b'"')
+        if `"`_b'"' != "" {
+            display as error `"borders(): unrecognised token(s): `_b'"'
+            display as error "recognised: outer(all), top(row 1), bottom(last), bottom(row #)"
+            exit 198
+        }
+    }
+    }
+    local _rc_outer = _rc
+    quietly version
+    set varabbrev `_orig_varabbrev'
+    if `_rc_outer' exit `_rc_outer'
+end
+
+
+capture program drop _stacktab_apply_style
+program define _stacktab_apply_style, nclass
+    version 17.0
+    local _vao = c(varabbrev)
+    set varabbrev off
+    local _book_open = 0
+    tempname _style_book
+    capture noisily {
+    syntax , BOOK(string) SHEET(string) ROWS(integer) COLS(integer) ///
+        [STYLE(string asis) BORDERS(string asis) WIDTHS(numlist) ///
+         STARTRow(integer 2) STARTCol(integer 2) SECTIONRows(numlist)]
+    if `startrow' < 1 {
+        display as error "startrow() must be positive"
+        exit 198
+    }
+    if `startcol' < 1 {
+        display as error "startcol() must be positive"
+        exit 198
+    }
+    if `rows' < 1 | `cols' < 1 {
+        display as error "rows() and cols() must be positive"
+        exit 198
+    }
+    local style : subinstr local style `"""' "", all
+    local borders : subinstr local borders `"""' "", all
+
+    * bottom(row #) draws a rule under row # of the composed table. It used
+    * to be drawn only when # was the last row, where bottom(last) already
+    * puts one, so any other row was accepted and silently ignored. A row
+    * outside the table is refused here, before the workbook is opened (the
+    * workbook is a staged copy, so nothing has been committed).
+    local _bottom_rows ""
+    local _bscan = lower(`"`borders'"')
+    while regexm(`"`_bscan'"', "bottom\(row ([0-9]+)\)") {
+        local _br = real(regexs(1))
+        if `_br' < 1 | `_br' > `rows' {
+            noisily display as error "borders(): bottom(row `_br') is outside the table (rows 1 to `rows')"
+            exit 198
+        }
+        local _bottom_rows "`_bottom_rows' `_br'"
+        local _bscan = regexr(`"`_bscan'"', "bottom\(row [0-9]+\)", "")
+    }
+
+    * Parse titlerowheight, noterowheight, colwidth from style_str
+    local trh = 30
+    local nrh = 45
+    local trh_pos = strpos(lower(`"`style'"'), "titlerowheight(")
+    if `trh_pos' > 0 {
+        local trh_tail = substr(`"`style'"', `trh_pos' + 15, .)
+        local trh_end = strpos(`"`trh_tail'"', ")")
+        if `trh_end' > 0 local trh = real(substr(`"`trh_tail'"', 1, `trh_end' - 1))
+    }
+    local nrh_pos = strpos(lower(`"`style'"'), "noterowheight(")
+    if `nrh_pos' > 0 {
+        local nrh_tail = substr(`"`style'"', `nrh_pos' + 14, .)
+        local nrh_end = strpos(`"`nrh_tail'"', ")")
+        if `nrh_end' > 0 local nrh = real(substr(`"`nrh_tail'"', 1, `nrh_end' - 1))
+    }
+
+    mata: `_style_book' = xl()
+    local _book_open = 1
+    mata: `_style_book'.load_book("`book'")
+    mata: `_style_book'.set_sheet(`"`macval(sheet)'"')
+    mata: `_style_book'.set_mode("open")
+
+    local endrow = `startrow' + `rows' - 1
+    local endcol = `startcol' + `cols' - 1
+    local last_sheet_col = max(`endcol', 1)
+
+    mata: `_style_book'.set_font((`startrow', `endrow'), ///
+        (`startcol', `endcol'), "Arial", 10)
+    mata: `_style_book'.set_text_wrap((`startrow', `endrow'), ///
+        (`startcol', `endcol'), "on")
+    mata: `_style_book'.set_vertical_align((`startrow', `endrow'), ///
+        (`startcol', `endcol'), "center")
+    mata: `_style_book'.set_font_bold((`startrow', `startrow'), ///
+        (`startcol', `endcol'), "on")
+    mata: `_style_book'.set_bottom_border((`startrow', `startrow'), ///
+        (`startcol', `endcol'), "thin")
+    mata: `_style_book'.set_bottom_border((`endrow', `endrow'), ///
+        (`startcol', `endcol'), "thin")
+
+    if `"`sectionrows'"' != "" {
+        foreach sr of numlist `sectionrows' {
+            if `sr' >= 1 & `sr' <= `rows' {
+                local sheet_row = `startrow' + `sr' - 1
+                mata: `_style_book'.set_font_bold((`sheet_row', ///
+                    `sheet_row'), (`startcol', `endcol'), "on")
+                mata: `_style_book'.set_top_border((`sheet_row', ///
+                    `sheet_row'), (`startcol', `endcol'), "thin")
+                mata: `_style_book'.set_bottom_border((`sheet_row', ///
+                    `sheet_row'), (`startcol', `endcol'), "thin")
+            }
+        }
+    }
+
+    local wi = 0
+    if `"`widths'"' != "" {
+        foreach w of numlist `widths' {
+            local ++wi
+            if `wi' <= `cols' {
+                local wc = `startcol' + `wi' - 1
+                mata: `_style_book'.set_column_width(`wc', `wc', `w')
+            }
+        }
+    }
+
+    * lower(): the validator matches colwidth( case-insensitively, so
+    * style(COLWIDTH(A 30)) was accepted and then silently not applied.
+    local cw_pos = strpos(lower(`"`style'"'), "colwidth(")
+    if `cw_pos' > 0 {
+        local cw_tail = substr(`"`style'"', `cw_pos' + 9, .)
+        local cw_end = strpos(`"`cw_tail'"', ")")
+        if `cw_end' > 0 {
+            local cw_spec = substr(`"`cw_tail'"', 1, `cw_end' - 1)
+            local cw_remain `"`cw_spec'"'
+            while `"`cw_remain'"' != "" {
+                local cw_piece ""
+                local cw_sep = strpos(`"`cw_remain'"', char(92))
+                if `cw_sep' > 0 {
+                    local cw_piece = strtrim(substr(`"`cw_remain'"', 1, `cw_sep' - 1))
+                    local cw_remain = strtrim(substr(`"`cw_remain'"', `cw_sep' + 1, .))
+                }
+                else {
+                    local cw_piece = strtrim(`"`cw_remain'"')
+                    local cw_remain ""
+                }
+                local cw_col : word 1 of `cw_piece'
+                local cw_width : word 2 of `cw_piece'
+                if `"`cw_col'"' != "" & `"`cw_width'"' != "" {
+                    _stacktab_resolve_col `"`cw_col'"'
+                    local resolved `"`r(name)'"'
+                    local cw_index = real(subinstr(`"`resolved'"', "_xcol", "", 1))
+                    local excel_col = `startcol' + `cw_index' - 1
+                    mata: `_style_book'.set_column_width(`excel_col', ///
+                        `excel_col', `cw_width')
+                }
+            }
+        }
+    }
+
+    if strpos(lower(`"`borders'"'), "outer(all)") {
+        mata: `_style_book'.set_top_border((`startrow', `startrow'), ///
+            (`startcol', `endcol'), "thin")
+        mata: `_style_book'.set_bottom_border((`endrow', `endrow'), ///
+            (`startcol', `endcol'), "thin")
+        mata: `_style_book'.set_left_border((`startrow', `endrow'), ///
+            (`startcol', `startcol'), "thin")
+        mata: `_style_book'.set_right_border((`startrow', `endrow'), ///
+            (`endcol', `endcol'), "thin")
+    }
+    if strpos(lower(`"`borders'"'), "top(row 1)") {
+        mata: `_style_book'.set_top_border((`startrow', `startrow'), ///
+            (`startcol', `endcol'), "thin")
+    }
+    if strpos(lower(`"`borders'"'), "bottom(last)") {
+        mata: `_style_book'.set_bottom_border((`endrow', `endrow'), ///
+            (`startcol', `endcol'), "thin")
+    }
+    foreach _br of local _bottom_rows {
+        local _brow = `startrow' + `_br' - 1
+        mata: `_style_book'.set_bottom_border((`_brow', `_brow'), ///
+            (`startcol', `endcol'), "thin")
+    }
+
+    mata: `_style_book'.close_book()
+    local _book_open = 0
+    mata: mata drop `_style_book'
+    }
+    local rc = _rc
+    if `_book_open' {
+        * stata-dev-ignore: capture-rc — cleanup zone; the original rc is saved in "local rc" above
+        capture mata: `_style_book'.close_book()
+    }
+    capture mata: mata drop `_style_book'
+    set varabbrev `_vao'
+    if `rc' exit `rc'
+end
+
+
+version 17.0
+capture mata: mata drop _stacktab_xlsx_write_mata()
+capture mata: mata drop _stacktab_cur_strmat()
+capture mata: mata drop _stacktab_xlsx_put_text_mata()
+capture mata: mata drop _stacktab_put_note()
+
+* matastrict is a session setting: save the caller's value here and
+* restore it after the block, so loading this file never leaks it.
+local _tt_ms0 = c(matastrict)
+mata:
+mata set matastrict on
+
+void _stacktab_xlsx_write_mata(
+    string scalar filepath,
+    string scalar sheet,
+    string scalar varlist,
+    real scalar startrow,
+    real scalar startcol,
+    real scalar replace_sheet)
+{
+    class xl scalar b
+    string rowvector sheets
+    string matrix table
+    real scalar i, found
+
+    b = xl()
+    if (!fileexists(filepath)) {
+        b.create_book(filepath, sheet, "xlsx")
+    }
+    else {
+        b.load_book(filepath)
+        sheets = b.get_sheets()
+        found = 0
+        for (i = 1; i <= length(sheets); i++) {
+            if (sheets[i] == sheet) {
+                found = 1
+                break
+            }
+        }
+        if (found) {
+            if (replace_sheet) b.clear_sheet(sheet)
+        }
+        else {
+            b.add_sheet(sheet)
+        }
+        b.set_sheet(sheet)
+    }
+
+    b.set_mode("open")
+    table = _stacktab_cur_strmat(varlist)
+    b.put_string(startrow, startcol, table)
+    b.close_book()
+}
+
+string matrix _stacktab_cur_strmat(string scalar varlist)
+{
+    string rowvector vars
+    string matrix out
+    string colvector scol
+    real colvector ncol
+    string scalar fmt
+    real scalar i, j, N, K
+
+    vars = tokens(varlist)
+    N = st_nobs()
+    K = cols(vars)
+    out = J(N, K, "")
+
+    for (j = 1; j <= K; j++) {
+        if (st_isstrvar(vars[j])) {
+            out[, j] = st_sdata(., vars[j])
+        }
+        else {
+            ncol = st_data(., vars[j])
+            scol = J(N, 1, "")
+            fmt = st_varformat(vars[j])
+            for (i = 1; i <= N; i++) {
+                if (ncol[i] < .) {
+                    scol[i] = strtrim(ustrregexra(strofreal(ncol[i], fmt), "-(?=[0.,]+\z)", ""))
+                }
+            }
+            out[, j] = scol
+        }
+    }
+
+    return(out)
+}
+
+void _stacktab_xlsx_put_text_mata(
+    string scalar filepath,
+    string scalar sheet,
+    real scalar row,
+    real scalar col,
+    real scalar merge_start_col,
+    real scalar merge_end_col,
+    string scalar text,
+    real scalar fontsize,
+    real scalar rowheight,
+    real scalar bold,
+    real scalar italic)
+{
+    class xl scalar b
+
+    b = xl()
+    b.load_book(filepath)
+    b.set_sheet(sheet)
+    b.set_mode("open")
+    b.put_string(row, col, text)
+    if (merge_end_col > merge_start_col) {
+        b.set_sheet_merge(sheet, (row, row), (merge_start_col, merge_end_col))
+    }
+    b.set_font((row, row), (merge_start_col, merge_end_col), "Arial", fontsize)
+    b.set_text_wrap((row, row), (merge_start_col, merge_end_col), "on")
+    b.set_vertical_align((row, row), (merge_start_col, merge_end_col), "center")
+    if (bold) b.set_font_bold((row, row), (merge_start_col, merge_end_col), "on")
+    if (italic) b.set_font_italic((row, row), (merge_start_col, merge_end_col), "on")
+    if (rowheight > 0) b.set_row_height(row, row, rowheight)
+    b.close_book()
+}
+
+// Footnote paragraphs: the literal token " \ " separates them, one row
+// each; a note without the token is one row, written as typed.
+void _stacktab_put_note(
+    string scalar filepath,
+    string scalar sheet,
+    real scalar row,
+    real scalar col,
+    real scalar lastcol,
+    string scalar note,
+    real scalar rowheight)
+{
+    string colvector paras
+    string scalar rest, piece
+    real scalar pos, j
+
+    if (!strpos(note, " " + char(92) + " ")) paras = note
+    else {
+        paras = J(0, 1, "")
+        rest = note
+        while ((pos = strpos(rest, " " + char(92) + " ")) > 0) {
+            piece = strtrim(substr(rest, 1, pos - 1))
+            if (piece != "") paras = paras \ piece
+            rest = substr(rest, pos + 3, .)
+        }
+        piece = strtrim(rest)
+        if (piece != "") paras = paras \ piece
+        if (rows(paras) == 0) paras = ""
+    }
+    for (j = 1; j <= rows(paras); j++) {
+        _stacktab_xlsx_put_text_mata(filepath, sheet, row + j - 1, col, col,
+            lastcol, paras[j], 8, rowheight, 0, 1)
+    }
+}
+
+end
+mata: mata set matastrict `_tt_ms0'
+
+* ============================================================================
+* MATA: blocks() tokenizer (C8/C9, codex audit 2026-09-26)
+* ============================================================================
+version 17.0
+capture mata: mata drop _stacktab_blocks()
+capture mata: mata drop _stacktab_cm_parse()
+capture mata: mata drop _stacktab_blk_unquote()
+capture mata: mata drop _stacktab_blk_close()
+
+* matastrict is a session setting: save the caller's value here and
+* restore it after the block, so loading this file never leaks it.
+local _tt_ms0 = c(matastrict)
+mata:
+mata set matastrict on
+
+// Remove one outer layer of compound or plain double quotes.
+string scalar _stacktab_blk_unquote(string scalar v)
+{
+    real scalar n
+
+    n = strlen(v)
+    if (n >= 4 & substr(v, 1, 2) == char(96) + char(34) &
+        substr(v, n - 1, 2) == char(34) + char(39)) return(substr(v, 3, n - 4))
+    if (n >= 2 & substr(v, 1, 1) == char(34) & substr(v, n, 1) == char(34)) {
+        return(substr(v, 2, n - 2))
+    }
+    return(v)
+}
+
+// Position of the parenthesis closing the one opened just before position
+// start, skipping parentheses inside plain or compound double quotes; 0 when
+// it is never closed.
+real scalar _stacktab_blk_close(string scalar s, real scalar start)
+{
+    real scalar i, n, depth, inq, cq
+    string scalar c, c2
+
+    n = strlen(s)
+    depth = 1
+    inq = 0
+    cq = 0
+    for (i = start; i <= n; i++) {
+        c = substr(s, i, 1)
+        c2 = substr(s, i, 2)
+        if (!inq & c2 == char(96) + char(34)) {
+            cq++
+            i++
+            continue
+        }
+        if (cq & c2 == char(34) + char(39)) {
+            cq--
+            i++
+            continue
+        }
+        if (!cq & c == char(34)) {
+            inq = !inq
+            continue
+        }
+        if (inq | cq) continue
+        if (c == "(") depth++
+        else if (c == ")") {
+            depth--
+            if (depth == 0) return(i)
+        }
+    }
+    return(0)
+}
+
+// Split blocks() on top-level backslashes and parse each block into the
+// caller's locals n_blocks, bsheet_#, brows_#, bcols_#, blabel_#, bskip_#,
+// bpostfix_#. On a malformed specification, _stb_err holds the message.
+void _stacktab_blocks(string scalar spec)
+{
+    string rowvector names
+    string colvector pieces
+    string scalar c, c2, piece, name, value, lname
+    real scalar i, n, depth, inq, cq, from, b, k, pos, close, j
+    real rowvector seen
+
+    names = ("sheet", "rows", "cols", "label", "skip", "postfix")
+
+    // top-level split on backslash, outside parentheses and quotes
+    pieces = J(0, 1, "")
+    n = strlen(spec)
+    depth = 0
+    inq = 0
+    cq = 0
+    from = 1
+    for (i = 1; i <= n; i++) {
+        c = substr(spec, i, 1)
+        c2 = substr(spec, i, 2)
+        if (!inq & c2 == char(96) + char(34)) {
+            cq++
+            i++
+            continue
+        }
+        if (cq & c2 == char(34) + char(39)) {
+            cq--
+            i++
+            continue
+        }
+        if (!cq & c == char(34)) {
+            inq = !inq
+            continue
+        }
+        if (inq | cq) continue
+        if (c == "(") depth++
+        else if (c == ")") depth--
+        else if (c == char(92) & depth == 0) {
+            pieces = pieces \ substr(spec, from, i - from)
+            from = i + 1
+        }
+    }
+    pieces = pieces \ substr(spec, from, .)
+
+    b = 0
+    for (k = 1; k <= rows(pieces); k++) {
+        piece = strtrim(pieces[k])
+        if (piece == "") continue
+        b++
+        seen = J(1, cols(names), 0)
+        for (j = 1; j <= cols(names); j++) {
+            st_local("b" + names[j] + "_" + strofreal(b), "")
+        }
+        pos = 1
+        while (pos <= strlen(piece)) {
+            c = substr(piece, pos, 1)
+            if (c == " " | c == char(9)) {
+                pos++
+                continue
+            }
+            name = ""
+            while (pos <= strlen(piece) &
+                   regexm(substr(piece, pos, 1), "[A-Za-z]")) {
+                name = name + substr(piece, pos, 1)
+                pos++
+            }
+            if (name == "" | substr(piece, pos, 1) != "(") {
+                st_local("_stb_err", "stacktab: block " + strofreal(b) +
+                    ": expected a suboption such as sheet(...) at: " +
+                    substr(piece, pos - strlen(name), .))
+                return
+            }
+            close = _stacktab_blk_close(piece, pos + 1)
+            if (close == 0) {
+                st_local("_stb_err", "stacktab: block " + strofreal(b) +
+                    ": malformed " + name + "() in blocks()")
+                return
+            }
+            lname = strlower(name)
+            j = 0
+            for (i = 1; i <= cols(names); i++) {
+                if (names[i] == lname) j = i
+            }
+            if (j == 0) {
+                st_local("_stb_err", "stacktab: block " + strofreal(b) +
+                    ": unknown block suboption " + name +
+                    "(); allowed are sheet(), rows(), cols(), label(), skip(), postfix()")
+                return
+            }
+            if (seen[j]) {
+                st_local("_stb_err", "stacktab: block " + strofreal(b) +
+                    ": block suboption " + lname + "() specified more than once")
+                return
+            }
+            seen[j] = 1
+            value = strtrim(substr(piece, pos + 1, close - pos - 1))
+            value = _stacktab_blk_unquote(value)
+            st_local("b" + lname + "_" + strofreal(b), value)
+            pos = close + 1
+        }
+    }
+    st_local("n_blocks", strofreal(b))
+}
+
+end
+mata: mata set matastrict `_tt_ms0'
+
+
+* F09 (codex audit 2026-09-27): columnmerge() rules. Splits on backslashes
+* outside double and compound quotes, then reads "PAIR as HEADER" with one
+* balanced outer quote layer removed from HEADER. Posts _cm_n, _cm_pair_#,
+* _cm_hdr_# (text as typed), or _stb_err.
+mata:
+void _stacktab_cm_parse(string scalar spec)
+{
+    string colvector pieces
+    string scalar c, c2, piece, hdr
+    real scalar i, n, inq, cq, from, k, m, as_pos
+
+    pieces = J(0, 1, "")
+    n = strlen(spec)
+    inq = 0
+    cq = 0
+    from = 1
+    for (i = 1; i <= n; i++) {
+        c = substr(spec, i, 1)
+        c2 = substr(spec, i, 2)
+        if (!inq & c2 == char(96) + char(34)) {
+            cq++
+            i++
+            continue
+        }
+        if (cq & c2 == char(34) + char(39)) {
+            cq--
+            i++
+            continue
+        }
+        if (!cq & c == char(34)) {
+            inq = !inq
+            continue
+        }
+        if (inq | cq) continue
+        if (c == char(92)) {
+            pieces = pieces \ substr(spec, from, i - from)
+            from = i + 1
+        }
+    }
+    pieces = pieces \ substr(spec, from, .)
+
+    m = 0
+    for (k = 1; k <= rows(pieces); k++) {
+        piece = strtrim(pieces[k])
+        if (piece == "") continue
+        // " as " before the header's opening quote
+        as_pos = strpos(piece, " as ")
+        if (as_pos == 0 | (strpos(piece, char(34)) > 0 &
+            strpos(piece, char(34)) < as_pos)) {
+            st_local("_stb_err", "stacktab: malformed columnmerge() piece " +
+                char(34) + piece + char(34))
+            return
+        }
+        hdr = strtrim(substr(piece, as_pos + 4, .))
+        if (strlen(hdr) >= 4 & substr(hdr, 1, 2) == char(96) + char(34) &
+            substr(hdr, -2, 2) == char(34) + char(39)) {
+            hdr = substr(hdr, 3, strlen(hdr) - 4)
+        }
+        else if (strlen(hdr) >= 2 & substr(hdr, 1, 1) == char(34) &
+            substr(hdr, -1, 1) == char(34)) {
+            hdr = substr(hdr, 2, strlen(hdr) - 2)
+        }
+        if (hdr == "") {
+            st_local("_stb_err", "stacktab: columnmerge() header may not be empty")
+            return
+        }
+        m++
+        st_local("_cm_pair_" + strofreal(m), strtrim(substr(piece, 1, as_pos - 1)))
+        st_local("_cm_hdr_" + strofreal(m), hdr)
+    }
+    st_local("_cm_n", strofreal(m))
+}
+end

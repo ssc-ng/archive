@@ -1,0 +1,36 @@
+d 'EPLOT': module to draw forest plots and coefficient plots from data, stored estimates, matrices or frames
+d
+d  eplot draws forest plots and coefficient plots through one
+d interface from four sources: estimates and confidence limits held
+d as variables in memory (for example meta-analysis results), the
+d active or stored estimation results, a matrix, or a graph-ready
+d frame. The input mode is detected from the arguments. Several
+d stored models can be overlaid for comparison. Options select,
+d drop, rename, group and sort coefficients, exponentiate them,
+d draw a log scale, add capped confidence intervals, weighted
+d markers, diamonds for pooled estimates, prediction intervals,
+d significance stars and colors, a column of formatted estimates
+d with confidence intervals, heterogeneity statistics, reference
+d lines and favors labels, and apply journal style presets. The
+d plotted estimates and limits, their p-values when available, the
+d number of display rows and the twoway command that was executed
+d are returned in r(). 
+d
+d KW: forest plot
+d KW: coefficient plot
+d KW: meta-analysis
+d KW: effect estimates
+d KW: confidence intervals
+d KW: regression results
+d KW: model comparison
+d KW: graphics
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261030
+d
+d Author: Timothy P Copeland, Karolinska Institutet
+d Support: email timothy.copeland@@ki.se
+d
+f eplot.ado
+f eplot.sthlp

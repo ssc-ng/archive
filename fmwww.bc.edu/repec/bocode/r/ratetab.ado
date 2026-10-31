@@ -1,0 +1,761 @@
+*! ratetab Version 1.0.0  2026/10/20
+*! Events, person-time and incidence rates (CI) by grouping variables
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass
+
+/*
+ESTIMAND
+    The incidence rate D/Y per level of each grouping variable, D events in
+    Y person-time, scaled by per(); one column group per outcome.
+
+INTERVALS (ci())
+    exact    (default) Exact Poisson limits for the count, divided by Y:
+             Pr(K >= D | l1) = alpha/2 and Pr(K <= D | l2) = alpha/2
+             ([R] ci, Methods and formulas, "Poisson mean").
+             l1 = invpoissontail(D, alpha/2), l2 = invpoisson(D, alpha/2).
+    poisson  strate's default: rate * exp(-/+ z / sqrt(D)), the quadratic
+             approximation to the Poisson log likelihood for the log rate
+             ([ST] strate).
+    cluster(id)  One saturated Poisson model per grouping variable and
+             outcome, an indicator per level, person-time as exposure and
+             vce(cluster id): exp(b_j -/+ z se_j). The point estimate equals
+             D/Y; the sandwich variance allows arbitrary dependence within a
+             cluster (repeated events in one person). Few clusters make it
+             unreliable, so the cluster count is reported.
+    A level with zero events has no likelihood-based interval; every method
+    then shows the exact limits (0, -ln(alpha/2)/Y) (R3).
+    excludemasked  Levels with 1 to #-1 events (# = the small-cell threshold)
+             are left out of the cluster fit too. The saturated model's
+             information is diagonal, Var(b_j) = G/(G-1) sum_c u_cj^2 / D_j^2,
+             so the other levels' estimates are unchanged and their variances
+             change only through G (rate-intervals.notes.md, sec. 3).
+
+PERSON-TIME
+    exposure() takes one variable for every outcome or one per outcome,
+    paired in order with events().
+
+The table is rendered by stratetab from strate-format files, so its frame()
+is a stratetab frame that comptab, rateframe() accepts.
+*/
+
+capture program drop ratetab
+program define ratetab, rclass
+    version 17.0
+    * Refusals before ratetab posts its own results leave the caller's r()
+    * as it was (the package rule; crosstab and desctab do the same).
+    tempname _caller_r
+    _return hold `_caller_r'
+    local _own_r_posted 0
+    local _orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    tempname _work _est _clus _save
+    local _work_made 0
+    local _save_made 0
+    local _files ""
+    capture noisily {
+        syntax varlist(min=1) [if] [in] , [EVents(varlist numeric) ///
+            EXPosure(varlist numeric) PER(real 1000) CI(string) Level(real -1) ///
+            SMALLcells(integer -1) NOSMALLcells CFormat(string) DIGits(integer -1) ///
+            PYDigits(integer 0) PYScale(string) SEP(string) ///
+            OUTLabels(string) EXPLabels(string) UNITlabel(string) PTUnit(string) ///
+            ZEROCells(string) MASKtext(string) EXCLUDEMasked SAVing(string asis) *]
+
+        * rateratio is refused, not passed to stratetab. stratetab's rate
+        * ratio divides the rate of one exposure group by the same-labelled
+        * category of the first, with a variance that adds the two log-rate
+        * variances because the groups are independent samples. ratetab's
+        * grouping variables partition one sample, so the groups it would
+        * compare are levels of different variables over overlapping
+        * observations: neither the ratio nor its interval means anything.
+        * stratetab declares rateratio in lower case, so only the full word
+        * reaches it; the scan below matches exactly that word, each option
+        * with its parenthesized argument bound as one token (a title()
+        * holding the word is not the option). It sets no other local:
+        * a second syntax call would clear varlist, if and in.
+        local _rt_rr 0
+        local _rt_rest : copy local options
+        while `"`macval(_rt_rest)'"' != "" {
+            gettoken _rt_tok _rt_rest : _rt_rest, bind
+            if `"`macval(_rt_tok)'"' == "rateratio" local _rt_rr 1
+        }
+        if `_rt_rr' {
+            display as error "ratetab: rateratio is not available"
+            display as error "  stratetab's rate ratio compares independent exposure groups; ratetab's grouping"
+            display as error "  variables split one sample, so it would divide rates of overlapping groups"
+            display as error "  For rate ratios between the levels of one variable, fit {bf:poisson _d i.}{it:var}{bf:, exposure(}{it:pt}{bf:) irr}"
+            display as error "  with {it:pt} = _t - _t0 on stset data, or use {helpb ir} or {helpb stir}"
+            exit 198
+        }
+
+        **# Source of events and person-time
+        local _st 0
+        if "`events'" == "" & "`exposure'" == "" {
+            if `"`: char _dta[_dta]'"' != "st" {
+                display as error "ratetab: give events() and exposure(), or stset the data"
+                exit 119
+            }
+            local _st 1
+        }
+        else if "`events'" == "" | "`exposure'" == "" {
+            display as error "events() and exposure() go together"
+            exit 198
+        }
+        if `per' <= 0 | missing(`per') {
+            display as error "per() must be a positive number"
+            exit 198
+        }
+        * pyscale() is parsed as text so a given pyscale(1) (a deliberate
+        * person-time unit) can be told from the default
+        local _py_given = `"`pyscale'"' != ""
+        if !`_py_given' local pyscale 1
+        capture confirm number `pyscale'
+        if _rc {
+            display as error "pyscale() must be a positive number"
+            exit 198
+        }
+        if `pyscale' <= 0 | missing(`pyscale') {
+            display as error "pyscale() must be a positive number"
+            exit 198
+        }
+        * person-time is headed as person-years unless ptunit() names
+        * another unit. When the stset time variable is a date and no scale
+        * turned days into years, the headers and r(methods) name the unit
+        * the data are in, and a note gives the pyscale() for years.
+        local ptunit = strtrim(`"`ptunit'"')
+        if `_st' & !`_py_given' & `"`ptunit'"' == "" {
+            _tabtools_st_timescale
+            if "`_st_unit'" != "" {
+                local ptunit "`_st_unit'"
+                display as text "Note: analysis time is in `_st_unit' (`_st_timevar' has a date format and stset has no scale());"
+                local _py_hint "365.25"
+                if "`_st_unit'" != "days" local _py_hint "31557600000"
+                display as text "      person-time and rates are labelled in person-`_st_unit'. Specify pyscale(`_py_hint') for person-years."
+            }
+        }
+        * Otherwise the person-years label is a default, not a finding: unless
+        * stset scale() turned days into years, say so (as survtab does).
+        if !`_py_given' & `"`ptunit'"' == "" {
+            local _rt_bs : char _dta[st_bs]
+            if !`_st' | !inlist(real("`_rt_bs'"), 365, 365.25) {
+                display as text "Note: person-time is labelled in person-years by default (ratetab does not infer the unit);"
+                display as text "      specify ptunit() or pyscale() if analysis time is not in years."
+            }
+        }
+        local _pt_noun "person-years"
+        if `"`ptunit'"' != "" local _pt_noun `"person-`ptunit'"'
+        local _pt_opt ""
+        if `"`ptunit'"' != "" local _pt_opt `"ptunit(`"`ptunit'"')"'
+        if `level' == -1 local level = c(level)
+        if `level' < 10 | `level' > 99.99 {
+            display as error "level() must be between 10 and 99.99"
+            exit 198
+        }
+        if `smallcells' != -1 & "`nosmallcells'" != "" {
+            display as error "smallcells() and nosmallcells may not be combined"
+            exit 198
+        }
+        if `"`cformat'"' != "" & `digits' != -1 {
+            display as error "cformat() and digits() may not be combined"
+            exit 198
+        }
+        * exposure(): one person-time variable for every outcome, or one per
+        * outcome, paired in order with events()
+        local _n_exp : word count `exposure'
+        local _n_ev : word count `events'
+        if `_n_exp' > 1 & `_n_exp' != `_n_ev' {
+            display as error "exposure() takes one variable, or one per events() variable (`_n_ev'); `_n_exp' given"
+            exit 198
+        }
+        * zerocells(dash|blank [, persontime]): persontime also withholds
+        * the person-time of a zero-event level
+        _parse comma _zc_mode _zc_rest : zerocells
+        local zerocells = strtrim(lower(`"`_zc_mode'"'))
+        local _zc_rest = strtrim(lower(substr(strtrim(`"`_zc_rest'"'), 2, .)))
+        if !inlist(`"`zerocells'"', "", "dash", "blank") | !inlist(`"`_zc_rest'"', "", "persontime") | ///
+            (`"`zerocells'"' == "" & `"`_zc_rest'"' != "") {
+            display as error "zerocells() must be dash or blank, optionally with the suboption persontime: zerocells(dash, persontime)"
+            exit 198
+        }
+        local _zc_pt = ("`_zc_rest'" == "persontime")
+        * saving(): checked now (existence, replace), written after the table
+        local _save_file ""
+        local _save_replace ""
+        if `"`saving'"' != "" {
+            * filename[, replace]; a quoted name loses one layer of quotes
+            _parse comma _sv_fn _sv_rest : saving
+            gettoken _sv_fn : _sv_fn
+            * (a second syntax call here would reset varlist, if and in)
+            local _sv_rest = strtrim(subinstr(`"`_sv_rest'"', ",", "", 1))
+            if !inlist(lower(`"`_sv_rest'"'), "", "replace") {
+                display as error `"saving(): "`_sv_rest'" not allowed; the only suboption is replace"'
+                exit 198
+            }
+            if `"`_sv_fn'"' == "" {
+                display as error "saving() requires a file name"
+                exit 198
+            }
+            local _save_file `"`_sv_fn'"'
+            local _save_replace = lower(`"`_sv_rest'"')
+            local _sv_dta `"`_save_file'"'
+            if !strmatch(lower(`"`_sv_dta'"'), "*.dta") local _sv_dta `"`_sv_dta'.dta"'
+            if "`_save_replace'" == "" confirm new file `"`_sv_dta'"'
+            * each grouping variable is saved under its own name, beside the
+            * fixed columns. One that has a fixed column's name (a 2.3.1
+            * call such as -ratetab group, saving()- must still save) is
+            * saved as g_<name>, or g2_<name>, g3_<name>, ... when that is
+            * taken; the fixed columns never change. _svn<g> is the saved
+            * name of grouping variable g; a repeated variable shares one.
+            local _sv_fixed "outcome outcome_var outcome_label group groupvar level level_label events persontime rate lb ub masked nopersontime"
+            local _sv_uniq : list uniq varlist
+            local _sv_used : list _sv_fixed | _sv_uniq
+            local _sv_map ""
+            local _u 0
+            foreach _gv of local _sv_uniq {
+                local ++_u
+                local _sn "`_gv'"
+                if `: list _gv in _sv_fixed' {
+                    local _sn = substr("g_`_gv'", 1, 32)
+                    local _k 1
+                    while `: list _sn in _sv_used' & `_k' < 99 {
+                        local ++_k
+                        local _sn = substr("g`_k'_`_gv'", 1, 32)
+                    }
+                    if `: list _sn in _sv_used' {
+                        display as error "saving(): no unique name for grouping variable `_gv', which has the name of a saved column; rename it"
+                        exit 110
+                    }
+                    local _sv_used "`_sv_used' `_sn'"
+                    local _sv_map "`_sv_map' `_gv'=`_sn'"
+                }
+                local _svto_`_u' "`_sn'"
+            }
+            local _g 0
+            foreach _gv of local varlist {
+                local ++_g
+                local _p : list posof "`_gv'" in _sv_uniq
+                local _svn`_g' "`_svto_`_p''"
+            }
+            local _sv_map : list clean _sv_map
+        }
+
+        **# ci()
+        local _ci = strtrim(lower(`"`ci'"'))
+        local _clusvar ""
+        if `"`_ci'"' == "" local _ci "exact"
+        if regexm(`"`ci'"', "^[ ]*[cC][lL][uU][sS][tT][eE][rR][ ]*\(([^()]+)\)[ ]*$") {
+            local _clusvar = strtrim(regexs(1))
+            capture confirm variable `_clusvar', exact
+            if _rc {
+                display as error `"ci(cluster()): variable "`_clusvar'" not found"'
+                exit 111
+            }
+            local _ci "cluster"
+        }
+        else if !inlist(`"`_ci'"', "exact", "poisson") {
+            display as error "ci() must be exact, poisson, or cluster(varname)"
+            exit 198
+        }
+        * excludemasked: levels with 1 to #-1 events (# the small-cell
+        * threshold that stratetab will apply: smallcells(), else the session
+        * default unless nosmallcells) are left out of the clustered fit, as
+        * levels with no events always are. Only the cluster count G of the
+        * fit changes for the other levels (rate-intervals.notes.md, sec. 3).
+        local _dmin 1
+        if "`excludemasked'" != "" {
+            if "`_ci'" != "cluster" {
+                display as error "excludemasked requires ci(cluster(varname))"
+                exit 198
+            }
+            local _sc_fit 0
+            if `smallcells' != -1 local _sc_fit = `smallcells'
+            else if "`nosmallcells'" == "" & `"$TABTOOLS_set_smallcells"' != "" {
+                local _sc_fit = real(`"$TABTOOLS_set_smallcells"')
+            }
+            if missing(`_sc_fit') | `_sc_fit' < 2 {
+                display as error "excludemasked requires a small-cell threshold of 2 or more (smallcells() or tabtools set smallcells)"
+                exit 198
+            }
+            local _dmin = `_sc_fit'
+        }
+
+        **# Sample
+        * Each grouping variable keeps its own nonmissing rows (as strate run
+        * per variable): a missing value in one grouping variable must not
+        * remove the row from another variable's table.
+        marksample touse, strok novarlist
+        tempvar _nm
+        quietly egen int `_nm' = rownonmiss(`varlist'), strok
+        quietly replace `touse' = 0 if `_nm' == 0  // stata-dev-ignore: unchecked-commit — narrows the sample marker; a zero-row sample is refused at the count below (no observations, exit 2000)
+        drop `_nm'
+        if `_st' {
+            quietly replace `touse' = 0 if _st != 1
+            tempvar _ev _py
+            quietly gen double `_ev' = _d if `touse'
+            quietly gen double `_py' = _t - _t0 if `touse'
+            local events "`_ev'"
+            local exposure "`_py'"
+            local _n_exp 1
+            local _evnames "_d"
+        }
+        else {
+            local _evnames "`events'"
+            markout `touse' `events' `exposure'
+        }
+        if "`_clusvar'" != "" {
+            quietly count if `touse' & missing(`_clusvar')
+            if r(N) {
+                display as error "ci(cluster()): `_clusvar' is missing in `r(N)' observation(s) of the sample"
+                exit 459
+            }
+        }
+        quietly count if `touse'
+        if r(N) == 0 {
+            display as error "no observations"
+            exit 2000
+        }
+        local _N = r(N)
+        foreach _x of local exposure {
+            quietly count if `touse' & `_x' < 0
+            if r(N) {
+                display as error "exposure is negative in `r(N)' observation(s)"
+                exit 459
+            }
+        }
+        local _o 0
+        foreach _e of local events {
+            local ++_o
+            local _x : word `=cond(`_n_exp' == 1, 1, `_o')' of `exposure'
+            quietly count if `touse' & (`_e' < 0 | `_e' != floor(`_e'))
+            if r(N) {
+                display as error "events must be nonnegative integers (counts); `r(N)' observation(s) are not"
+                exit 459
+            }
+            quietly count if `touse' & `_e' > 0 & `_x' == 0
+            if r(N) {
+                display as error "`r(N)' observation(s) have events but no person-time"
+                exit 459
+            }
+        }
+        local n_out : word count `events'
+        local n_grp : word count `varlist'
+
+        **# Labels
+        if `"`outlabels'"' == "" {
+            forvalues _o = 1/`n_out' {
+                local _en : word `_o' of `_evnames'
+                if `_st' {
+                    local _fv : char _dta[st_bd]
+                    local _lab ""
+                    if "`_fv'" != "" capture local _lab : variable label `_fv'
+                    if `"`_lab'"' == "" local _lab "Events"
+                }
+                else {
+                    local _lab : variable label `_en'
+                    if `"`_lab'"' == "" local _lab "`_en'"
+                }
+                local outlabels = cond(`_o' == 1, `"`_lab'"', `"`outlabels' \ `_lab'"')
+            }
+        }
+        if `"`explabels'"' == "" {
+            forvalues _g = 1/`n_grp' {
+                local _gv : word `_g' of `varlist'
+                local _lab : variable label `_gv'
+                if `"`_lab'"' == "" local _lab "`_gv'"
+                local explabels = cond(`_g' == 1, `"`_lab'"', `"`explabels' \ `_lab'"')
+            }
+        }
+        * default rate-header label: per() as typed (a fraction or 1500.5 keeps
+        * its decimals; %21.0fc printed per(0.5) as "0" over rates scaled by .5)
+        if `"`unitlabel'"' == "" {
+            local unitlabel = strtrim(ustrregexra(string(`per', "%21.15gc"), "-(?=[0.,]+\z)", ""))
+            if substr(`"`unitlabel'"', 1, 1) == "." local unitlabel "0`unitlabel'"
+            * %g keeps a full-width mantissa in exponent form (1.00000000000000e-06)
+            if strpos(`"`unitlabel'"', "e") local unitlabel = regexr(`"`unitlabel'"', "[.]?0+e", "e")
+        }
+
+        **# Per level counts and intervals, in a work frame
+        local _alpha = (1 - `level' / 100) / 2
+        local _z = invnormal(1 - `_alpha')
+        local _keep "`varlist' `events' `exposure' `_clusvar'"
+        local _keep : list uniq _keep
+        frame put `_keep' if `touse', into(`_work')
+        local _work_made 1
+        * a fixed row order: sums and fits below run in (level, row) order,
+        * so a rerun on the same data is bit-identical (a plain sort breaks
+        * ties at random, and the sum order moves the last bit)
+        tempvar _ord
+        frame `_work': quietly gen long `_ord' = _n
+        local _nrows 0
+        matrix `_clus' = J(`n_grp', `n_out', .)
+        local _n_zero 0
+        local _n_noci 0
+        local _n_nopt 0
+        local _n_cells 0
+        local _n_maskfit 0
+        forvalues _g = 1/`n_grp' {
+            local _gv : word `_g' of `varlist'
+            frame `_work': quietly count if !missing(`_gv')
+            if r(N) == 0 {
+                display as error "ratetab: `_gv' is missing in every observation of the sample"
+                exit 2000
+            }
+            forvalues _o = 1/`n_out' {
+                local _e : word `_o' of `events'
+                local _x : word `=cond(`_n_exp' == 1, 1, `_o')' of `exposure'
+                tempfile _tf
+                frame `_work' {
+                    tempvar _grp _dl _lo _hi
+                    quietly egen long `_grp' = group(`_gv'), label
+                    quietly sort `_grp' `_ord'
+                    quietly levelsof `_grp', local(_levs)
+                    * saving(): the grouping variable's own value of each
+                    * level, exact (%21x for numbers), for the saved file
+                    if `_o' == 1 & `"`_save_file'"' != "" {
+                        capture confirm string variable `_gv'
+                        local _gstr = !_rc
+                        foreach _l of local _levs {
+                            if `_gstr' {
+                                mata: st_local("_gval`_g'_`_l'", st_sdata(selectindex(st_data(., "`_grp'") :== `_l')[1], "`_gv'"))
+                            }
+                            else {
+                                quietly summarize `_gv' if `_grp' == `_l', meanonly
+                                local _gval`_g'_`_l' : display %21x r(min)
+                            }
+                        }
+                    }
+                    quietly gen double `_lo' = .
+                    quietly gen double `_hi' = .
+                    if "`_ci'" == "cluster" {
+                        quietly by `_grp': egen double `_dl' = total(`_e')
+                        * rows without person-time carry no events (refused above)
+                        * and no information; leave them out explicitly so the
+                        * fit's sample is known in advance
+                        quietly count if `_dl' >= `_dmin' & `_x' > 0 & !missing(`_grp')
+                        local _nfit = r(N)
+                        if `_nfit' {
+                            * start at the closed-form MLE, ln(D/Y) per level, so
+                            * b and its sandwich variance are evaluated at the
+                            * exact rate rather than at ml's stopping point
+                            tempname _init
+                            capture matrix drop `_init'
+                            foreach _l of local _levs {
+                                quietly summarize `_e' if `_grp' == `_l' & `_dl' >= `_dmin' & `_x' > 0, meanonly
+                                if r(N) == 0 continue
+                                local _Dl = r(sum)
+                                quietly summarize `_x' if `_grp' == `_l' & `_dl' >= `_dmin' & `_x' > 0, meanonly
+                                matrix `_init' = nullmat(`_init'), ln(`_Dl' / r(sum))
+                            }
+                            * the sandwich sums scores by cluster: sort by cluster
+                            * and row so that sum runs in a fixed order too
+                            quietly sort `_clusvar' `_ord'
+                            capture noisily quietly poisson `_e' ibn.`_grp' if `_dl' >= `_dmin' & `_x' > 0 & !missing(`_grp'), ///
+                                exposure(`_x') noconstant vce(cluster `_clusvar') from(`_init', copy)
+                            if _rc {
+                                local _prc = _rc
+                                display as error "ratetab: the clustered Poisson fit for `_gv' failed (r(`_prc'))"
+                                exit `_prc'
+                            }
+                            if e(converged) != 1 {
+                                display as error "ratetab: the clustered Poisson fit for `_gv' did not converge"
+                                exit 430
+                            }
+                            if e(N) != `_nfit' {
+                                display as error "ratetab: the clustered Poisson fit for `_gv' used e(N) = `e(N)' of `_nfit' rows"
+                                exit 459
+                            }
+                            matrix `_clus'[`_g', `_o'] = e(N_clust)
+                            foreach _l of local _levs {
+                                quietly summarize `_dl' if `_grp' == `_l', meanonly
+                                if r(max) >= `_dmin' {
+                                    local _b = _b[`_l'.`_grp']
+                                    local _s = _se[`_l'.`_grp']
+                                    if `_s' > 0 & !missing(`_s') {
+                                        quietly replace `_lo' = exp(_b[`_l'.`_grp'] - `_z' * _se[`_l'.`_grp']) if `_grp' == `_l'
+                                        quietly replace `_hi' = exp(_b[`_l'.`_grp'] + `_z' * _se[`_l'.`_grp']) if `_grp' == `_l'
+                                    }
+                                }
+                            }
+                        }
+                        drop `_dl'
+                    }
+                    preserve
+                    quietly drop if missing(`_grp')
+                    quietly sort `_grp' `_ord'
+                    quietly collapse (sum) _D = `_e' _Y = `_x' (max) _lo_c = `_lo' _hi_c = `_hi', by(`_grp')
+                    * a level with no person-time for this outcome has no
+                    * computable rate: its rate and limits stay missing and
+                    * stratetab leaves the cell empty (events are 0: events
+                    * without person-time were refused above)
+                    quietly count if _Y == 0
+                    local _n_nopt = `_n_nopt' + r(N)
+                    local _n_cells = `_n_cells' + _N
+                    quietly decode `_grp', gen(cat)
+                    * person-time in pyscale units (what stratetab prints) and
+                    * rates per unit of it
+                    quietly replace _Y = _Y / `pyscale'
+                    quietly gen double _Rate = _D / _Y if _Y > 0  // stata-dev-ignore: hardcoded-tempname — created after preserve + collapse, which leaves only _D, _Y, _lo_c, _hi_c and the by() variable, so only a by() variable of the same name can clash, and that fails loudly with r(110); the data are restored afterwards
+                    quietly gen double _Lower = .  // stata-dev-ignore: hardcoded-tempname — created after preserve + collapse, which leaves only _D, _Y, _lo_c, _hi_c and the by() variable, so only a by() variable of the same name can clash, and that fails loudly with r(110); the data are restored afterwards
+                    quietly gen double _Upper = .  // stata-dev-ignore: hardcoded-tempname — created after preserve + collapse, which leaves only _D, _Y, _lo_c, _hi_c and the by() variable, so only a by() variable of the same name can clash, and that fails loudly with r(110); the data are restored afterwards
+                    if "`_ci'" == "exact" {
+                        quietly replace _Lower = invpoissontail(_D, `_alpha') / _Y if _D > 0
+                        quietly replace _Upper = invpoisson(_D, `_alpha') / _Y if _D > 0
+                    }
+                    else if "`_ci'" == "poisson" {
+                        quietly replace _Lower = _Rate * exp(-`_z' / sqrt(_D)) if _D > 0
+                        quietly replace _Upper = _Rate * exp(`_z' / sqrt(_D)) if _D > 0
+                    }
+                    else {
+                        * exp(b) is a rate per unit of the exposure variable
+                        quietly replace _Lower = _lo_c * `pyscale' if _D >= `_dmin'
+                        quietly replace _Upper = _hi_c * `pyscale' if _D >= `_dmin'
+                        quietly count if _D >= `_dmin' & (missing(_Lower) | missing(_Upper))
+                        local _n_noci = `_n_noci' + r(N)
+                        * excludemasked: masked levels were not fitted and get
+                        * no interval (they print masked)
+                        quietly count if _D > 0 & _D < `_dmin'
+                        local _n_maskfit = `_n_maskfit' + r(N)
+                    }
+                    * R3: zero events -> exact limits (0, -ln(alpha/2)/Y)
+                    quietly count if _D == 0 & _Y > 0
+                    local _n_zero = `_n_zero' + r(N)
+                    quietly replace _Lower = 0 if _D == 0 & _Y > 0
+                    quietly replace _Upper = -ln(`_alpha') / _Y if _D == 0 & _Y > 0
+                    local _lvtxt = strtrim(ustrregexra(string(`level', "%21.15g"), "-(?=[0.,]+\z)", ""))
+                    label variable _Lower "Lower `_lvtxt'% bound"
+                    label variable _Upper "Upper `_lvtxt'% bound"
+                    * one row per level, for r(estimates)
+                    local _nl = _N
+                    forvalues _i = 1/`_nl' {
+                        local ++_nrows
+                        mata: st_local("_svlab`_nrows'", st_sdata(`_i', "cat"))
+                        matrix `_est' = nullmat(`_est') \ (`_o', `_g', `_i', _D[`_i'], _Y[`_i'], ///
+                            _Rate[`_i'] * `per', _Lower[`_i'] * `per', _Upper[`_i'] * `per')
+                    }
+                    keep cat _D _Y _Rate _Lower _Upper
+                    order cat _D _Y _Rate _Lower _Upper
+                    quietly save "`_tf'.dta", replace
+                    restore
+                    drop `_grp' `_lo' `_hi'
+                }
+                local _files `"`_files' `_tf'"'
+            }
+        }
+        matrix colnames `_est' = outcome group level events persontime rate lb ub
+        if `_n_nopt' == `_n_cells' {
+            display as error "ratetab: no level has person-time for any outcome; no rate is computable"
+            exit 459
+        }
+
+        **# Render with stratetab
+        local _sc_opt ""
+        if `smallcells' != -1 local _sc_opt "smallcells(`smallcells')"
+        if "`nosmallcells'" != "" local _sc_opt "nosmallcells"
+        local _fmt_opt ""
+        if `"`cformat'"' != "" local _fmt_opt `"cformat(`cformat')"'
+        else if `digits' != -1 local _fmt_opt "digits(`digits')"
+        * sep() is data (help tabtools##sep): handed to stratetab unchanged,
+        * built in Mata and spliced with macval(), never re-expanded
+        local _sep_opt ""
+        mata: st_local("_sep_opt", st_local("sep") == "" ? "" : "sep(" + (strpos(st_local("sep"), char(34)) ? char(96) + char(34) + st_local("sep") + char(34) + char(39) : char(34) + st_local("sep") + char(34)) + ")")
+        local _zc_opt ""
+        if "`zerocells'" != "" local _zc_opt = "zerocells(`zerocells'" + cond(`_zc_pt', ", persontime", "") + ")"
+        local _mt_opt ""
+        if `"`masktext'"' != "" local _mt_opt `"masktext(`"`masktext'"')"'
+        capture noisily stratetab, using(`_files') outcomes(`n_out') ///
+            outlabels(`"`outlabels'"') explabels(`"`explabels'"') level(`level') ///
+            ratescale(`per') unitlabel(`"`unitlabel'"') pydigits(`pydigits') ///
+            `_pt_opt' `_fmt_opt' `macval(_sep_opt)' `_sc_opt' `_zc_opt' `_mt_opt' `macval(options)'
+        local _st_rc = _rc
+        * read what is needed before return add hands r() over
+        local _sc_used = r(smallcells)
+        local _frame_out `"`r(frame)'"'
+        * a refusal or export failure inside stratetab is ratetab's own
+        * refusal: exit before taking stratetab's r(), so the caller's r()
+        * is restored below
+        if `_st_rc' exit `_st_rc'
+        local _own_r_posted 1
+        return add
+        if `"`_frame_out'"' != "" {
+            frame `_frame_out': char _dta[tabtools_producer] "ratetab"
+            frame `_frame_out': char _dta[tabtools_ci_method] "`_ci'"
+        }
+
+        **# Returns and the methods sentence
+        local _m "Incidence rates per `unitlabel' `_pt_noun' with `level'% confidence intervals"
+        if "`_ci'" == "exact" local _m "`_m' from exact Poisson limits for the event count"
+        if "`_ci'" == "poisson" local _m "`_m' from the quadratic approximation to the Poisson log likelihood for the log rate"
+        if "`_ci'" == "cluster" {
+            local _m "`_m' from one Poisson model per grouping variable with an indicator per level, person-time as exposure and variance clustered on `_clusvar'"
+            forvalues _g = 1/`n_grp' {
+                local _gv : word `_g' of `varlist'
+                forvalues _o = 1/`n_out' {
+                    local _G = el(`_clus', `_g', `_o')
+                    if !missing(`_G') display as text "(ratetab: `_gv': " as result `_G' as text " clusters of `_clusvar')"
+                }
+            }
+            local _m "`_m' (cluster counts in r(clusters))"
+        }
+        if `_n_maskfit' local _m "`_m'; levels with 1 to `=`_dmin' - 1' events were left out of the clustered fit and have no interval"
+        if `_n_zero' & "`zerocells'" == "" local _m "`_m'; cells with no events show the exact upper limit"
+        if `_n_zero' & "`zerocells'" != "" & !`_zc_pt' local _m "`_m'; cells with no events are printed without a count or rate"
+        if `_n_zero' & "`zerocells'" != "" & `_zc_pt' local _m "`_m'; cells with no events are printed without a count, person-time or rate"
+        if `_n_nopt' local _m "`_m'; levels with no person-time for an outcome have no rate and are left empty"
+        local _mtxt "<`_sc_used'"
+        if `"`masktext'"' != "" local _mtxt `"`masktext'"'
+        if `_sc_used' > 0 local _m "`_m'; cells with 1 to `=`_sc_used' - 1' events are shown as `_mtxt' with their person-time and rate withheld"
+        local _m "`_m'."
+        return local methods `"`_m'"'
+        return local ci_method "`_ci'"
+        if "`_clusvar'" != "" {
+            return local cluster "`_clusvar'"
+            matrix rownames `_clus' = `varlist'
+            return matrix clusters = `_clus'
+        }
+        return scalar N = `_N'
+        return scalar per = `per'
+        return scalar level = `level'
+        return scalar N_zero = `_n_zero'
+        return scalar N_noci = `_n_noci'
+        return scalar N_nopt = `_n_nopt'
+        if "`excludemasked'" != "" return scalar N_maskfit = `_n_maskfit'
+
+        **# saving(): one row per printed level, as numbers
+        if `"`_save_file'"' != "" {
+            * outcome labels as stratetab splits them
+            local _ol = subinstr(`"`outlabels'"', " \ ", "\", .)
+            tokenize `"`_ol'"', parse("\")
+            local _k 0
+            forvalues _i = 1/`=2 * `n_out''  {
+                if `"``_i''"' == "\" continue
+                local ++_k
+                local _olab`_k' = strtrim(`"``_i''"')
+            }
+            frame create `_save'
+            local _save_made 1
+            frame `_save' {
+                quietly set obs `_nrows'
+                quietly gen int outcome = .
+                quietly gen str32 outcome_var = ""
+                quietly gen strL outcome_label = ""
+                quietly gen int group = .
+                quietly gen str32 groupvar = ""
+                quietly gen int level = .
+                quietly gen strL level_label = ""
+                foreach _v in events persontime rate lb ub {
+                    quietly gen double `_v' = .
+                }
+                quietly gen byte masked = 0
+                quietly gen byte nopersontime = 0
+                forvalues _r = 1/`_nrows' {
+                    local _o = el(`_est', `_r', 1)
+                    local _g = el(`_est', `_r', 2)
+                    quietly replace outcome = `_o' in `_r'
+                    quietly replace group = `_g' in `_r'
+                    quietly replace level = el(`_est', `_r', 3) in `_r'
+                    local _c 3
+                    foreach _v in events persontime rate lb ub {
+                        local ++_c
+                        quietly replace `_v' = el(`_est', `_r', `_c') in `_r'
+                    }
+                    local _en : word `_o' of `_evnames'
+                    local _gv : word `_g' of `varlist'
+                    quietly replace outcome_var = "`_en'" in `_r'
+                    quietly replace groupvar = "`_gv'" in `_r'
+                    mata: st_sstore(`_r', "outcome_label", st_local("_olab`_o'"))
+                    mata: st_sstore(`_r', "level_label", st_local("_svlab`_r'"))
+                }
+                if `_sc_used' > 0 quietly replace masked = (events >= 1 & events < `_sc_used')
+                quietly replace nopersontime = (persontime == 0)
+                label variable outcome "Outcome (column group) number"
+                label variable outcome_var "Event variable"
+                label variable outcome_label "Outcome label"
+                label variable group "Grouping variable number"
+                label variable groupvar "Grouping variable"
+                label variable level "Level number within the grouping variable"
+                label variable level_label "Level"
+                label variable events "Events"
+                label variable persontime "Person-time (divided by pyscale())"
+                label variable rate "Rate per `unitlabel' person-time"
+                label variable lb "Lower `level'% limit of the rate"
+                label variable ub "Upper `level'% limit of the rate"
+                label variable masked "1 if printed masked (1 to smallcells()-1 events)"
+                label variable nopersontime "1 if no person-time (rate not computable; printed empty)"
+                * the grouping variables under their own names, types,
+                * formats, variable and value labels; each holds its value
+                * on its own rows and is missing on the other variables' rows
+                local _sv_made ""
+                forvalues _g = 1/`n_grp' {
+                    local _gv : word `_g' of `varlist'
+                    local _sn "`_svn`_g''"
+                    frame `_work': local _gtype : type `_gv'
+                    local _gstr = (substr("`_gtype'", 1, 3) == "str")
+                    * a repeated grouping variable has one column; each
+                    * listing fills its own rows
+                    if !`: list _sn in _sv_made' {
+                    local _sv_made "`_sv_made' `_sn'"
+                    frame `_work' {
+                        local _gtype : type `_gv'
+                        local _gfmt : format `_gv'
+                        local _gvl : value label `_gv'
+                        local _gvarlab : variable label `_gv'
+                        local _gvlfile ""
+                        if "`_gvl'" != "" {
+                            capture label list `_gvl'
+                            if !_rc {
+                                tempfile _gvlfile
+                                quietly label save `_gvl' using `"`_gvlfile'"', replace
+                            }
+                        }
+                    }
+                    if `_gstr' quietly gen `_gtype' `_sn' = ""
+                    else quietly gen `_gtype' `_sn' = .
+                    label variable `_sn' `"`macval(_gvarlab)'"'
+                    if `"`_gvlfile'"' != "" {
+                        quietly run `"`_gvlfile'"'
+                        label values `_sn' `_gvl'
+                    }
+                    * after label values, which widens a numeric format
+                    format `_sn' `_gfmt'
+                    if "`_sn'" != "`_gv'" char `_sn'[ratetab_groupvar] "`_gv'"
+                    }
+                    forvalues _r = 1/`_nrows' {
+                        if el(`_est', `_r', 2) != `_g' continue
+                        local _l = el(`_est', `_r', 3)
+                        if `_gstr' mata: st_sstore(`_r', "`_sn'", st_local("_gval`_g'_`_l'"))
+                        else quietly replace `_sn' = `_gval`_g'_`_l'' in `_r'
+                    }
+                }
+                if "`_sv_map'" != "" {
+                    char _dta[ratetab_renamed] "`_sv_map'"
+                    foreach _m of local _sv_map {
+                        gettoken _mo _mn : _m, parse("=")
+                        local _mn = substr("`_mn'", 2, .)
+                        display as text "(ratetab saving(): grouping variable `_mo' is saved as `_mn'; a saved column has its name)"
+                    }
+                }
+                char _dta[ratetab_ci_method] "`_ci'"
+                char _dta[ratetab_per] "`per'"
+                char _dta[ratetab_level] "`level'"
+                * the grouping variables keep their own storage types
+                quietly compress outcome-nopersontime
+                quietly save `"`_save_file'"', `_save_replace'
+            }
+            return local saving `"`_save_file'"'
+        }
+        return matrix estimates = `_est'
+    }
+    local rc = _rc
+    if `_work_made' capture frame drop `_work'
+    if `_save_made' capture frame drop `_save'
+    foreach _f of local _files {
+        capture erase "`_f'.dta"
+    }
+    set varabbrev `_orig_varabbrev'
+    if `rc' {
+        if !`_own_r_posted' {
+            _return restore `_caller_r'
+            return add
+        }
+        exit `rc'
+    }
+end

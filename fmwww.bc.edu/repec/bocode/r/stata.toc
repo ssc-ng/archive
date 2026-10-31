@@ -29,6 +29,7 @@ p randomtag module to draw observations without replacement
 p randtreat module to randomly assign treatments uneven treatments and deal with misfits
 p randtreatseq module for generating treatments in a random sequence for each individual in the sample
 p rangejoin module to form pairwise combinations if a key variable is within range
+p rangematch module to perform range and interval-overlap joins between datasets
 p rangerun module to run Stata commands on observations within range
 p rangestat module to generate statistics using observations within range
 p rankseg module to compute rank-order segregation measures with finite sample-bias correction
@@ -216,6 +217,7 @@ p rmhbounds module to refine mhbounds to remove the cap on the number of strata 
 p rmloa module to compute limits of agreement for data with repeated measures
 p rmpw module to implement the RMPW method of causal mediation analysis to decompose treatment effects into "direct" and "indirect" effects
 p rmse module to calculate raw or adjusted RMSE (Root MSE)
+p rmstpath module to calculate differences in restricted mean survival time (RMST) between two independent groups
 p rnd modules for random number generation
 p robbox module to compute generalized box plots
 p robinson module to compute Robinson's coefficient of agreement

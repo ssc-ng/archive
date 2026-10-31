@@ -1,0 +1,143 @@
+d 'TABTOOLS': module to export publication-ready descriptive, model, survival, and rate tables to Excel and Markdown
+d
+d  tabtools is a suite of commands that turn descriptive,
+d regression, treatment-effect, survival, rate, and composite
+d results into publication-ready tables written to formatted Excel
+d workbooks, GitHub-Flavored Markdown, CSV files, or Stata frames.
+d table1_tc and desctab build Table 1 descriptive tables with
+d automatic group comparison tests, standardized differences,
+d weights, and small-cell suppression; crosstab produces
+d cross-tabulations with chi-square or exact tests, odds ratios,
+d risk ratios, risk differences, and trend tests; regtab exports
+d coefficients from most estimation commands, including
+d multi-model, multi-equation, and mixed-effects layouts with model
+d statistics; effecttab tabulates teffects and margins results;
+d tabcell formats a single estimate, p-value, n (%), or median
+d (IQR) cell; outtab reports binary outcomes by exposure with model
+d ratios; stratetab and ratetab tabulate events, person-time, and
+d incidence rates with confidence intervals (exact, Poisson, or
+d cluster-robust in ratetab); survtab reports Kaplan-Meier
+d survival, restricted mean survival, and median survival; comptab
+d and hrcomptab assemble vertical model composites and
+d rate-interlocked tables; puttab styles any in-memory dataset,
+d frame, or matrix, and stacktab assembles multi-sheet composite
+d workbooks. All commands share one set of output and formatting
+d options (fonts, borders, shading, digits, titles, footnotes), and
+d tabtools manages persistent session defaults and destinations.
+d Results are returned in r(), including the rendered table and a
+d methods sentence. 
+d
+d KW: table 1
+d KW: descriptive statistics
+d KW: regression tables
+d KW: publication tables
+d KW: Excel
+d KW: xlsx
+d KW: Markdown
+d KW: incidence rates
+d KW: survival
+d KW: Kaplan-Meier
+d KW: cross-tabulation
+d KW: small-cell suppression
+d
+d Requires: Stata version 17
+d
+d Distribution-Date: 20261030
+d
+d Author: Timothy P Copeland, Karolinska Institutet
+d Support: email timothy.copeland@@ki.se
+d
+f tabtools.ado
+f tabtools.sthlp
+f tabtools_tips.ado
+f tabtools_tips.sthlp
+f ../_/_tabtools_common.ado
+f ../_/_tabtools_xlsx_write.ado
+f ../_/_tabtools_export_hint.ado
+f ../_/_tabtools_markdown_write.ado
+f ../_/_tabtools_visible_vars.ado
+f ../_/_tabtools_colwidth.ado
+f ../_/_tabtools_csv_write.ado
+f ../_/_tabtools_check_sinks.ado
+f ../_/_tabtools_xlsx_read.ado
+f ../_/_tabtools_collect_render.ado
+f ../_/_tabtools_collect_atmatrix.ado
+f ../_/_tabtools_fvterm_label.ado
+f ../_/_tabtools_st_timescale.ado
+f ../_/_tabtools_match_rows.ado
+f ../_/_tabtools_fitcount.ado
+f ../_/_tabtools_flatframe.ado
+f ../_/_tabtools_xlsx_apply_styles.ado
+f ../_/_tabtools_xlsx_build_styles.ado
+f ../_/_tabtools_xlsx_compact_styles.ado
+f ../_/_tabtools_xlsx_deferred_styles.ado
+f ../_/_desctab_collect.ado
+f ../_/_desctab_misscell.ado
+f ../_/_tabtools_smallcells.ado
+f ../_/_tabtools_smallcells_render.ado
+f ../_/_tabtools_smallcells_opt.ado
+f ../_/_tabtools_set.ado
+f ../_/_tabtools_set_sinks.ado
+f table1_tc.ado
+f table1_tc.sthlp
+f ../d/desctab.ado
+f ../d/desctab.sthlp
+f ../r/regtab.ado
+f ../r/regtab.sthlp
+f ../_/_regtab_activeb.ado
+f ../_/_regtab_addcol.ado
+f ../_/_regtab_addrow.ado
+f ../_/_regtab_bnotes.ado
+f ../_/_regtab_cellnote.ado
+f ../_/_regtab_classes.ado
+f ../_/_regtab_cmdopts.ado
+f ../_/_regtab_cmdsets.ado
+f ../_/_regtab_collabels.ado
+f ../_/_regtab_eqkeys.ado
+f ../_/_regtab_estats.ado
+f ../_/_regtab_fitrec.ado
+f ../_/_regtab_flatten.ado
+f ../_/_regtab_frameopts.ado
+f ../_/_regtab_fvbase.ado
+f ../_/_regtab_fvparent.ado
+f ../_/_regtab_keys.ado
+f ../_/_regtab_methods.ado
+f ../_/_regtab_mincount.ado
+f ../_/_regtab_modelnoun.ado
+f ../_/_regtab_mstats.ado
+f ../_/_regtab_optstr.ado
+f ../_/_regtab_prefopts.ado
+f ../_/_regtab_relabel.ado
+f ../_/_regtab_remeta.ado
+f ../_/_regtab_rlabels.ado
+f ../_/_regtab_role.ado
+f ../_/_regtab_scale.ado
+f ../_/_regtab_statrows.ado
+f ../_/_regtab_statspec.ado
+f ../_/_regtab_unwrap.ado
+f ../e/effecttab.ado
+f ../e/effecttab.sthlp
+f ../s/stratetab.ado
+f ../s/stratetab.sthlp
+f ../h/hrcomptab.ado
+f ../h/hrcomptab.sthlp
+f ../c/comptab.ado
+f ../c/comptab.sthlp
+f ../s/survtab.ado
+f ../s/survtab.sthlp
+f ../c/crosstab.ado
+f ../c/crosstab.sthlp
+f ../p/puttab.ado
+f ../p/puttab.sthlp
+f ../s/stacktab.ado
+f ../s/stacktab.sthlp
+f ../_/_stacktab_frames.ado
+f tabcell.ado
+f tabcell.sthlp
+f ../_/_tabcell_render.ado
+f ../_/_tabtools_fmt_p.ado
+f ../_/_tabtools_fmt_pct.ado
+f ../r/ratetab.ado
+f ../r/ratetab.sthlp
+f ../o/outtab.ado
+f ../o/outtab.sthlp

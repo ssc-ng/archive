@@ -1,4 +1,4 @@
-*! _finegray_display Version 1.3.2  2026/09/08
+*! _finegray_display Version 1.3.8  2026/10/27
 *! Render the finegray header, coefficient table and fit-time notes from e()
 *! Author: Timothy P Copeland, Karolinska Institutet
 *! Program class: internal (nclass)
@@ -74,6 +74,7 @@ program define _finegray_display
     * =====================================================================
     * HEADER
     * =====================================================================
+    display as text ""
     display as text "Fine-Gray competing risks regression"
     display as text ""
 
@@ -167,8 +168,13 @@ program define _finegray_display
     * Design weights.  A weighted and an unweighted fit print the same table
     * otherwise, and e(N) under fweights is the REPLICATED count, so the
     * reader has to be told which they are looking at.
+    * Compound quotes: e(wexp) is the user's expression verbatim and may
+    * carry a string literal -- [pw = cond(grp == "A", 2, 1)] -- which inside
+    * ordinary quotes ended the string early and failed the display with
+    * r(198) "invalid name" AFTER the fit had converged and posted, so a valid
+    * fit (and every e(refitcmd) replay of it) reported as a failure (1.3.5).
     if `"`e(wtype)'"' != "" {
-        display as text "Weights:" _col(24) as result "`e(wtype)' `e(wexp)'"
+        display as text "Weights:" _col(24) as result `"`e(wtype)' `e(wexp)'"'
     }
 
     display as text ""
@@ -217,7 +223,10 @@ program define _finegray_display
     * The censoring-survivor floor.  Reported HERE, not from inside the Mata KM
     * sweep, where it was the first line of output -- unexplained jargon above
     * even the command's own title.  Singular and plural are both spelled out:
-    * "1 observations" was the printf's own wording.
+    * "1 observations" was the printf's own wording.  e(N_G_trunc) counts the
+    * observations whose weight READS a floored G (after 1.3.7; it used to
+    * count every floored row, most of them terminal rows no weight reads, and
+    * this note fired on webuse hypoxia).
     local _ntr = e(N_G_trunc)
     if `_ntr' > 0 & `_ntr' < . {
         local _obsword "observations"
@@ -227,8 +236,23 @@ program define _finegray_display
         * between "for" and the number would make that guard unfalsifiable.
         display as text "note: censoring survivor G(t) hit its 1e-10 floor for " ///
             "`_ntr' `_obsword'"
-        display as text "(the inverse-probability weights there rest on almost no"
-        display as text "censoring information)"
+        display as text "(their inverse-probability weights read G on the floor, so they rest"
+        display as text "on almost no censoring information; see e(N_G_trunc))"
+        display as text ""
+    }
+
+    * Subjects observed before their entry stratum's risk set was last empty
+    * (1.3.4).  Missing on an e() from an older build, so the `< .' guard is
+    * load-bearing: an unposted count must not print as a note.
+    local _npre = e(N_lt_prehole)
+    if `_npre' > 0 & `_npre' < . {
+        local _subjword "subjects"
+        if `_npre' == 1 local _subjword "subject"
+        display as text "note: `_npre' `_subjword' observed before the entry stratum's risk set " ///
+            "was last empty"
+        display as text "(the entry product-limit is zero there: they count in the sample size but"
+        display as text "enter no weight estimate, and the fit is refused if a weight consults"
+        display as text "one; see e(N_lt_prehole))"
         display as text ""
     }
 
@@ -237,8 +261,8 @@ program define _finegray_display
     * the thing the reader takes away.
     if e(converged) == 0 {
         display as error "convergence not achieved"
-        display as text "(the coefficients below are the last iterate, not a " ///
-            "solution; post-estimation commands will refuse them)"
+        display as text "(the coefficients below are the last iterate, not a solution;"
+        display as text "post-estimation commands will refuse them)"
         display as text ""
     }
 
@@ -254,8 +278,8 @@ program define _finegray_display
 
         if `_fg_npw' > 0 & `_fg_npw' < . {
             display as error "warning: the combined weight A(t) falls below 1e-10 in `_fg_npw' consulted cells"
-            display as text "(near-zero censoring or entry probability: the weights there are" ///
-                " not estimable and the fit leans on very few subjects)"
+            display as text "(near-zero censoring or entry probability: the weights there are not"
+            display as text "estimable, and the fit leans on very few subjects)"
         }
         if `_fg_nww' > 0 & `_fg_nww' < . {
             display as error "warning: `_fg_nww' retained weights exceed 1e6 (largest `_fg_mxw')"
@@ -277,9 +301,11 @@ program define _finegray_display
     if "`_lt'" == "zzf1_factorized" {
         display as text ""
         display as text "note: the censoring weight G and entry weight H use different groupings,"
-        display as text "so finegray uses the factorized A=G*H extension -- a package extension,"
-        display as text "requiring the censoring mechanism to be homogeneous across omitted entry"
-        display as text "groups and vice versa. See Left truncation in {help finegray}."
+        display as text "so finegray uses the factorized A=G*H extension, which is experimental:"
+        display as text "it has no published derivation and requires the censoring mechanism to"
+        display as text "be homogeneous across omitted entry groups and vice versa. Naming the"
+        display as text "same grouping in strata() and truncstrata() gives the published"
+        display as text "stratified weight. See Left truncation in {help finegray}."
         display as text "e(lt_weight)=zzf1_factorized."
     }
 
@@ -295,8 +321,8 @@ program define _finegray_display
         display as text "note: fitted on multiple-imputation data; the coefficients and variance"
         display as text "are ordinary M-estimator output and pool under Rubin's rules, but"
         display as text "finegray_predict, finegray_cif and finegray_phtest are unavailable"
-        display as text "on this fit. See Multiple imputation in {help finegray##mi:help finegray}."
-        display as text "e(postest)=unavailable_mi."
+        display as text "on this fit, which e(postest) records as unavailable_mi; see"
+        display as text "Multiple imputation in {help finegray##mi:help finegray}."
     }
 
     * =====================================================================
@@ -378,6 +404,18 @@ program define _finegray_display
         }
     }
 
+    * Monotone likelihood (e(monotone), set at fit time).  The table prints a
+    * finite, enormous SHR with a tiny standard error for such a term, which
+    * reads as a strong, precise finding; the warning sits beside it.
+    if `"`e(monotone)'"' != "" {
+        display as text ""
+        display as error "warning: the likelihood appears monotone in `e(monotone)'"
+        display as text "(the information on that coefficient fell below 1e-4 of its value at"
+        display as text "beta = 0: few or no cause `=e(cause)' events lie on one side of it, so the"
+        display as text "estimate diverges and its SHR, standard error, z and confidence interval"
+        display as text "are not meaningful; recode or drop the term, or use a penalized method)"
+    }
+
     * The Fine-Gray objective is a PSEUDO-likelihood: its weighted score need not
     * obey the ordinary likelihood information identity, so inverse information
     * does not generally estimate the sampling variance of beta-hat.  norobust
@@ -446,16 +484,22 @@ program define _finegray_display
                         local _rtxt : label `_rvl' `_rlev'
                     }
                 }
-                if `"`_rtxt'"' == "" local _rtxt "`_rlev'"
+                * The label is user text: macval() so `$name' or a backtick in
+                * it is printed, not re-expanded (an unbalanced one stopped the
+                * display with r(132) after the fit had posted, through 1.3.7).
+                if `"`macval(_rtxt)'"' == "" local _rtxt "`_rlev'"
+                * display interprets SMCL, so {bf:x} in a label printed as
+                * markup: write SMCL-active characters as character codes.
+                _finegray_graph_text _rtxt : `"`macval(_rtxt)'"'
                 local ++_nrefs
-                local _refline`_nrefs' `"i.`_rvar': `_rtxt' (`_rvar'==`_rlev')"'
+                local _refline`_nrefs' `"i.`_rvar': `macval(_rtxt)' (`_rvar'==`_rlev')"'
             }
         }
     }
     if `_nrefs' > 0 {
         display as text ""
         forvalues _i = 1/`_nrefs' {
-            display as text `"Reference: `_refline`_i''"'
+            display as text `"Reference: `macval(_refline`_i')'"'
         }
     }
 

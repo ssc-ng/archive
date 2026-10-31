@@ -1,0 +1,198 @@
+*! tvband Version 1.0.0  2026/10/13
+*! Split follow-up intervals along a single date-derived axis
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Part of the tvtools package
+*!
+*! Description:
+*!   Generalizes tvage to any date-derived continuous axis. Splits each
+*!   [start, stop] interval in memory at the boundaries of an axis -- age
+*!   (relative to a date of birth), calendar period, or elapsed time since a
+*!   reference date -- producing one row per band traversed, with a band
+*!   variable for stratified or time-varying-covariate survival models.
+*!   All other variables are preserved on each split row. For simultaneous
+*!   splitting on several axes (Lexis), see tvsplit.
+
+program define tvband, rclass
+    version 16.0
+    local orig_varabbrev = c(varabbrev)
+    set varabbrev off
+    local restore_needed = 0
+
+    capture noisily {
+
+    syntax , ID(varname) START(varname) STOP(varname) TYPE(string) ///
+        [ ORIGIN(varname) WIDTH(real 1) MIN(string) MAX(string) ///
+          UNIT(string) ANCHOR(string) GENerate(name) ///
+          STARTGen(name) STOPGen(name) SAVEas(string) REPlace NOIsily ]
+
+    * --- Validate axis type ----------------------------------------------
+    if !inlist("`type'", "age", "calendar", "elapsed") {
+        display as error "type() must be age, calendar, or elapsed"
+        exit 198
+    }
+    if inlist("`type'", "age", "elapsed") & "`origin'" == "" {
+        display as error "type(`type') requires origin()"
+        exit 198
+    }
+    if "`type'" == "calendar" & "`origin'" != "" {
+        display as error "type(calendar) does not take origin()"
+        exit 198
+    }
+    if "`type'" != "elapsed" & "`unit'" != "" {
+        display as error "unit() is allowed only with type(elapsed)"
+        exit 198
+    }
+    if "`type'" != "calendar" & "`anchor'" != "" {
+        display as error "anchor() is allowed only with type(calendar)"
+        exit 198
+    }
+    if "`type'" == "calendar" & `width' != int(`width') {
+        display as error "type(calendar) requires an integer width() in years"
+        exit 198
+    }
+    if `width' != int(`width') {
+        display as error "width() must be a whole number; band boundaries are whole daily dates"
+        exit 198
+    }
+
+    local input_names "`id' `start' `stop'"
+    local input_dups : list dups input_names
+    if "`input_dups'" != "" {
+        display as error "id(), start(), and stop() must name distinct variables"
+        exit 198
+    }
+
+    * --- Validate variables exist, are numeric, are daily dates ----------
+    capture confirm numeric variable `id'
+    if _rc {
+        display as error "Variable '`id'' must be numeric"
+        exit 109
+    }
+    foreach v in `start' `stop' `origin' {
+        capture confirm numeric variable `v'
+        if _rc {
+            display as error "Variable '`v'' must be numeric (date format)"
+            exit 109
+        }
+    }
+    * --- No missing id ---------------------------------------------------
+    * (F05: reject missing IDs like tvsplit/tvexpose, rather than emitting
+    *  rows for a phantom missing-ID person)
+    quietly count if missing(`id')
+    if r(N) > 0 {
+        display as error "`r(N)' observation(s) have missing `id'"
+        exit 416
+    }
+
+    * --- Daily-date contract: non-datetime, nonmissing, whole, ordered ---
+    _tvtools_check_dates, cmd(tvband) dates(`start' `stop' `origin') ///
+        startvar(`start') stopvar(`stop')
+
+    * --- Default output names by axis type --------------------------------
+    if "`generate'" == "" {
+        if "`type'" == "age"      local generate "ageband"
+        if "`type'" == "calendar" local generate "calband"
+        if "`type'" == "elapsed"  local generate "fuband"
+    }
+
+    local startout "`start'"
+    if "`startgen'" != "" local startout "`startgen'"
+    local stopout "`stop'"
+    if "`stopgen'" != "" local stopout "`stopgen'"
+    local output_names "`id' `generate' `startout' `stopout'"
+    local output_dups : list dups output_names
+    if "`output_dups'" != "" {
+        display as error "id(), generate(), startgen(), and stopgen() must resolve to distinct output names"
+        exit 198
+    }
+
+    * --- Guard saveas() path for shell metacharacters --------------------
+    if "`saveas'" != "" {
+        if regexm("`saveas'", "[;&|><$`]") | strpos("`saveas'", char(34)) {
+            display as error "saveas() contains invalid path characters"
+            exit 198
+        }
+    }
+
+    preserve
+    local restore_needed = 1
+
+    if "`noisily'" != "" display as text _newline "Splitting intervals on `type' axis..."
+
+    * --- Split via the shared engine (operates in memory, label on) ------
+    local originopt ""
+    if "`origin'" != "" local originopt "origin(`origin')"
+    _tvband_split, start(`start') stop(`stop') type(`type') generate(`generate') ///
+        `originopt' width(`width') min(`min') max(`max') unit(`unit') ///
+        anchor(`anchor') label
+    local total_vars "`r(total_vars)'"
+
+    * --- Rename interval vars if requested -------------------------------
+    if "`startgen'" != "" & "`startgen'" != "`start'" {
+        rename `start' `startgen'
+    }
+    if "`stopgen'" != "" & "`stopgen'" != "`stop'" {
+        rename `stop' `stopgen'
+    }
+
+    sort `id' `startout'
+
+    * --- Counts ----------------------------------------------------------
+    quietly count
+    local n_obs = r(N)
+    tempvar id_tag
+    quietly egen `id_tag' = tag(`id')
+    quietly count if `id_tag' == 1
+    local n_persons = r(N)
+    quietly drop `id_tag'
+
+    * --- Optional save ---------------------------------------------------
+    if "`saveas'" != "" {
+        if "`replace'" != "" quietly save "`saveas'", replace
+        else                 quietly save "`saveas'"
+        if "`noisily'" != "" {
+            local _band_saved `"`saveas'"'
+            if lower(substr(`"`_band_saved'"', -4, 4)) != ".dta" ///
+                local _band_saved `"`_band_saved'.dta"'
+        }
+    }
+
+    if "`noisily'" != "" {
+        display as text "{bf:tvband result}"
+        _tvtools_rule
+        _tvtools_row "axis type", value(`"`type'"')
+        _tvtools_row "band width", num(`width') fmt(%14.0g)
+        _tvtools_row "persons", num(`n_persons')
+        _tvtools_row "observations", num(`n_obs')
+        _tvtools_row "variables created", value(`"`generate' `startout' `stopout'"')
+        if "`_band_saved'" != "" {
+            _tvtools_row "saved to", value(`"`_band_saved'"')
+        }
+        _tvtools_rule
+    }
+
+    * --- Commit modified data to memory unless saved ---------------------
+    if "`saveas'" != "" {
+        restore
+    }
+    else {
+        restore, not
+    }
+    local restore_needed = 0
+
+    return scalar n_persons = `n_persons'
+    return scalar n_observations = `n_obs'
+    return scalar width = `width'
+    return local axistype "`type'"
+    return local varname "`generate'"
+    return local startvar "`startout'"
+    return local stopvar "`stopout'"
+    return local total_vars "`total_vars'"
+
+    } // end capture noisily
+    local rc = _rc
+
+    if `restore_needed' capture restore
+    set varabbrev `orig_varabbrev'
+    if `rc' exit `rc'
+end

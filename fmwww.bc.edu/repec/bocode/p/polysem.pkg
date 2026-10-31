@@ -1,0 +1,25 @@
+d 'POLYSEM': module to perform confirmatory factor analysis of ordinal indicators by diagonally weighted least squares on polychoric correlations
+d
+d      polysem fits the factor model R = Lambda Phi Lambda' + Theta
+d to the polychoric, polyserial and Pearson correlations of the   
+d indicators. Here Theta is diagonal with Theta_ii = 1 - (Lambda
+d Phi Lambda')_ii, because the latent responses have unit variance.
+d    The command:	 1. runs polycorr to obtain the vector of
+d correlations r and its covariance matrix V;	     2. minimizes
+d (r - sigma(theta))' W (r - sigma(theta)) by Gauss-Newton with
+d step halving. 
+d
+d KW: confirmatory factor analysis
+d KW: polychoric correlations
+d
+d Requires: Stata version 14 and polycorr from SSC (q.v.)
+d
+d Distribution-Date: 20261030
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f polysem.ado
+f polysem.sthlp
+f polysem_examples.do
+f polysem_cert.do

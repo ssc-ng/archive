@@ -1,0 +1,760 @@
+*! tvdiagnose Version 1.0.0  2026/10/13
+*! Diagnostic tools for time-varying exposure datasets
+*! Author: Timothy P Copeland, Karolinska Institutet
+*! Program class: rclass (returns results in r())
+
+/*
+Basic syntax:
+  tvdiagnose , id(varname) start(varname) stop(varname) [options]
+
+Required options:
+  id(varname)     - Person identifier
+  start(varname)  - Period start date
+  stop(varname)   - Period end date
+
+Report options (choose one or more):
+  coverage        - Coverage diagnostics (percent of follow-up covered)
+  gaps            - Gap analysis (unexposed intervals)
+  overlaps        - Overlap detection (overlapping periods)
+  summarize       - Exposure distribution summary (requires exposure option)
+  all             - Run all diagnostic reports
+
+Additional options:
+  exposure(varname)     - Exposure variable (required for summarize)
+  entry(varname)        - Study entry date (required for coverage)
+  exit(varname)         - Study exit date (required for coverage)
+  threshold(#)          - Flag gaps > # days (default: 30)
+
+Examples:
+  * Basic coverage check
+  tvdiagnose, id(id) start(start) stop(stop) entry(study_entry) exit(study_exit) coverage
+
+  * All diagnostics
+  tvdiagnose, id(id) start(start) stop(stop) exposure(tv_exposure) ///
+      entry(study_entry) exit(study_exit) all
+
+See help tvdiagnose for complete documentation
+*/
+
+program define tvdiagnose, rclass
+    version 16.0
+    foreach _sg in S_1 S_2 {
+        mata: st_local("_sg_has_`_sg'",strofreal(sum(st_dir("global","macro","*"):=="`_sg'")>0))
+        mata: st_local("_sg_val_`_sg'",st_global("`_sg'"))
+    }
+    * Native first graph initialization can create this macro. Preserve the
+    * caller's exact presence/bytes without expanding opaque macro contents.
+    mata: st_local("_gm_present",strofreal(sum(st_dir("global","macro","*"):=="T_gm_fix_span")>0))
+    mata: st_local("_gm_bytes",st_global("T_gm_fix_span"))
+    local orig_varabbrev = c(varabbrev)
+    local _preserved = 0
+    set varabbrev off
+
+    capture noisily {
+
+    syntax , ID(varname) START(varname) STOP(varname) ///
+        [EXPosure(varname) ENTRY(varname) EXIT(varname) ///
+         COVerage GAPS OVERlaps SUMmarize ALL ///
+         SWIMlane MAXids(integer 50) ///
+         THReshold(integer 30) VERBose]
+
+    * If 'all' is specified, run all diagnostics
+    if "`all'" != "" {
+        local coverage "coverage"
+        local gaps "gaps"
+        local overlaps "overlaps"
+        if "`exposure'" != "" {
+            local summarize "summarize"
+        }
+    }
+
+    * Validate options
+    if "`coverage'" == "" & "`gaps'" == "" & "`overlaps'" == "" & ///
+       "`summarize'" == "" & "`swimlane'" == "" {
+        display as error "At least one report option required: coverage, gaps, overlaps, summarize, swimlane, or all"
+        exit 198
+    }
+
+    if `maxids' < 1 {
+        display as error "maxids() must be a positive integer"
+        exit 198
+    }
+    if `threshold' < 0 {
+        display as error "threshold() must be nonnegative"
+        exit 198
+    }
+
+    foreach v in `start' `stop' {
+        capture confirm numeric variable `v'
+        if _rc {
+            display as error "`v' must be a numeric interval variable"
+            exit 109
+        }
+    }
+    quietly count if missing(`id') | missing(`start') | missing(`stop')
+    if r(N) > 0 {
+        display as error "`r(N)' observation(s) have missing id/start/stop values"
+        exit 416
+    }
+    quietly count if `stop' < `start'
+    if r(N) > 0 {
+        display as error "`r(N)' observation(s) have stop < start"
+        exit 459
+    }
+
+    * --- Daily-date contract: reject %tc/%tC and non-whole daily bounds --
+    * The reversed-bound gate above keeps its own 459 code, so the shared
+    * validator is called for the format and whole-day rules only.
+    _tvtools_check_dates, cmd(tvdiagnose) dates(`start' `stop')
+
+    if "`coverage'" != "" {
+        if "`entry'" == "" | "`exit'" == "" {
+            display as error "coverage requires entry() and exit() options"
+            exit 198
+        }
+        foreach v in `entry' `exit' {
+            capture confirm numeric variable `v'
+            if _rc {
+                display as error "coverage requires numeric `v'() dates"
+                exit 109
+            }
+        }
+        quietly count if missing(`entry') | missing(`exit')
+        if r(N) > 0 {
+            display as error "`r(N)' observation(s) have missing entry/exit dates"
+            exit 416
+        }
+        quietly count if `exit' < `entry'
+        if r(N) > 0 {
+            display as error "`r(N)' observation(s) have exit < entry"
+            exit 459
+        }
+        _tvtools_check_dates, cmd(tvdiagnose) dates(`entry' `exit')
+    }
+
+    if "`summarize'" != "" & "`exposure'" == "" {
+        display as error "summarize requires exposure() option"
+        exit 198
+    }
+    if "`summarize'" != "" {
+        capture confirm numeric variable `exposure'
+        if _rc {
+            display as error "exposure() must be numeric for summarize"
+            exit 109
+        }
+    }
+
+    * Stage a complete, scriptable return contract. A run flag distinguishes
+    * an unrequested report from a requested report with zero findings.
+    local coverage_run = 0
+    local gaps_run = 0
+    local overlaps_run = 0
+    local summarize_run = 0
+    local mean_coverage = 0
+    local min_coverage = 0
+    local max_coverage = 0
+    local n_with_gaps = 0
+    local n_incomplete_coverage = 0
+    local n_coverage_gaps = 0
+    local n_gaps = 0
+    local n_gap_ids = 0
+    local mean_gap = 0
+    local median_gap = 0
+    local max_gap = 0
+    local n_large_gaps = 0
+    local n_large_gap_ids = 0
+    local n_overlaps = 0
+    local n_overlap_ids = 0
+    local n_ids_affected = 0
+    local total_person_time = 0
+    local raw_interval_person_time = 0
+    local overlap_excess_person_time = 0
+    local n_crossexposure_overlap_days = 0
+    local n_exposure_levels = 0
+    local graph_requested = ("`swimlane'" != "")
+    local graph_created = 0
+    local graph_rc = 0
+    local graph_ids_total = 0
+    local graph_ids_plotted = 0
+    local graph_truncated = 0
+    local graph_name ""
+    tempname exposure_summary
+    display as text "{bf:Time-Varying Data Diagnostics}"
+    _tvtools_rule, width(78)
+
+    * Basic data summary
+    quietly count
+    local n_obs = r(N)
+    if `n_obs' == 0 {
+        display as error "no observations in dataset"
+        exit 2000
+    }
+    tempvar _id_tag
+    quietly egen byte `_id_tag' = tag(`id')
+    quietly count if `_id_tag'
+    local n_persons = r(N)
+
+    display as text "Dataset summary"
+    _tvtools_row "observations", num(`n_obs')
+    _tvtools_row "persons", num(`n_persons')
+    _tvtools_row "periods per person", num(`=`n_obs'/`n_persons'') fmt(%14.1f)
+    _tvtools_rule, width(78)
+
+    **************************************************************************
+    * COVERAGE DIAGNOSTICS
+    **************************************************************************
+    if "`coverage'" != "" {
+        local coverage_run = 1
+        display as text "{bf:Coverage Diagnostics}"
+        _tvtools_rule, width(78)
+
+        * Work on a copy to avoid modifying original data
+        preserve
+        local _preserved = 1
+        sort `id' `start' `stop'
+
+        * Entry/exit must be person-level constants. A changing window makes a
+        * person-level coverage percentage undefined.
+        tempvar _window_change
+        quietly by `id': gen byte `_window_change' = ///
+            (`entry' != `entry'[1] | `exit' != `exit'[1])
+        quietly count if `_window_change'
+        if r(N) > 0 {
+            display as error "entry()/exit() must be constant within id()"
+            exit 459
+        }
+
+        * Coverage is the UNION of intervals clipped to the study window. Raw
+        * summation double-counts overlaps and can hide a genuine uncovered tail.
+        tempvar _clip_start _clip_stop _valid _running_stop _covered _tcov ///
+            _expd _pctcov _nper _component _ncomponent _minclip _maxclip _ngap
+        quietly gen double `_clip_start' = max(`start', `entry')
+        quietly gen double `_clip_stop' = min(`stop', `exit')
+        quietly gen byte `_valid' = (`_clip_start' <= `_clip_stop')
+
+        * Valid clipped intervals sort first. Invalid/outside rows remain so an
+        * ID with no intersection is represented with zero coverage.
+        quietly gsort `id' -`_valid' `_clip_start' `_clip_stop'
+        quietly by `id': gen double `_running_stop' = `_clip_stop' ///
+            if _n == 1 & `_valid'
+        quietly by `id': replace `_running_stop' = ///
+            max(`_running_stop'[_n-1], `_clip_stop') if _n > 1 & `_valid'
+        quietly gen double `_covered' = 0
+        quietly by `id': replace `_covered' = `_clip_stop' - `_clip_start' + 1 ///
+            if _n == 1 & `_valid'
+        quietly by `id': replace `_covered' = ///
+            max(0, `_clip_stop' - max(`_clip_start', `_running_stop'[_n-1] + 1) + 1) ///
+            if _n > 1 & `_valid'
+        quietly by `id': egen double `_tcov' = total(`_covered')
+        quietly by `id': gen double `_expd' = `exit'[1] - `entry'[1] + 1
+        quietly gen double `_pctcov' = 100 * `_tcov' / `_expd'
+        quietly by `id': egen double `_nper' = count(`id')
+
+        * Count connected uncovered segments over the complete study window,
+        * including leading/trailing gaps and a wholly uncovered window.
+        quietly by `id': gen byte `_component' = `_valid' & ///
+            (_n == 1 | `_clip_start' > `_running_stop'[_n-1] + 1)
+        quietly by `id': egen double `_ncomponent' = total(`_component')
+        quietly by `id': egen double `_minclip' = ///
+            min(cond(`_valid', `_clip_start', .))
+        quietly by `id': egen double `_maxclip' = ///
+            max(cond(`_valid', `_clip_stop', .))
+        quietly gen double `_ngap' = cond(`_ncomponent' == 0, 1, ///
+            `_ncomponent' - 1 + (`_minclip' > `entry') + (`_maxclip' < `exit'))
+
+        * Keep one row per person for display
+        quietly by `id': keep if _n == 1
+
+        * Display sample of results
+        if "`verbose'" != "" {
+            local _display_id "`id'"
+            if inlist("`id'", "pct_covered", "n_periods", "n_gaps") {
+                capture drop person_id
+                clonevar person_id = `id'
+                local _display_id "person_id"
+            }
+            foreach _display_var in pct_covered n_periods n_gaps {
+                if "`_display_id'" != "`_display_var'" capture drop `_display_var'
+            }
+            rename (`_pctcov' `_nper' `_ngap') ///
+                (pct_covered n_periods n_gaps)
+            display as text "Showing first " min(_N, 20) " persons:"
+            list `_display_id' pct_covered n_periods n_gaps ///
+                in 1/`=min(_N,20)', ///
+                clean noobs abbreviate(32)
+            rename (pct_covered n_periods n_gaps) ///
+                (`_pctcov' `_nper' `_ngap')
+        }
+
+        * Display summary statistics
+        quietly sum `_pctcov'
+        local mean_coverage = r(mean)
+        local min_coverage = r(min)
+        local max_coverage = r(max)
+        quietly summarize `_ngap', meanonly
+        local n_coverage_gaps = r(sum)
+
+        quietly count if `_pctcov' < 100
+        local n_with_gaps = r(N)
+        local n_incomplete_coverage = `n_with_gaps'
+        local _pct_with_gaps = 100 * `n_with_gaps' / _N
+
+        display as text "Coverage Summary"
+        _tvtools_row "mean coverage", num(`mean_coverage') fmt(%14.1f) note("%")
+        _tvtools_row "min coverage", num(`min_coverage') fmt(%14.1f) note("%")
+        _tvtools_row "max coverage", num(`max_coverage') fmt(%14.1f) note("%")
+        _tvtools_row "persons with gaps", num(`n_with_gaps') ///
+            note("(`=string(`_pct_with_gaps', "%4.1f")'%)")
+        if "`verbose'" == "" & `n_with_gaps' > 0 {
+            display as text "  (specify verbose to list per-person details)"
+        }
+        _tvtools_rule, width(78)
+
+        * Restore original data
+        restore
+        local _preserved = 0
+    }
+
+    **************************************************************************
+    * GAP ANALYSIS
+    **************************************************************************
+    if "`gaps'" != "" {
+        local gaps_run = 1
+        display as text "{bf:Gap Analysis}"
+        _tvtools_rule, width(78)
+
+        preserve
+        local _preserved = 1
+        sort `id' `start'
+
+        * Identify gaps between consecutive periods
+        * Use running max of stop to handle nested intervals correctly
+        tempvar _gi _gs _ge _gd _running_max_stop
+        quietly by `id' (`start'): gen double `_running_max_stop' = `stop' if _n == 1
+        quietly by `id' (`start'): replace `_running_max_stop' = max(`_running_max_stop'[_n-1], `stop') if _n > 1
+        quietly by `id' (`start'): gen double `_gi' = (`start' > `_running_max_stop'[_n-1] + 1) if _n > 1 & `id' == `id'[_n-1]
+        quietly by `id': gen double `_gs' = `_running_max_stop'[_n-1] + 1 if `_gi' == 1 & `id' == `id'[_n-1]
+        quietly by `id': gen double `_ge' = `start' - 1 if `_gi' == 1
+        quietly gen double `_gd' = `_ge' - `_gs' + 1 if !missing(`_gs')
+
+        quietly drop if `_gd' <= 0
+        quietly keep if !missing(`_gs')
+
+        local n_gaps = _N
+
+        if `n_gaps' > 0 {
+            format `_gs' `_ge' %tdCCYY/NN/DD
+            if "`verbose'" != "" {
+                local _display_id "`id'"
+                if inlist("`id'", "gap_start", "gap_end", "gap_days") {
+                    capture drop person_id
+                    clonevar person_id = `id'
+                    local _display_id "person_id"
+                }
+                foreach _display_var in gap_start gap_end gap_days {
+                    if "`_display_id'" != "`_display_var'" ///
+                        capture drop `_display_var'
+                }
+                rename (`_gs' `_ge' `_gd') (gap_start gap_end gap_days)
+                display as text "Showing first 20 gaps:"
+                list `_display_id' gap_start gap_end gap_days ///
+                    in 1/`=min(_N,20)', noobs sepby(`_display_id') ///
+                    abbreviate(32)
+                rename (gap_start gap_end gap_days) (`_gs' `_ge' `_gd')
+            }
+
+            * Gap statistics - save to locals immediately (count overwrites r())
+            quietly sum `_gd', detail
+            local mean_gap = r(mean)
+            local median_gap = r(p50)
+            local max_gap = r(max)
+
+            tempvar _gap_id_tag
+            quietly egen byte `_gap_id_tag' = tag(`id')
+            quietly count if `_gap_id_tag'
+            local n_gap_ids = r(N)
+            display as text "Gap Statistics"
+            _tvtools_row "total gaps", num(`n_gaps')
+            _tvtools_row "mean gap", num(`mean_gap') fmt(%14.1f) note("days")
+            _tvtools_row "median gap", num(`median_gap') note("days")
+            _tvtools_row "max gap", num(`max_gap') note("days")
+
+            * Flag large gaps
+            quietly count if `_gd' > `threshold'
+            local n_large_gaps = r(N)
+            tempvar _large_gap _any_large _large_id_tag
+            quietly gen byte `_large_gap' = (`_gd' > `threshold')
+            quietly bysort `id': egen byte `_any_large' = max(`_large_gap')
+            quietly egen byte `_large_id_tag' = tag(`id')
+            quietly count if `_large_id_tag' & `_any_large'
+            local n_large_gap_ids = r(N)
+            if `n_large_gaps' > 0 {
+                display as text "  Warning: " as result `n_large_gaps' ///
+                    as text " gaps exceed the threshold of `threshold' days."
+            }
+            if "`verbose'" == "" {
+                display as text "  (specify verbose to list affected IDs and dates)"
+            }
+            _tvtools_rule, width(78)
+        }
+        else {
+            display as text "  No gaps found in coverage."
+            _tvtools_rule, width(78)
+        }
+
+        restore
+        local _preserved = 0
+    }
+
+    **************************************************************************
+    * OVERLAP ANALYSIS
+    **************************************************************************
+    if "`overlaps'" != "" {
+        local overlaps_run = 1
+        display as text "{bf:Overlap Analysis}"
+        _tvtools_rule, width(78)
+
+        preserve
+        local _preserved = 1
+        sort `id' `start' `stop'
+
+        * Identify overlapping periods (start before running max of prior stops)
+        * Using running max handles nested intervals that simple _n-1 comparison misses
+        tempvar _ovl _running_max_stop2
+        quietly by `id' (`start'): gen double `_running_max_stop2' = `stop' if _n == 1
+        quietly by `id' (`start'): replace `_running_max_stop2' = max(`_running_max_stop2'[_n-1], `stop') if _n > 1
+        quietly by `id' (`start'): gen double `_ovl' = (`start' <= `_running_max_stop2'[_n-1]) if _n > 1 & `id' == `id'[_n-1]
+
+        quietly keep if `_ovl' == 1
+
+        if _N > 0 {
+            local n_overlaps = _N
+
+            * Count unique IDs with overlaps
+            tempvar _fov
+            quietly by `id': gen double `_fov' = (_n == 1)
+            quietly count if `_fov' == 1
+            local n_ids_affected = r(N)
+            local n_overlap_ids = `n_ids_affected'
+
+            _tvtools_row "Total overlapping periods", num(`n_overlaps')
+            _tvtools_row "number of IDs affected", num(`n_ids_affected')
+
+            if "`verbose'" != "" {
+                display as text "Showing first 50 overlapping periods:"
+                list `id' `start' `stop' in 1/`=min(_N,50)', noobs sepby(`id')
+            }
+            else {
+                display as text "  (specify verbose to list affected IDs and dates)"
+            }
+            _tvtools_rule, width(78)
+        }
+        else {
+            display as text "  No overlapping periods found."
+            _tvtools_rule, width(78)
+        }
+
+        restore
+        local _preserved = 0
+    }
+
+    **************************************************************************
+    * EXPOSURE SUMMARY
+    **************************************************************************
+    if "`summarize'" != "" {
+        local summarize_run = 1
+        display as text "{bf:Exposure Distribution}"
+        _tvtools_rule, width(78)
+
+        * Display frequency table
+        tab `exposure', missing
+
+        * Calculate raw interval-days, the global interval union within ID,
+        * and the interval union separately within ID x exposure.
+        preserve
+        local _preserved = 1
+
+        tempvar _plen _run_all _union_all _run_exp _union_exp ///
+            _exposure_group _raw_days _person_days _percent _n_periods
+        quietly clonevar `_exposure_group' = `exposure'
+        quietly gen double `_plen' = `stop' - `start' + 1
+        quietly summarize `_plen', meanonly
+        local raw_interval_person_time = r(sum)
+
+        quietly sort `id' `start' `stop'
+        quietly by `id': gen double `_run_all' = `stop' if _n == 1
+        quietly by `id': replace `_run_all' = max(`_run_all'[_n-1], `stop') ///
+            if _n > 1
+        quietly by `id': gen double `_union_all' = `stop' - `start' + 1 ///
+            if _n == 1
+        quietly by `id': replace `_union_all' = ///
+            max(0, `stop' - max(`start', `_run_all'[_n-1] + 1) + 1) if _n > 1
+        quietly summarize `_union_all', meanonly
+        local total_person_time = r(sum)
+        local overlap_excess_person_time = ///
+            `raw_interval_person_time' - `total_person_time'
+
+        quietly sort `id' `_exposure_group' `start' `stop'
+        quietly by `id' `_exposure_group': gen double `_run_exp' = ///
+            `stop' if _n == 1
+        quietly by `id' `_exposure_group': replace `_run_exp' = ///
+            max(`_run_exp'[_n-1], `stop') if _n > 1
+        quietly by `id' `_exposure_group': gen double `_union_exp' = ///
+            `stop' - `start' + 1 if _n == 1
+        quietly by `id' `_exposure_group': replace `_union_exp' = ///
+            max(0, `stop' - max(`start', `_run_exp'[_n-1] + 1) + 1) if _n > 1
+
+        quietly collapse (sum) `_raw_days' = `_plen' ///
+            `_person_days' = `_union_exp' (count) `_n_periods' = `_plen', ///
+            by(`_exposure_group')
+        quietly gen double `_percent' = ///
+            100 * `_person_days' / `total_person_time'
+
+        * Per-level person-days are the interval union within id x exposure,
+        * but the denominator is the union within id alone. When two exposure
+        * levels cover the same day for the same person, that day is counted
+        * once per level and the percent column sums above 100. Surfacing that
+        * excess is the whole job of a diagnostic command, so report it rather
+        * than printing an incoherent table.
+        quietly summarize `_person_days', meanonly
+        local _sum_level_days = r(sum)
+        local n_crossexposure_overlap_days = ///
+            `_sum_level_days' - `total_person_time'
+        if `n_crossexposure_overlap_days' < 0 ///
+            local n_crossexposure_overlap_days = 0
+        rename `_exposure_group' exposure_level
+        rename `_raw_days' raw_days
+        rename `_person_days' person_days
+        rename `_percent' percent
+        rename `_n_periods' n_periods
+        quietly order exposure_level raw_days person_days percent n_periods
+        local n_exposure_levels = _N
+        quietly mkmat exposure_level raw_days person_days percent n_periods, ///
+            matrix(`exposure_summary') missing
+        matrix colnames `exposure_summary' = ///
+            exposure raw_days person_days percent n_periods
+
+        * The stored doubles list as 11.542579 next to a day count unless the
+        * display formats are set here; mkmat above already took the raw
+        * values, so the returned matrix is unaffected.
+        format raw_days person_days %12.0fc
+        format percent %8.1f
+        label variable raw_days     "raw days"
+        label variable person_days  "person-days"
+        label variable percent      "% of total"
+        label variable n_periods    "periods"
+        display as text "Person-time by exposure"
+        list exposure_level raw_days person_days percent n_periods, ///
+            noobs separator(0)
+        _tvtools_row "raw interval-time", num(`raw_interval_person_time') note("days")
+        _tvtools_row "union person-time", num(`total_person_time') note("days")
+        if `n_crossexposure_overlap_days' > 0 {
+            display as text "Warning: exposure levels overlap in time for the same person."
+            display as text "  " as result %12.0fc `n_crossexposure_overlap_days' ///
+                as text " person-day(s) are counted under more than one level, so the"
+            display as text "  percent column sums above 100%. Resolve the overlaps " ///
+                "(see {help tvexpose} priority()"
+            display as text "  or {help tvmerge}) before treating these shares as an exposure distribution."
+        }
+
+        restore
+        local _preserved = 0
+    }
+
+    **************************************************************************
+    * EXPOSURE SWIMLANE PLOT (optional)
+    **************************************************************************
+    * Horizontal [start, stop] interval bars per person, colored by exposure
+    * level. Honors the active graph scheme. Capped at maxids() persons.
+    if "`swimlane'" != "" {
+        preserve
+        local _preserved = 1
+        tempvar _prow _graph_exposure
+        tempname _swgraph
+        capture quietly egen long `_prow' = group(`id')
+        local graph_rc = _rc
+        if `graph_rc' == 0 {
+            capture quietly summarize `_prow', meanonly
+            local graph_rc = _rc
+        }
+        if `graph_rc' == 0 {
+            local graph_ids_total = r(max)
+            local graph_ids_plotted = min(`graph_ids_total', `maxids')
+            local graph_truncated = (`graph_ids_total' > `maxids')
+            if `graph_truncated' {
+                capture quietly keep if `_prow' <= `maxids'
+                local graph_rc = _rc
+                if `graph_rc' == 0 {
+                    display as text "Note: swimlane limited to first `maxids' of `graph_ids_total' persons (use maxids())"
+                }
+            }
+        }
+
+        local _plot ""
+        local _leg ""
+        local _i = 0
+        if `graph_rc' == 0 & "`exposure'" != "" {
+            capture confirm numeric variable `exposure'
+            local _exposure_numeric = (_rc == 0)
+            if `_exposure_numeric' {
+                capture quietly clonevar `_graph_exposure' = `exposure'
+                local graph_rc = _rc
+            }
+            else {
+                capture quietly count if `exposure' != ""
+                local graph_rc = _rc
+                if `graph_rc' == 0 & r(N) == 0 {
+                    capture quietly gen double `_graph_exposure' = .
+                    local graph_rc = _rc
+                }
+                else if `graph_rc' == 0 {
+                    capture quietly encode `exposure', gen(`_graph_exposure')
+                    local graph_rc = _rc
+                }
+            }
+            if `graph_rc' == 0 {
+                capture local _graph_value_label : value label `_graph_exposure'
+                local graph_rc = _rc
+            }
+            if `graph_rc' == 0 {
+                capture quietly levelsof `_graph_exposure', local(_elevs) missing
+                local graph_rc = _rc
+            }
+            foreach lv of local _elevs {
+                if `graph_rc' == 0 {
+                    local ++_i
+                    capture local _plot `"`_plot' (rspike `start' `stop' `_prow' if `_graph_exposure'==`lv', horizontal lwidth(medthick))"'
+                    local graph_rc = _rc
+                }
+                if `graph_rc' == 0 {
+                    if missing(`lv') {
+                        local _level_label "Missing"
+                    }
+                    else {
+                        local _level_label ""
+                        if `"`_graph_value_label'"' != "" {
+                            capture local _level_label : ///
+                                label (`_graph_exposure') `lv'
+                            local graph_rc = _rc
+                        }
+                        if `graph_rc' == 0 & ///
+                            (`"`_level_label'"' == "" | ///
+                            (`_exposure_numeric' & ///
+                            `"`_level_label'"' == "`lv'")) {
+                            if `_exposure_numeric' {
+                                local _level_label "`exposure'=`lv'"
+                            }
+                            else {
+                                local _level_label "Level `lv'"
+                            }
+                        }
+                    }
+                }
+                if `graph_rc' == 0 {
+                    capture local _leg `"`_leg' `_i' `"`_level_label'"'"'
+                    local graph_rc = _rc
+                }
+            }
+            if `graph_rc' == 0 {
+                capture noisily twoway `_plot', ///
+                    ytitle("Person (grouped id)") xtitle("Date") ///
+                    title("Exposure swimlane") legend(order(`_leg')) ///
+                    name(`_swgraph', replace)
+                local graph_rc = _rc
+            }
+        }
+        else if `graph_rc' == 0 {
+            capture noisily twoway ///
+                (rspike `start' `stop' `_prow', horizontal lwidth(medthick)), ///
+                ytitle("Person (grouped id)") xtitle("Date") ///
+                title("Exposure swimlane") name(`_swgraph', replace)
+            local graph_rc = _rc
+        }
+
+        if `graph_rc' == 0 {
+            capture graph rename `_swgraph' tvd_swimlane, replace
+            local graph_rc = _rc
+        }
+        if `graph_rc' == 0 {
+            local graph_created = 1
+            local graph_name "tvd_swimlane"
+        }
+        else {
+            capture graph drop `_swgraph'
+            local _cleanup_rc = _rc
+        }
+        restore
+        local _preserved = 0
+        if `graph_rc' {
+            display as text "Note: swimlane could not be produced (rc=`graph_rc')"
+        }
+    }
+
+    **************************************************************************
+    * FINAL SUMMARY
+    **************************************************************************
+    display as text "{bf:Diagnostic Complete}"
+    _tvtools_rule, width(78)
+
+    * Return general results and exact report defaults.
+    return scalar n_persons = `n_persons'
+    return scalar n_observations = `n_obs'
+    return scalar coverage_run = `coverage_run'
+    return scalar gaps_run = `gaps_run'
+    return scalar overlaps_run = `overlaps_run'
+    return scalar summarize_run = `summarize_run'
+    return scalar mean_coverage = `mean_coverage'
+    return scalar min_coverage = `min_coverage'
+    return scalar max_coverage = `max_coverage'
+    return scalar n_with_gaps = `n_with_gaps'
+    return scalar n_incomplete_coverage = `n_incomplete_coverage'
+    return scalar n_coverage_gaps = `n_coverage_gaps'
+    return scalar n_gaps = `n_gaps'
+    return scalar n_gap_ids = `n_gap_ids'
+    return scalar mean_gap = `mean_gap'
+    return scalar median_gap = `median_gap'
+    return scalar max_gap = `max_gap'
+    return scalar n_large_gaps = `n_large_gaps'
+    return scalar n_large_gap_ids = `n_large_gap_ids'
+    return scalar n_overlaps = `n_overlaps'
+    return scalar n_overlap_ids = `n_overlap_ids'
+    return scalar n_ids_affected = `n_ids_affected'
+    return scalar total_person_time = `total_person_time'
+    return scalar raw_interval_person_time = `raw_interval_person_time'
+    return scalar overlap_excess_person_time = `overlap_excess_person_time'
+    return scalar n_crossexposure_overlap_days = `n_crossexposure_overlap_days'
+    return scalar n_exposure_levels = `n_exposure_levels'
+    return scalar graph_requested = `graph_requested'
+    return scalar graph_created = `graph_created'
+    return scalar graph_rc = `graph_rc'
+    return scalar graph_ids_total = `graph_ids_total'
+    return scalar graph_ids_plotted = `graph_ids_plotted'
+    return scalar graph_truncated = `graph_truncated'
+    if `summarize_run' {
+        return matrix exposure_summary = `exposure_summary'
+    }
+    return local id "`id'"
+    return local start "`start'"
+    return local stop "`stop'"
+    return local graph_name "`graph_name'"
+
+    } // end capture noisily
+    local rc = _rc
+
+    if `_preserved' {
+        capture restore
+    }
+
+    set varabbrev `orig_varabbrev'
+    if `_gm_present' mata: st_global("T_gm_fix_span",st_local("_gm_bytes"))
+    else capture macro drop T_gm_fix_span
+
+    foreach _sg in S_1 S_2 {
+        if `_sg_has_`_sg'' mata: st_global("`_sg'",st_local("_sg_val_`_sg'"))
+        else capture macro drop `_sg'
+    }
+
+    if `rc' {
+        exit `rc'
+    }
+end

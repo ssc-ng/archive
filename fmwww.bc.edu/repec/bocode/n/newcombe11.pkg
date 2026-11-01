@@ -1,0 +1,30 @@
+d 'NEWCOMBE11': module to compute eleven confidence intervals for the difference between two independent binomial proportions
+d
+d      newcombe11 calculates confidence intervals for the risk
+d difference, p1 - p2, between two independent binomial
+d proportions,	  using the eleven methods numbered in Newcombe
+d (1998). The default is method 10, the combination of uncorrected
+d Wilson score	  intervals, with 95% confidence.    In immediate
+d syntax, group 1 is x1/n1.  In dataset syntax, group 1 is the
+d smaller observed numeric value of group; group 2 is	 the larger
+d value.  Observations with missing outcome or group are excluded. 
+d Changing group coding can reverse the sign of the    difference. 
+d The output explicitly identifies the numeric code of each group
+d and displays its value label, if defined. The    difference
+d always subtracts the larger-coded group's proportion from the
+d smaller-coded group's proportion. Labels do not    change this
+d order.  In immediate syntax, the two groups follow the supplied
+d argument order. 
+d
+d KW: risk difference
+d KW: confidence intervals
+d
+d Requires: Stata version 10
+d
+d Distribution-Date: 20261031
+d
+d Author: Silvano Andorno , University of Eastern Piedmont "Amedeo Avogadro"  
+d Support: email silvano.andorno@@uniupo.it
+d
+f newcombe11.ado
+f newcombe11.sthlp

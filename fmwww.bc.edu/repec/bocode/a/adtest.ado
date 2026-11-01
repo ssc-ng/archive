@@ -1,3 +1,4 @@
+*! 3.1.0 Ariel Linden 31Oct2026		// two-sample weighted pooled ECDF now weighted by group size, so A^2 is invariant to rescaling either group's weights
 *! 3.0.0 Ariel Linden 24Jul2026		//generalization to k-samples; added posthoc option
 *! 2.0.0 Ariel Linden 17Jul2026		// added weights, graph, and dots options
 *! 1.1.0 Ariel Linden 08Jan2026		// fixed by() to allow a string variable and use value labels
@@ -323,7 +324,7 @@ real scalar adk_compute(real vector y, real vector g, real vector w, ///
 	real vector groups, real scalar pwr)
 {
 	real scalar n, k, j, i, Wtot, neTot, leadfac, Fcum, out, numv, denomv, dup, h, sdv
-	real vector idx, ys, gs, ws, Wsum, ne, Ecum, diff, wj
+	real vector idx, ys, gs, ws, Wsum, ne, ng, Ecum, diff, wj
 
 	n = rows(y)
 	k = rows(groups)
@@ -333,10 +334,12 @@ real scalar adk_compute(real vector y, real vector g, real vector w, ///
 
 	Wsum = J(k, 1, 0)
 	ne   = J(k, 1, 0)
+	ng   = J(k, 1, 0)
 	for (j=1; j<=k; j++) {
 		wj = select(w, g :== groups[j])
 		Wsum[j] = sum(wj)
 		ne[j]   = Wsum[j]^2 / sum(wj:^2)
+		ng[j]   = rows(wj)
 	}
 	Wtot    = sum(w)
 	neTot   = sum(ne)
@@ -350,7 +353,12 @@ real scalar adk_compute(real vector y, real vector g, real vector w, ///
 	for (i=1; i<=n-1; i++) {
 		j = selectindex(groups :== gs[i])
 		Ecum[j] = Ecum[j] + ws[i] / Wsum[j]
-		Fcum = Fcum + ws[i] / Wtot
+		if (k == 2) {
+			Fcum = sum(ng :* Ecum) / n
+		}
+		else {
+			Fcum = Fcum + ws[i] / Wtot
+		}
 
 		if (ys[i] != ys[i+1]) {
 			if (k == 2) {
@@ -392,7 +400,7 @@ real matrix adk_ecdf(real vector y, real vector g, real vector w, ///
 	real vector groups, real scalar pwr)
 {
 	real scalar n, k, j, i, Wtot, neTot, leadfac, Fcum, m, numv, denomv, dup, h, sdv
-	real vector idx, ys, gs, ws, Wsum, ne, Ecum, diff, wj, ux_v, Sbar_v, contrib
+	real vector idx, ys, gs, ws, Wsum, ne, ng, Ecum, diff, wj, ux_v, Sbar_v, contrib
 	real matrix S_v
 
 	n = rows(y)
@@ -403,10 +411,12 @@ real matrix adk_ecdf(real vector y, real vector g, real vector w, ///
 
 	Wsum = J(k, 1, 0)
 	ne   = J(k, 1, 0)
+	ng   = J(k, 1, 0)
 	for (j=1; j<=k; j++) {
 		wj = select(w, g :== groups[j])
 		Wsum[j] = sum(wj)
 		ne[j]   = Wsum[j]^2 / sum(wj:^2)
+		ng[j]   = rows(wj)
 	}
 	Wtot    = sum(w)
 	neTot   = sum(ne)
@@ -425,7 +435,12 @@ real matrix adk_ecdf(real vector y, real vector g, real vector w, ///
 	for (i=1; i<=n-1; i++) {
 		j = selectindex(groups :== gs[i])
 		Ecum[j] = Ecum[j] + ws[i] / Wsum[j]
-		Fcum = Fcum + ws[i] / Wtot
+		if (k == 2) {
+			Fcum = sum(ng :* Ecum) / n
+		}
+		else {
+			Fcum = Fcum + ws[i] / Wtot
+		}
 
 		if (ys[i] != ys[i+1]) {
 			m = m + 1

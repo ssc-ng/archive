@@ -1,0 +1,18 @@
+d 'EUROSTATDATA': module for fetching Eurostat data
+d
+d   A Stata package for fetching Eurostat data. See the help file
+d (help eurostatdata) for details after installation. 
+d
+d KW: graphs
+d KW: Eurostat
+d KW: SDMX
+d
+d Requires: Stata version 15, gtools from SSC (q.v.)
+d
+d Distribution-Date: 20261031
+d
+d Author: Asjad Naqvi, WIFO
+d Support: email asjadnaqvi@@gmail.com
+d
+f eurostatdata.ado
+f eurostatdata.sthlp

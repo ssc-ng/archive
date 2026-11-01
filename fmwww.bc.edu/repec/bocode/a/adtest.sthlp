@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.2.0  24jul2026}{...}
+{* *! version 1.3.0  31oct2026}{...}
 
 {title:Title}
 
@@ -66,9 +66,12 @@ When {it:k} > 2, there is no single pairwise comparison to make, so
 When weights are specified, each observation's contribution to its own
 group's empirical CDF is weighted by {it:w}/sum({it:w}), the observation's
 weight divided by the sum of weights in its group, in place of the
-unweighted contribution 1/{it:n}. The pooled empirical CDF is
-likewise the weighted average of the group empirical CDFs, weighted by
-each group's total weight. In addition, the
+unweighted contribution 1/{it:n}. When {it:k} = 2, the pooled empirical CDF is the
+average of the two groups' weighted empirical CDFs, weighted by each
+group's number of observations, so the AD statistic is unchanged when
+either group's weights are multiplied by a positive constant. When
+{it:k} > 2, the pooled empirical CDF is the weighted average of the group
+empirical CDFs, weighted by each group's total weight. In addition, the
 variance-standardization term's sample size is replaced by the total Kish
 (1965) effective sample size - the sum of each group's own effective
 sample size, where a group's effective sample size is the square of the

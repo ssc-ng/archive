@@ -101,6 +101,7 @@ p etime module to time how long a program runs
 p etr module to calculate the cost of capital and forward-looking effective tax rates
 p eui module to compute Environmental Uncertainty Index Calculator
 p euromod module to connect to EUROMOD (Windows only)
+p eurostatdata module for fetching Eurostat data
 p eurostatuse module to import data from Eurostat repository into Stata
 p eurouse module to import data from Eurostat
 p evalue module for conducting sensitivity analyses for unmeasured confounding in observational studies

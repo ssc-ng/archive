@@ -1,28 +1,28 @@
-*! mysuite v1.2.1 23Sep2026
+*! mysuite v1.3.0 31Oct2026
 *! Authors: Wu Lianghai, Chen Liwen, Wu Hanyan, Wu Xinzhuo, Li Juan
 *! Built-in extensible program suite for empirical research
-*! 45 programs available from SSC (42 packages)
+*! 48 programs available from SSC (45 packages)
 
 program define mysuite
     version 18.0
 
     syntax [, ALL INSTALLed Download]
 
-    * Define SSC module list (45 programs in 42 SSC packages)
+    * Define SSC module list (48 programs in 45 SSC packages)
     local ssc_online art2tex case2tex mktex sumtex tab2excel corrtex ///
                      corrtex2 regtex reftex getref get2ref conservatism em ///
-                     efficiency opacity crash scrash eui qta area ///
+                     efficiency opacity crash scrash eui qta esgdict wordfreq area ///
                      upoint province_devcat bmc polishpaper cleandisk myedit bf ///
                      fshare thesis_diagram rollbook exam2tex mysuite ///
-                     editprofile reduce_aigc myinterval ccgi fm varck ///
+                     editprofile reduce_aigc myinterval ccgi fm varck xtcsd ///
                      mkes plssem2 learn_bilingual ff
 
     local ssc_modules art2tex case2tex mktex sumtex tab2excel corrtex ///
                      corrtex2 regtex reg2tex reftex getref get2ref conservatism em ///
-                     efficiency opacity crash scrash eui qta area ///
+                     efficiency opacity crash scrash eui qta esgdict wordfreq area ///
                      upoint province_devcat bmc polishpaper cleandisk myedit bf ///
                      fshare thesis_diagram rollbook exam2tex mysuite ///
-                     editprofile reduce_aigc myinterval ccgi fm varck ///
+                     editprofile reduce_aigc myinterval ccgi fm varck xtcsd ///
                      mkes plssem2 stataedu pythonedu latexedu ff
     *-------------------------------------------------------------------
     * MODE 1: DISPLAY MENU (no options)
@@ -30,7 +30,7 @@ program define mysuite
     if "`all'" == "" & "`installed'" == "" & "`download'" == "" {
         display as text _n(2)
         display as text "{hline 70}"
-        display as text "{bf:mysuite v1.2.1} - Built-in Extensible Program Suite"
+        display as text "{bf:mysuite v1.3.0} - Built-in Extensible Program Suite"
         display as text "{hline 70}"
         display as text "Developed by: Wu Lianghai (agd2010@yeah.net)"
         display as text "              Chen Liwen (2184844526@qq.com)"
@@ -40,11 +40,11 @@ program define mysuite
         display as text "Institution: School of Business, Anhui University of Technology (AHUT)"
         display as text "             University of Bristol (UB)"
         display as text "             Red Cross Society of Ma'anshan City"
-        display as text "Date: 23 Sep 2026"
+        display as text "Date: 31 Oct 2026"
         display as text "{hline 70}" _n
 
         * Display available modules
-        display as text "{bf:AVAILABLE MODULES (45 programs from SSC)}" _n
+        display as text "{bf:AVAILABLE MODULES (48 programs from SSC)}" _n
 
         display as text "{bf:1. Core Components}"
         display as text "  {bf:art2tex}      : Empirical paper framework"
@@ -70,6 +70,8 @@ program define mysuite
         display as text "  {bf:scrash}       : Stock price crash risk (quarterly)"
         display as text "  {bf:eui}          : Environmental uncertainty"
         display as text "  {bf:qta}          : ESG textual analysis indicators"
+        display as text "  {bf:esgdict}      : Machine-learning ESG dictionary generation"
+        display as text "  {bf:wordfreq}     : Bilingual keyword frequency from PDF/text"
         display as text "  {bf:area}         : Regional ordinal variables"
         display as text "  {bf:upoint}       : Inflection point in U-shaped relationship"
         display as text "  {bf:province_devcat} : Regional development classification"
@@ -79,6 +81,7 @@ program define mysuite
         display as text "  {bf:myinterval}   : Confidence interval computation"
         display as text "  {bf:ccgi}         : Corporate governance indicator"
         display as text "  {bf:varck}        : Variable existence check"
+        display as text "  {bf:xtcsd}        : Cross-sectional dependence tests"
         display as text "  {bf:plssem2}      : Partial least squares SEM (PLS-SEM)" _n
 
         display as text "{bf:3. Research & Teaching Management}"
@@ -105,7 +108,7 @@ program define mysuite
         display as text "  {bf:mysuite}                 : Show this help and module list"
         display as text "  {bf:mysuite, all}            : Install missing SSC packages"
         display as text "  {bf:mysuite, installed}      : List currently installed modules"
-        display as text "  {bf:mysuite, all download}   : Force reinstall all 45 programs"
+        display as text "  {bf:mysuite, all download}   : Force reinstall all 48 programs"
         display as text "{hline 70}" _n
 
         * Display installation status
@@ -117,7 +120,7 @@ program define mysuite
                 local ++ssc_installed
             }
         }
-        display as text "  SSC modules installed: {res:`ssc_installed'}/45"
+        display as text "  SSC modules installed: {res:`ssc_installed'}/48"
         exit
     }
 
@@ -137,7 +140,7 @@ program define mysuite
                 display as text "  {bf:`mod'}: {error:Not installed}"
             }
         }
-        display as text _n "{bf:Summary:} {res:`ssc_installed'}/45 SSC modules installed"
+        display as text _n "{bf:Summary:} {res:`ssc_installed'}/48 SSC modules installed"
         exit
     }
 
@@ -189,7 +192,7 @@ program define mysuite
         if `fail_count' > 0 {
             display as error "  Failed to install:  {res:`fail_count'} packages"
         }
-        display as text _n "The mysuite suite covers {res:45 programs}; some share one SSC package."
+        display as text _n "The mysuite suite covers {res:48 programs} in 45 SSC packages."
         exit
     }
 
@@ -197,7 +200,7 @@ program define mysuite
     * MODE 4: FORCE REINSTALL ALL MODULES (all download)
     *-------------------------------------------------------------------
     if "`all'" != "" & "`download'" != "" {
-        display as text _n "{bf:Force reinstalling all 42 SSC packages...}" _n
+        display as text _n "{bf:Force reinstalling all 45 SSC packages...}" _n
         local ssc_count = 0
         local fail_count = 0
 

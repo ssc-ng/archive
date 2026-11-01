@@ -20,6 +20,7 @@ p nestpreserve module  to preserve, inspect, and restore multiple nested dataset
 p netplot module to provide social network visualization
 p netreg module to perform linear regression of a network response with the exchangeable assumption
 p network module to perform network meta-analysis
+p newcombe11 module to compute eleven confidence intervals for the difference between two independent binomial proportions
 p newey2 module to extend newey (HAC covariance estimation)
 p newsimpact module to compute news impact curve for ARCH models
 p next module to perform regression discontinuity

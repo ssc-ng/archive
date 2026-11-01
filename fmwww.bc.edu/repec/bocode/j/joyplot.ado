@@ -127,6 +127,13 @@ preserve
 
 
 	keep if `touse'
+	
+	count
+	if r(N) == 0 {
+		noi di as error "No observations. Check your data or {it:if}/{it:in} conditions."
+		exit 2000
+	}
+	
 	keep `varlist' `by' `time'
 
 	local length : word count `varlist'

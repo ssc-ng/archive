@@ -1,0 +1,20 @@
+d 'FASTRGINI': module to provide fast calculation of conventional and reciprocal Gini coefficients, bilateral inequality level, and orientation
+d
+d      fastrgini calculates six distributional statistics for one
+d positive-valued variable, using sorted-data algorithms
+d implemented in    Mata. It extends the approach of fastgini
+d (Sajaia, 2007) by calculating the conventional Gini together with
+d its reciprocal    counterpart and associated measures. 
+d
+d KW: Gini coefficient
+d KW: reciprocal
+d
+d Requires: Stata version 10
+d
+d Distribution-Date: 20261102
+d
+d Author:    Louis Chauvel, University of Luxembourg
+d Support: email   louis.chauvel@@uni.lu
+d
+f fastrgini.ado
+f fastrgini.sthlp

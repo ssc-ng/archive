@@ -1,0 +1,104 @@
+d 'CTOOLS': module to provide C-accelerated tools 
+d
+d  ctools provides high-performance C plugins for Stata that
+d dramatically	accelerate common data operations through
+d parallelization and optimized  algorithms. 
+d
+d KW: levels
+d KW: collapse
+d KW: contract
+d KW: egen
+d KW: sort
+d KW: factor variables
+d
+d Requires: Stata version 14.1
+d
+d Distribution-Date: 20261102
+d
+d Author: Michael Droste,  droste@usc.edu
+d Support: email University of Southern California
+d
+f ctools.ado
+f ctools.sthlp
+f cbinscatter.ado
+f cbinscatter.sthlp
+f cbsample.ado
+f cbsample.sthlp
+f cdecode.ado
+f cdecode.sthlp
+f cdestring.ado
+f cdestring.sthlp
+f cdistinct.ado
+f cdistinct.sthlp
+f cencode.ado
+f cencode.sthlp
+f cexport.ado
+f cexport.sthlp
+f chdfe.ado
+f chdfe.sthlp
+f cimport.ado
+f cimport.sthlp
+f cinterpolate.ado
+f cinterpolate.sthlp
+f civreghdfe_p.ado
+f civreghdfe.ado
+f civreghdfe.sthlp
+f cmerge.ado
+f cmerge.sthlp
+f cppmlhdfe_p.ado
+f cppmlhdfe.ado
+f cppmlhdfe.sthlp
+f cpsmatch.ado
+f cpsmatch.sthlp
+f cqreg.ado
+f cqreg.sthlp
+f crangejoin.ado
+f crangejoin.sthlp
+f crangestat.ado
+f crangestat.sthlp
+f creghdfe_p.ado
+f creghdfe.ado
+f creghdfe.sthlp
+f csample.ado
+f csample.sthlp
+f csort.ado
+f csort.sthlp
+f csplit.ado
+f csplit.sthlp
+f cwinsor.ado
+f cwinsor.sthlp
+f ctools_linux.plugin
+f ctools_mac_arm.plugin
+f ctools_mac_x86.plugin
+f ctools_windows.plugin
+f ../_/_cio_export.ado
+f ../_/_cio_import.ado
+f ../_/_cio_shp_export.ado
+f ../_/_civreghdfe_fvstrip.ado
+f ../_/_civreghdfe_optflags.ado
+f ../_/_cmerge_assert.ado
+f ../_/_cmerge_clear_sortedby.ado
+f ../_/_cmerge_keys_sorted.ado
+f ../_/_cmerge_label_mergevar.ado
+f ../_/_cmerge_native.ado
+f ../_/_cmerge_results.ado
+f ../_/_cmerge_table.ado
+f ../_/_cmerge_template.ado
+f ../_/_cppmlhdfe_abs_options.ado
+f ../_/_ctools_cleanup.ado
+f ../_/_ctools_clock.ado
+f ../_/_ctools_ebv.ado
+f ../_/_ctools_fvsplit.ado
+f ../_/_ctools_group.ado
+f ../_/_ctools_hdfe_absorb.ado
+f ../_/_ctools_hdfe_dof.ado
+f ../_/_ctools_hdfe_post.ado
+f ../_/_ctools_hdfe_vce.ado
+f ../_/_ctools_lap.ado
+f ../_/_ctools_load.ado
+f ../_/_ctools_mode.ado
+f ../_/_ctools_newvars.ado
+f ../_/_ctools_strw.ado
+f ../_/_ctools_undo.ado
+f ../_/_ctools_vce.ado
+f ../_/_ctools_weight.ado

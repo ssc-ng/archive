@@ -324,6 +324,7 @@ p cta module for conducting Classification Tree Analysis
 p ctabstat module to display table of summary statistics
 p ctoclient module providing client for the SurveyCTO API
 p ctohri module to translate From Counts to Hazard Ratio
+p ctools module to provide C-accelerated tools 
 p ctreatreg module for estimating dose-response models under exogenous and endogenous treatment
 p cub module to estimate ordinal outcome model estimated by a mixture of a uniform and a shifted binomial
 p cuentacot module for Contributions Counting

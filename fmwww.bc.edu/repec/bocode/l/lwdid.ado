@@ -1,18 +1,12 @@
 *
-*! version 3.4: 12 October 2026
-*! lwdid - Lee & Wooldridge rolling DID estimator (unified: small-N + large-N)
+*! version 3.5.0: 31 October 2026 
+*! lwdid - Lee & Wooldridge rolling DID estimator (unified: small-N and large-N panels)
 *! authors: Soo Jeong Lee, Jeffrey M. Wooldridge
 *! contact: soojeong.lee@siu.edu, wooldri1@msu.edu
 *! lwdid GitHub repository: https://github.com/Soo-econ/lwdid
 
 set more off
-*set trace on
-*set trace off
 
-capture program drop lwdid
-capture program drop lwdid_small_single
-capture program drop lwdid_small_staggered
-capture program drop lwdid_large
 
 **# [1] MAIN PROGRAM: lwdid 
 ***>> Dispatches to the appropriate subroutine: lwdid_small_single/lwdid_small_staggered/lwdid_large
@@ -27,7 +21,7 @@ program define lwdid, eclass sortpreserve
 			 REPS(integer 999)                   ///
 			 LEVEL(integer 95)                   ///
 			 CLUSTER(name)                       ///
-			 SEED(integer -1)                    ///
+			 SEED(integer 12345)                 ///
 			 VCE(string)                         ///
 			 TABLE(string)                       ///
 			 GRAPH                               ///
@@ -43,12 +37,27 @@ program define lwdid, eclass sortpreserve
 			 PRE(integer -1)                     ///
 			 NEVER                               ///
 			 YDOT                                ///
+			 CELLIF                              ///
 			]
 
 		marksample touse, novarlist
+		
+		* Validate that gvar() is numeric.
+		confirm numeric variable `gvar'
 
-		* allow missing gvar → convert to never-treated with 0
-		quietly replace `gvar' = 0 if missing(`gvar') & `touse'
+		* Negative cohort dates are not supported (0/missing = never treated).
+		capture assert `gvar' >= 0 if `touse' & !missing(`gvar')
+		if _rc {
+			di as err "gvar() cannot be negative: use positive first-treatment periods (0 or missing = never-treated)."
+			exit 198
+		}
+
+		* Use an internal cohort variable; preserve the user's gvar().
+		local __gvar_original `gvar'
+		tempvar __gvar_internal
+		quietly gen double `__gvar_internal' = `gvar' if `touse'
+		quietly replace `__gvar_internal' = 0 if missing(`__gvar_internal') & `touse'
+		local gvar `__gvar_internal'
 		
 		capture assert `gvar' == floor(`gvar') if `touse' & `gvar' > 0
 		if _rc {
@@ -67,10 +76,28 @@ program define lwdid, eclass sortpreserve
 			local __expanded_x `r(varlist)'
 			* fvrevar returns physical variables usable by Stata and Mata.
 		}
+
+		*-- Covariates must be time-invariant: warn if any varies within units.
+		if "`__expanded_x'" != "" {
+			foreach __v of local __expanded_x {
+				tempvar __sdv
+				quietly bysort `ivar': egen double `__sdv' = sd(`__v') if `touse'
+				quietly count if `touse' & `__sdv' > 1e-10 & !missing(`__sdv')
+				if r(N) > 0 {
+					di as txt "Warning: covariate {bf:`__v'} varies within units. " ///
+					   "lwdid assumes time-invariant covariates; consider using " ///
+					   "time-invariant pre-treatment (baseline) values."
+				}
+				drop `__sdv'
+			}
+		}
 		local __dispatch_varlist `y' `__expanded_x'
 		* Forward validated original options and the expanded numeric controls.
 		local __options_pos = strpos(`"`0'"', ",")
 		local __original_opts = substr(`"`0'"', `__options_pos', .)
+		* Forward the internal cohort variable to each estimation routine.
+		local __original_opts : subinstr local __original_opts "gvar(`__gvar_original')" "gvar(`__gvar_internal')", all
+		local __original_opts : subinstr local __original_opts "GVAR(`__gvar_original')" "gvar(`__gvar_internal')", all
 		local __dispatch_call `"`__dispatch_varlist' `if' `in' `__original_opts'"'
 
 			
@@ -108,6 +135,11 @@ program define lwdid, eclass sortpreserve
 	*-- DISPATCH (small option)
 		if "`small'" != "" {
 			
+			    * cellif is a large-N inference option
+				if "`cellif'" != "" {
+					di as err "cellif is available only in large-N mode."
+					exit 198
+				}
 			    * cluster() is not supported in small-N mode
 				if "`cluster'" != "" {
 					di as err "cluster() is available only in large-N mode."
@@ -161,7 +193,7 @@ program define lwdid_small_single, eclass
 			 REPS(integer 999)                   ///
 			 LEVEL(integer 95)                   ///
 			 CLUSTER(name)                       ///
-			 SEED(integer -1)                    ///
+			 SEED(integer 12345)                 ///
 			 VCE(string)                         ///
 			 TABLE(string)                       ///
 			 GRAPH                               ///
@@ -169,11 +201,11 @@ program define lwdid_small_single, eclass
 			 CB                                  ///
 			 SCHEME(string)						 ///
 			 GOPTS(string asis)                  ///
-			 SAVE(string)                      ///
+			 SAVE(string)                        ///
 			 TITLE(string)                       ///
 			 GID(string)                         ///
 			 RI                                  ///
-			 RIREPS(integer 999)                ///
+			 RIREPS(integer 999)                 ///
 			 RISEED(string)                      ///
 			 ATTGT                               ///
 			 YDOT                                ///
@@ -192,7 +224,7 @@ program define lwdid_small_single, eclass
 		*-- RI seed
 		qui capture confirm number `riseed'
 		qui if _rc local riseed = .
-		qui if missing(`riseed') local riseed = ceil(runiform()*1e6 + 1000*runiform())
+		qui if missing(`riseed') local riseed = 12345
 
 		*-- validate variables
 		confirm variable `gvar'
@@ -288,6 +320,7 @@ program define lwdid_small_single, eclass
 
 	* ---  (2) Build time index: yearly or year-quarter, plus nice tq label
 		quietly su `timevar', meanonly
+        local __starttime = r(min)
 		qui gen long `tindex' = `timevar' - r(min) + 1 if !missing(`timevar')
 
 		label var `tindex' "time index (min->1)"
@@ -314,8 +347,6 @@ program define lwdid_small_single, eclass
         * rolling(demean): use the mean of the available nonmissing pre-treatment
         * outcomes for each unit directly. This supports unbalanced panels and
         * allows a unit to contribute with only one observed pre-treatment outcome.
-        * If a unit has no observed pre-treatment outcome, its pre-mean (and hence
-        * yhat/ydot) remains missing and it is naturally excluded downstream.
         if "`rolling'"=="demean" {
             tempvar __premean
             quietly bysort `id': egen double `__premean' = ///
@@ -361,7 +392,7 @@ program define lwdid_small_single, eclass
 			qui label var `ydot' "y - yhat (residualized via pre-period fit)"
 
 
-	* ---  Collapse to first post cross-section & overall ATT
+	* ---  Collapse to first post cross-section & Aggregated single treatment effect
 		qui capture drop ydot_postavg firstpost
 		quietly bysort `id': egen double ydot_postavg = mean(cond(`post_'==1, `ydot', .))
 		qui label var ydot_postavg "mean(ydot) over post periods, by id"
@@ -436,7 +467,7 @@ program define lwdid_small_single, eclass
 
 			else {
 				di as err "Too many controls for small-N estimation: K=`K1', treated N=`nt', controls N=`nc'."
-				di as err "Need N_treated > K+1 and N_control > K+1. Reduce covariates."
+				di as err "Need N_tr > K+1 and N_unt > K+1 (treated and untreated units). Reduce covariates."
 				exit 2001
 			}
 
@@ -458,6 +489,16 @@ program define lwdid_small_single, eclass
 					di as txt "    Variance adjustment: none"
 					regress ydot_postavg d_ `RHS' if firstpost
 				}
+
+                * Actual distinct units in the overall single-effect regression.
+                tempvar __overall_es __overall_tag
+                quietly generate byte `__overall_es' = e(sample)
+                quietly egen byte `__overall_tag' = tag(`id') if `__overall_es'
+                quietly count if `__overall_tag' == 1 & d_ == 1
+                local __overall_nt = r(N)
+                quietly count if `__overall_tag' == 1 & d_ == 0
+                local __overall_nc = r(N)
+                local __overall_n = `__overall_nt' + `__overall_nc'
 
 				* keep these for e()
 				matrix `b' = e(b)
@@ -508,7 +549,8 @@ program define lwdid_small_single, eclass
 
 		tempname __pph
 		tempfile __ppfile
-		qui postfile `__pph' int tindex str20 period double beta se tstat pval N using `__ppfile', replace
+		qui postfile `__pph' int tindex str20 period double beta se tstat pval N ///
+            long N_tr N_unt N_total using `__ppfile', replace
 
 		* first row = overall 'average' from the single-effect above
 		local b_avg = _b[d_]
@@ -516,7 +558,7 @@ program define lwdid_small_single, eclass
 		local t_avg = `b_avg'/`s_avg'
 		local p_avg = 2*ttail(e(df_r), abs(`t_avg'))
 		local N_avg = e(N)
-		post `__pph' (.) ("average") (`b_avg') (`s_avg') (`t_avg') (`p_avg') (`N_avg')
+		post `__pph' (.) ("average") (`b_avg') (`s_avg') (`t_avg') (`p_avg') (`N_avg') (.) (.) (.)
 
 		quietly su `tindex', meanonly
 		local Tmax = r(max)
@@ -546,10 +588,21 @@ program define lwdid_small_single, eclass
 				local se1  = _se[d_]
 				local t    = `coef'/`se1'
 				local p    = 2*ttail(e(df_r), abs(`t'))
-				post `__pph' (`tt') ("`lab'") (`coef') (`se1') (`t') (`p') (e(N))
+                local __Nreg = e(N)
+                * Count distinct units in the exact regression estimation sample.
+                tempvar __sampletag
+                quietly egen byte `__sampletag' = tag(`id') if e(sample)
+                quietly count if `__sampletag' == 1 & d_ == 1
+                local __ntreated = r(N)
+                quietly count if `__sampletag' == 1 & d_ == 0
+                local __ncontrol = r(N)
+                local __ntotal = `__ntreated' + `__ncontrol'
+                drop `__sampletag'
+				post `__pph' (`tt') ("`lab'") (`coef') (`se1') (`t') (`p') (`__Nreg') ///
+                    (`__ntreated') (`__ncontrol') (`__ntotal')
 			}
 			else {
-				post `__pph' (`tt') ("`lab'") (.) (.) (.) (.) (.)
+				post `__pph' (`tt') ("`lab'") (.) (.) (.) (.) (.) (.) (.) (.)
 			}
 		}
 		postclose `__pph'
@@ -572,6 +625,21 @@ program define lwdid_small_single, eclass
 		else {
 			use "`__ppfile'", clear
 
+            * Collect period-specific estimates and unique sample counts before
+            * converting the numeric time index to a display string.
+            tempname __small_attgt
+            preserve
+                quietly keep if period != "average"
+                quietly count
+                if r(N) > 0 {
+                    quietly gen double cohort = `gyear'
+                    quietly gen double time = tindex + `__starttime' - 1
+                    quietly gen double ryear = time - cohort
+                    quietly rename beta att
+                    quietly mkmat cohort time ryear att se N_tr N_unt N_total, matrix(`__small_attgt')
+                }
+            restore
+
 			qui gen byte __isavg = period=="average"
 			gsort -__isavg tindex
 			qui gen str10 tindex_s = cond(__isavg, "-", string(tindex))
@@ -590,54 +658,42 @@ program define lwdid_small_single, eclass
 			qui gen double ci_up = beta + cr*se
 			order period tindex beta se ci_lw ci_up tstat pval N
 			
-	di as txt _n "[2] Period-by-period ATTs"
+            * Show the period-by-period table only when attgt is requested.
+            if "`attgt'" != "" {
+                di as txt _n "[2] Period-by-period ATTs"
+                local __maxrows = 20
+                quietly count
+                local __nrows = r(N)
 
-			local __maxrows = 40
-			quietly count
-			local __nrows = r(N)
+                format beta se ci_lw ci_up %9.0g
+                format tstat %7.2f
+                format pval %6.3f
 
-			format beta se ci_lw ci_up %9.0g
-			format tstat %7.2f
-			format pval %6.3f
-
-			if `__nrows' <= `__maxrows' {
-					di as txt "{hline 72}"
-					di as txt _col(3)  "period" ///
-						_col(15) "ATT" ///
-						_col(25) "Std. err." ///
-						_col(36) "t" ///
-						_col(43) "P>|t|" ///
-						_col(53) "[`level'% conf. int.]"
-					di as txt "{hline 72}"
-
-					quietly count
-					forvalues __i = 1/`r(N)' {
-					di as txt _col(2)  %8s period[`__i'] ///
-						as res _col(13) %9.0g beta[`__i'] ///
-						as res _col(23) %9.0g se[`__i'] ///
-						as res _col(33) %7.2f tstat[`__i'] ///
-						as res _col(42) %6.3f pval[`__i'] ///
-						as res _col(51) %9.0g ci_lw[`__i'] ///
-						as res _col(62) %9.0g ci_up[`__i']
-					}
-
-					di as txt "{hline 72}"
-					di as txt "Note: Confidence intervals, t statistics, and p-values are pointwise t-based."
-								}
-			else {
-					di as txt "{hline 68}"
-					di as txt "Note: The period-by-period table is not displayed because it has more than 40 rows."
-					di as txt "Note: This avoids lengthy output for monthly or quarterly data."
-
-					if "`save'" != "" {
-						di as txt "Note: The full period-by-period results are saved in the .dta file specified by save()."
-					}
-					else {
-						di as txt "Note: To view the full period-by-period results, rerun the command with save() option."
-					}
-
-					di as txt "{hline 68}"
-				}
+                di as txt "{hline 72}"
+                di as txt _col(3) "period" ///
+                    _col(15) "ATT" ///
+                    _col(25) "Std. err." ///
+                    _col(36) "t" ///
+                    _col(43) "P>|t|" ///
+                    _col(53) "[`level'% conf. int.]"
+                di as txt "{hline 72}"
+                local __shown = min(`__nrows', `__maxrows')
+                forvalues __i = 1/`__shown' {
+                    di as txt _col(2) %8s period[`__i'] ///
+                        as res _col(13) %9.0g beta[`__i'] ///
+                        as res _col(23) %9.0g se[`__i'] ///
+                        as res _col(33) %7.2f tstat[`__i'] ///
+                        as res _col(42) %6.3f pval[`__i'] ///
+                        as res _col(51) %9.0g ci_lw[`__i'] ///
+                        as res _col(62) %9.0g ci_up[`__i']
+                }
+                di as txt "{hline 72}"
+                di as txt "Note: Confidence intervals, t statistics, and p-values are pointwise t-based."
+                if `__nrows' > `__maxrows' {
+                    di as error "Note: Only the first `__maxrows' of `__nrows' rows are displayed."
+                    di as txt "For the full results, use matrix list e(attgt) or specify save("results.dta")."
+                }
+            }
 
 			if "`save'" != "" {
 
@@ -690,31 +746,8 @@ program define lwdid_small_single, eclass
 			}
 		}
 
-			* e(ATTt)/e(SEt) store post-treatment period-specific
-			* regression estimates only; overall ATT stays in e(att)/e(se_att).
-			* Preserve the "average" row in the printed/exported table.
-			preserve
-			quietly keep if period != "average"
-			quietly count
-			local __Nrow = r(N)
-			tempname __ATTt __SEt
-			if (`__Nrow' > 0) {
-				capture noisily mkmat beta, matrix(`__ATTt')
-				capture noisily mkmat se,   matrix(`__SEt')
-			}
-			restore
-
-			frame change default
-			capture confirm matrix `__ATTt'
-			if !_rc {
-				matrix ATTt = `__ATTt'
-				capture ereturn matrix ATTt = ATTt
-			}
-			capture confirm matrix `__SEt'
-			if !_rc {
-				matrix SEt  = `__SEt'
-				capture ereturn matrix SEt  = SEt
-			}
+            * Period-specific results are already collected into __small_attgt.
+            frame change default
 
 			capture frame drop __lwdid_pp
 		}
@@ -945,26 +978,43 @@ program define lwdid_small_single, eclass
 		}
 			
 			
-   * Store results in e()
-        ereturn post `b' `V', esample(firstpost)
+   * Store only the original overall treatment coefficient and its variance.
+        * The original regression and its inference above remain unchanged.
+        tempname __small_b __small_V
+        matrix `__small_b' = `b'[1,"d_"]
+        matrix `__small_V' = `V'["d_","d_"]
+        matrix colnames `__small_b' = Post_avg
+        matrix colnames `__small_V' = Post_avg
+        matrix rownames `__small_V' = Post_avg
+        ereturn post `__small_b' `__small_V', esample(firstpost)
+        ereturn scalar N_tr = `__overall_nt'
+        ereturn scalar N_unt = `__overall_nc'
+        ereturn scalar N_total = `__overall_n'
         ereturn local cmd        "lwdid"
         ereturn local depvar     "`y'"
         ereturn local rolling    "`rolling'"
         ereturn local controls   "`controls'"
         ereturn local gid  "`gid'"
 
-        ereturn scalar att       = __att_overall
-        ereturn scalar se_att    = __se_overall
         ereturn scalar K         = `K'
         ereturn scalar tpost1    = `tpost1'
 		if "`ri'" != "" ereturn scalar p_ri = __p_ri
 		
 
-				capture confirm matrix ATTt
-				if !_rc ereturn matrix ATTt = ATTt
-				capture confirm matrix SEt
-				if !_rc ereturn matrix SEt  = SEt
+        * Common-timing small-N: post ATT-by-period and exact unit counts.
+        capture confirm matrix `__small_attgt'
+        if !_rc {
+            matrix colnames `__small_attgt' = cohort time ryear att se N_tr N_unt N_total
+            ereturn matrix attgt = `__small_attgt'
+        }
+
 	restore
+
+    * Small-N common timing: display the aggregated single-effect summary
+    * after any requested period-by-period ATT table and graph output.
+    * Display-only; estimation results and e() matrices are unchanged.
+    di as res _n "*--- lwdid (rolling: `rolling'): Aggregated single effect = " ///
+        %6.3f _b[Post_avg] " (SE = " %5.3f _se[Post_avg] ")"
 end
 
 
@@ -981,7 +1031,7 @@ program define lwdid_small_staggered, eclass
          REPS(integer 999)                   ///
          LEVEL(integer 95)                   ///
          CLUSTER(name)                       ///
-         SEED(integer -1)                    ///
+         SEED(integer 12345)                 ///
          VCE(string)                         ///
          TABLE(string)                       ///
          GRAPH                               ///
@@ -1071,8 +1121,9 @@ program define lwdid_small_staggered, eclass
 
 		*-- graph support for small-N staggered designs
 		*-- The single-effect estimator and regression table below are unchanged.
-		tempfile __graph_cells
-		tempname __gpost
+		tempfile __graph_cells __cell_results
+		tempname __gpost __cellpost __cellmatrix
+        quietly postfile `__cellpost' double cohort time ryear att se N_tr N_unt N_total using "`__cell_results'", replace
 
   quietly {
         preserve
@@ -1103,9 +1154,9 @@ program define lwdid_small_staggered, eclass
 
             *-- Open a temporary cohort-by-exposure-time dataset only when graph is requested.
             *-- These calculations are descriptive and do not alter ydot_bar or equation (7.18).
+            levelsof `timevar', local(Tlist)
             if "`graph'" != "" {
-                levelsof `timevar', local(Tlist)
-                postfile `__gpost' double cohort ryear tr_mean co_mean ///
+                quietly postfile `__gpost' double cohort ryear tr_mean co_mean ///
                     long Ng N_tr N_co using "`__graph_cells'", replace
             }
 
@@ -1183,6 +1234,35 @@ program define lwdid_small_staggered, eclass
                 gen double `ydotg' = `y' - `yhat'
                 label var `ydotg' "(rolling=`rolling') Residualized outcome cohort g=`g'"
 
+                *-- Small-N staggered cell-specific regression, never-treated units only.
+                *-- Uses the cohort-g pre-treatment transformation for BOTH groups.
+                *-- Each cell regression has its own classical t-based standard error.
+                tempvar __cell_tr
+                gen byte `__cell_tr' = (`gvar' == `g')
+                foreach tt of local Tlist {
+                    local rr = `tt' - `g'
+                    * ATT(g,t) is reported only for post-treatment periods (t >= g).
+                    if `rr' < 0 continue
+                    capture quietly regress `ydotg' `__cell_tr' if ///
+                        `timevar' == `tt' & inlist(`gvar', 0, `g')
+                    if !_rc {
+                        local __reg_n = e(N)
+                        local __reg_df = e(df_r)
+                        local __b = _b[`__cell_tr']
+                        local __se = _se[`__cell_tr']
+                        quietly count if e(sample) & `__cell_tr' == 1
+                        local __ntr = r(N)
+                        quietly count if e(sample) & `__cell_tr' == 0
+                        local __nco = r(N)
+                        if `__ntr' > 0 & `__nco' > 0 & `__reg_df' > 0 & ///
+                            !missing(`__b', `__se') {
+                            post `__cellpost' (`g') (`tt') (`rr') (`__b') ///
+                                (`__se') (`__ntr') (`__nco') (`__reg_n')
+                        }
+                    }
+                }
+                drop `__cell_tr'
+
                 *-- Graph cells: align each cohort at exposure time r=t-g.
                 *-- The comparison group is never-treated, matching the single-effect estimator.
                 if "`graph'" != "" {
@@ -1226,6 +1306,7 @@ program define lwdid_small_staggered, eclass
             if "`graph'" != "" {
                 postclose `__gpost'
             }
+            postclose `__cellpost'
 
             qui replace `ydot_bar' = `contsum' if d_==0
             drop `contsum'
@@ -1245,31 +1326,51 @@ program define lwdid_small_staggered, eclass
 
 		regress `ydot_bar' d_ if `timevar' == `gmin'
 
+        * Count distinct treated and never-treated units in the actual
+        * original overall regression sample (not summed cell counts).
+        tempvar __overall_es __overall_tag
+        quietly generate byte `__overall_es' = e(sample)
+        quietly egen byte `__overall_tag' = tag(`id') if `__overall_es'
+        quietly count if `__overall_tag' == 1 & d_ == 1
+        local __overall_nt = r(N)
+        quietly count if `__overall_tag' == 1 & d_ == 0
+        local __overall_nc = r(N)
+        local __overall_n = `__overall_nt' + `__overall_nc'
+
 		* Preserve regression results before ereturn post clears e().
 		matrix b = e(b)
 		matrix V = e(V)
 		local N    = e(N)
 		local df_r = e(df_r)
 
-		* Repost the coefficient and variance matrix,
-		* retaining the sample size and residual degrees of freedom.
-		ereturn post b V, obs(`N') dof(`df_r') depname(`y')
-
-		ereturn scalar att    = _b[d_]
-		ereturn scalar se_att = _se[d_]
+		* Repost only the original treatment coefficient and its variance.
+		* Preserve the original regression degrees of freedom for t inference.
+        tempname __small_b __small_V
+        matrix `__small_b' = b[1,"d_"]
+        matrix `__small_V' = V["d_","d_"]
+        matrix colnames `__small_b' = Post_avg
+        matrix colnames `__small_V' = Post_avg
+        matrix rownames `__small_V' = Post_avg
+        ereturn post `__small_b' `__small_V', obs(`N') dof(`df_r') depname(`y')
+        ereturn scalar N_tr = `__overall_nt'
+        ereturn scalar N_unt = `__overall_nc'
+        ereturn scalar N_total = `__overall_n'
 
 		ereturn local cmd     "lwdid"
 		ereturn local depvar  "`y'"
 		ereturn local rolling "`rolling'"
 
-		di as res "*--- lwdid (rolling: `rolling') ATT = " %9.3f e(att) ///
-				  "   SE = " %9.3f e(se_att)
+        * With attgt, defer the overall summary until after the cell table.
+        if "`attgt'" == "" {
+		di as res _n "*--- lwdid (rolling: `rolling'): Aggregated single effect = " ///
+    %6.3f _b[Post_avg] ///
+    " (SE = " %5.3f _se[Post_avg] ")"
+        }
 
-		*------------------------------------------------------------
+
 		* Exposure-time graph: cohort-size-weighted residualized paths
 		* Runs after the original equation (7.18) regression table.
 		* No confidence intervals or pre-trends test are reported.
-		*------------------------------------------------------------
 		if "`graph'" != "" {
 			use "`__graph_cells'", clear
 			quietly count
@@ -1330,6 +1431,7 @@ program define lwdid_small_staggered, eclass
             xline(0, lcolor(gs8) lpattern(dash)) ///
             yline(0, lcolor(gs12) lpattern(solid)) ///
             xlabel(`xmin'(`xstep')`xmax', nogrid) ///
+            ylabel(, nogrid) ///
             xtitle("Exposure time") ///
             ytitle("Residualized outcome") ///
             legend(order(1 "Eventually treated cohorts (weighted)" 2 "Never-treated units (weighted)") ///
@@ -1338,10 +1440,86 @@ program define lwdid_small_staggered, eclass
             graphregion(color(white)) plotregion(color(white)) ///
             `gsch' `gopts'
 
-        di as txt "Note: The graph shows cohort-size-weighted residualized paths by exposure time."
+        if "`attgt'" == "" di as txt "Note: The graph shows cohort-size-weighted residualized paths by exposure time."
     }
 
     restore
+
+    * Store cohort-time estimates in one e(attgt) matrix. Do not alter e(b)/e(V).
+    preserve
+        quietly use "`__cell_results'", clear
+        quietly count
+        local __ncells = r(N)
+        if `__ncells' > 0 {
+            quietly sort cohort time
+            quietly mkmat cohort time ryear att se N_tr N_unt N_total, matrix(`__cellmatrix')
+        }
+    restore
+    if `__ncells' > 0 {
+        matrix colnames `__cellmatrix' = cohort time ryear att se N_tr N_unt N_total
+        ereturn matrix attgt = `__cellmatrix'
+    }
+    if "`attgt'" != "" {
+        di as txt _n "[2] Cohort-by-period ATT(g,t) estimates"
+        if `__ncells' == 0 {
+            di as txt "No estimable post-treatment cohort-time cells."
+        }
+        else {
+            * Display and optional export only: do not change the overall e(b)/e(V).
+            preserve
+            quietly use "`__cell_results'", clear
+            quietly sort cohort time
+            quietly gen double tstat = att/se if se>0 & !missing(se)
+            quietly gen double df = N_total-2
+            quietly gen double pval = 2*ttail(df,abs(tstat)) if df>0 & !missing(tstat)
+            quietly gen double __crit = invttail(df,(100-`level')/200) if df>0
+            quietly gen double ci_lw = att - __crit*se if !missing(__crit,se)
+            quietly gen double ci_up = att + __crit*se if !missing(__crit,se)
+            quietly drop __crit
+            local __maxrows = 20
+            local __shown = min(`__ncells', `__maxrows')
+            di as txt "{hline 89}"
+            di as txt _col(3) "cohort" _col(12) "period" _col(21) "ATT" ///
+                _col(34) "Std. err." _col(47) "t" _col(56) "P>|t|" ///
+                _col(66) "[`level'% conf. int.]"
+            di as txt "{hline 89}"
+            forvalues __j = 1/`__shown' {
+                di as txt _col(2) %8.0g cohort[`__j'] ///
+                   _col(11) %8.0g time[`__j'] ///
+                   as res _col(20) %9.0g att[`__j'] ///
+                   _col(33) %9.0g se[`__j'] ///
+                   _col(46) %7.2f tstat[`__j'] ///
+                   _col(55) %6.3f pval[`__j'] ///
+                   _col(65) %9.0g ci_lw[`__j'] ///
+                   _col(77) %9.0g ci_up[`__j']
+            }
+            di as txt "{hline 89}"
+            di as txt "Note: Pointwise, cell-specific OLS t-based inference; never-treated units only."
+            if `__ncells' > `__maxrows' {
+                di as error "Note: Only the first `__maxrows' of `__ncells' cohort-time cells are displayed."
+                di as txt "For the full results, use matrix list e(attgt) or specify save("results.dta")."
+            }
+            if "`save'" != "" {
+                quietly keep cohort time ryear att se tstat pval ci_lw ci_up N_tr N_unt N_total
+                quietly order cohort time ryear att se tstat pval ci_lw ci_up N_tr N_unt N_total
+                quietly save "`save'", replace
+                di as txt "Cohort-time results saved to " as res "`save'"
+            }
+            restore
+        }
+    }
+
+    * For attgt, place the existing Aggregated single treatment effect summary and graph note
+    * below the cohort-by-period output. This is display-only.
+    if "`attgt'" != "" {
+        di as res _n "*--- lwdid (rolling: `rolling'): Aggregated single effect = " ///
+    %6.3f _b[Post_avg] ///
+    " (SE = " %5.3f _se[Post_avg] ")"
+        if "`graph'" != "" {
+            di as txt "Note: The graph shows cohort-size-weighted residualized paths by exposure time."
+        }
+    }
+
 end
 
 **# [4] lwdid_large
@@ -1357,7 +1535,7 @@ program define lwdid_large, eclass
          REPS(integer 999)                   ///
          LEVEL(integer 95)                   ///
          CLUSTER(name)                       ///
-         SEED(integer -1)                    ///
+         SEED(integer 12345)                 ///
          VCE(string)                         ///
          TABLE(string)                       ///
          GRAPH                               ///
@@ -1365,20 +1543,22 @@ program define lwdid_large, eclass
          CB                                  ///
 		 SCHEME(string)						 ///
          GOPTS(string asis)                  ///
-         SAVE(string)                      ///
+         SAVE(string)                        ///
          TITLE(string)                       ///
          GID(string)                         ///
          RI                                  ///
-         RIREPS(integer 999)                ///
+         RIREPS(integer 999)                 ///
          RISEED(string)                      ///
          ATTGT                               ///
          PRE(integer -1)                     ///
          NEVER                               ///
          YDOT                                ///
+         CELLIF                              ///
         ]
 
 		marksample touse, novarlist
 		local y    : word 1 of `varlist'
+		local __cellif = ("`cellif'" != "")
 		local xlist: list varlist - y
 		local rolling = lower("`rolling'")
 		local __is_demean  = inlist("`rolling'","demean","demeanq","demeanm")
@@ -1439,10 +1619,7 @@ program define lwdid_large, eclass
 			}
 			tempvar __id __xttime
 			quietly egen long `__id' = group(`ivar') if `touse'
-			* Give observations outside the estimation sample unique internal ids.
-			* xtset cannot be restricted by if/in, so leaving these ids missing
-			* makes all excluded observations look like one panel and can trigger
-			* "repeated time values within panel" when the command is run with if/in.
+		* --- Create compact numeric IDs and handle excluded observations for xtset.
 			quietly replace `__id' = _N + _n if !`touse'
 			quietly gen double `__xttime' = `tvar' if `touse'
 			quietly replace `__xttime' = _n if !`touse'
@@ -1554,10 +1731,11 @@ program define lwdid_large, eclass
 
 		* ---  time dummies
 			foreach t of numlist `tmin'/`tmax' {
+				local __ti = `t' - `tmin' + 1
 				tempvar fvar_tmp
-				local fvar_`t' `fvar_tmp'
-				qui gen byte `fvar_`t'' = (`tvar' == `t') if `touse'
-				qui replace `fvar_`t'' = 0 if missing(`fvar_`t'')
+				local fvar_`__ti' `fvar_tmp'
+				qui gen byte `fvar_`__ti'' = (`tvar' == `t') if `touse'
+				qui replace `fvar_`__ti'' = 0 if missing(`fvar_`__ti'')
 			}
 
 
@@ -1565,22 +1743,16 @@ program define lwdid_large, eclass
 				* >> using the reduced-form representation (computationally efficient)
 		
 				quietly {
-				tempvar yobs cy ct ctt cty cn
+				tempvar yobs
 				qui gen byte `yobs' = (`touse' & !missing(`y'))
-				bys `id' (`tvar'): gen double `cy'  = sum(cond(`yobs', `y',        0))
-				bys `id' (`tvar'): gen double `ct'  = sum(cond(`yobs', `tvar',     0))
-				bys `id' (`tvar'): gen double `ctt' = sum(cond(`yobs', `tvar'^2,   0))
-				bys `id' (`tvar'): gen double `cty' = sum(cond(`yobs', `tvar'*`y', 0))
-				bys `id' (`tvar'): gen double `cn'  = sum(cond(`yobs', 1,          0))
 
 				foreach g of local cohorts {
 					tempvar __y`g'd
 					local yvarname_`g' `__y`g'd'
 					qui gen double `yvarname_`g'' = . if `touse'
 				if `__is_demean' {
-					* --------------------------------------------------------
+
 					* Demeaning family: demean / demeanq / demeanm
-					* --------------------------------------------------------
 					if "`rolling'" == "demean" {
 						tempvar Sy_pre n_pre
 
@@ -1627,35 +1799,22 @@ program define lwdid_large, eclass
 					}
 				}
 				else if `__is_detrend' {
-					* --------------------------------------------------------
+
 					* Detrending family: detrend / detrendq / detrendm
-					* --------------------------------------------------------
 					if "`rolling'" == "detrend" {
 						tempvar SyP StP SttP StyP nP denomP bP aP fitP
 
-						* Pre-treatment totals for each unit.
+						* Sum pre-treatment observations directly (valid for signed outcomes).
+						local __precondition "`tvar' < `g' & `yobs'"
 						if `pre' > 0 {
 							local g_pre_lo = `g' - `pre'
-							tempvar cy_w ct_w ctt_w cty_w cn_w
-							bys `id' (`tvar'): gen double `cy_w'  = sum(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `y',        0)) if `touse'
-							bys `id' (`tvar'): gen double `ct_w'  = sum(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `tvar',     0)) if `touse'
-							bys `id' (`tvar'): gen double `ctt_w' = sum(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `tvar'^2,   0)) if `touse'
-							bys `id' (`tvar'): gen double `cty_w' = sum(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', `tvar'*`y', 0)) if `touse'
-							bys `id' (`tvar'): gen double `cn_w'  = sum(cond(`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs', 1,          0)) if `touse'
-							bys `id': egen double `SyP'  = max(cond(`tvar' < `g', `cy_w',  .)) if `touse'
-							bys `id': egen double `StP'  = max(cond(`tvar' < `g', `ct_w',  .)) if `touse'
-							bys `id': egen double `SttP' = max(cond(`tvar' < `g', `ctt_w', .)) if `touse'
-							bys `id': egen double `StyP' = max(cond(`tvar' < `g', `cty_w', .)) if `touse'
-							bys `id': egen double `nP'   = max(cond(`tvar' < `g', `cn_w',  .)) if `touse'
-							drop `cy_w' `ct_w' `ctt_w' `cty_w' `cn_w'
+							local __precondition "`tvar' >= `g_pre_lo' & `tvar' < `g' & `yobs'"
 						}
-						else {
-							bys `id': egen double `SyP'  = max(cond(`tvar' < `g', `cy',  .)) if `touse'
-							bys `id': egen double `StP'  = max(cond(`tvar' < `g', `ct',  .)) if `touse'
-							bys `id': egen double `SttP' = max(cond(`tvar' < `g', `ctt', .)) if `touse'
-							bys `id': egen double `StyP' = max(cond(`tvar' < `g', `cty', .)) if `touse'
-							bys `id': egen double `nP'   = max(cond(`tvar' < `g', `cn',  .)) if `touse'
-						}
+						bys `id': egen double `SyP'  = total(cond(`__precondition', `y', 0)) if `touse'
+						bys `id': egen double `StP'  = total(cond(`__precondition', `tvar', 0)) if `touse'
+						bys `id': egen double `SttP' = total(cond(`__precondition', `tvar'^2, 0)) if `touse'
+						bys `id': egen double `StyP' = total(cond(`__precondition', `tvar'*`y', 0)) if `touse'
+						bys `id': egen double `nP'   = total(cond(`__precondition', 1, 0)) if `touse'
 
 						gen double `denomP' = `nP' * `SttP' - (`StP')^2 if `touse'
 						gen double `bP' = .
@@ -1765,7 +1924,7 @@ program define lwdid_large, eclass
 
 				qui tempfile ATTfile DROPfile
 				qui tempname pf __drop_pf
-				qui postfile `pf' int cohort int time int ryear double att double se double tstat double pval double lower_ci double upper_ci long Ngt using "`ATTfile'", replace
+				qui postfile `pf' int cohort int time int ryear double att double se double tstat double pval double lower_ci double upper_ci long Ngt long N_control using "`ATTfile'", replace
 				* reason: 1 insufficient treated/control; 2 propensity failure;
 				* 3 outcome regression failure; 4 treatment unidentified;
 				* 5 outcome IF rank failure; 6 propensity IF rank failure.
@@ -1775,22 +1934,13 @@ program define lwdid_large, eclass
 				quietly tempvar cont
 				qui gen byte `cont' = 0
 
-				* ------------------------------------------------------------
-				* Work variables shared by all (g,t) cells: estimation sample,
-				* propensity sample, and ATT weights. Each cell refreshes them
-				* within its own -in- range.
-				* ------------------------------------------------------------
+				* Shared work variables for cell-level estimation.
 				tempvar __es __ps __w
 				qui gen byte   `__es' = 0
 				qui gen byte   `__ps' = 0
 				qui gen double `__w'  = .
 
-				* ------------------------------------------------------------
-				* Sort by (tvar, id) so that each calendar period t is a contiguous
-				* block of rows (in id order). Commands in cell (g,t) use
-				* -in lo/hi- for that block only. __lo_k/__hi_k store the first
-				* and last row of period k = t - tmin + 1.
-				* ------------------------------------------------------------
+				* Sort by time and ID for efficient cell-specific estimation.
 				sort `tvar' `id'
 				mata: __lw_tv = st_data(., "`tvar'")
 				forval t = `tmin'/`tmax' {
@@ -1807,19 +1957,24 @@ program define lwdid_large, eclass
 				capture mata: mata drop __lw_tv
 				capture mata: mata drop __lw_s
 
-				* ------------------------------------------------------------
-				* Cell IFs are stored as cluster sums:
-				*   __lw_C[c, k] = sum of the cell-k IF over observations in cluster c.
-				* The cell SE and the cluster wild bootstrap depend on the IF
-				* only through these sums. Preallocated for all possible cells.
-				* ------------------------------------------------------------
+				
+				* Store cell-level IFs as cluster sums for SEs and bootstrap inference.
+				* Preallocate matrices for all potential (g,t) cells.
+
 				qui su `__if_cluster_id' if `touse', meanonly
 				local __n_cl = r(max)
 				local __n_coh : word count `cohorts'
 				local __max_cells = `__n_coh' * (`tmax' - `tmin' + 1)
 				mata: __lw_C = J(`__n_cl', `__max_cells', 0)
+				* __lw_Z[c, k] = number of treated observations of cell k in cluster c
+				* (composition term of the estimated weights); cell_b = ATT(g,t).
+				mata: __lw_Z = J(`__n_cl', `__max_cells', 0)
+				mata: cell_b = J(1, 0, .)
 				mata: cell_g = J(1, 0, .)
 				mata: cell_t = J(1, 0, .)
+				* (event time, compact unit ID, treated flag) for SUCCESSFUL cells only.
+				* These records allow unique-unit counts without adding cell counts.
+				mata: __lw_watt_members = J(0, 3, .)
 				local cell_count = 0
 
 				quietly foreach g of local cohorts {
@@ -1862,9 +2017,9 @@ program define lwdid_large, eclass
 					}
 				}
 
-				quietly count if `touse' & `fvar_`t'' & `cont' & `dvar_g' == 1 `__in'
+				quietly count if `touse' & `fvar_`__ti'' & `cont' & `dvar_g' == 1 `__in'
 				local __nt = r(N)
-				quietly count if `touse' & `fvar_`t'' & `cont' & `dvar_g' == 0 `__in'
+				quietly count if `touse' & `fvar_`__ti'' & `cont' & `dvar_g' == 0 `__in'
 				local __nc = r(N)
 				if (`__nt' == 0 & `__nc' == 0) continue
 				if (`__nt' == 0 | `__nc' == 0) {
@@ -1877,12 +2032,11 @@ program define lwdid_large, eclass
 				* the cell (capture drop also handles ones that were not created).
 				tempvar p_hat_gt uhat
 
-				* ------------------------------------------------------------
+
 				* Propensity score estimation and ATT weights
-				* ------------------------------------------------------------
 				if inlist("`method'", "ipw", "ipwra") {
 
-					cap qui logit `dvar_g' `xlist' if `touse' & `fvar_`t'' & `cont' `__in', nolog
+					cap qui logit `dvar_g' `xlist' if `touse' & `fvar_`__ti'' & `cont' `__in', nolog
 					if _rc != 0 {
 						post `__drop_pf' (`g') (`t') (`r') (2)
 						local ++__n_dropped
@@ -1919,13 +2073,12 @@ program define lwdid_large, eclass
 				* do not depend on vce()).
 				if inlist("`method'", "ipw", "ipwra") local __vce_opt ""
 
-				* ------------------------------------------------------------
+
 				* Point estimation: ATT(g,t)
-				* ------------------------------------------------------------
                 local __reg_rc 0
 				if "`method'" == "ra" {
 					if "`xlist'" == "" {
-						capture quietly regress `yvar' `dvar_g' if `touse' & `fvar_`t'' & `cont' `__in' `__vce_opt'
+						capture quietly regress `yvar' `dvar_g' if `touse' & `fvar_`__ti'' & `cont' `__in' `__vce_opt'
                         local __reg_rc = _rc
 					}
 					else {
@@ -1934,7 +2087,7 @@ program define lwdid_large, eclass
 							local __lwdid_int_list `__lwdid_int_list' c.`dvar_g'#c.`__cx'
 						}
 						capture quietly reg `yvar' `dvar_g' `current_x_list' `__lwdid_int_list' ///
-							if `touse' & `fvar_`t'' & `cont' `__in' `__vce_opt'
+							if `touse' & `fvar_`__ti'' & `cont' `__in' `__vce_opt'
                         local __reg_rc = _rc
 					}
 				}
@@ -1959,7 +2112,7 @@ program define lwdid_large, eclass
 				}
 				else if "`method'" == "psmatch" {
 					capture quietly teffects psmatch (`yvar') (`dvar_g' `xlist') ///
-						if `touse' & `fvar_`t'' & `cont' `__in', atet
+						if `touse' & `fvar_`__ti'' & `cont' `__in', atet
                     local __reg_rc = _rc
 				}
 
@@ -1985,9 +2138,7 @@ program define lwdid_large, eclass
 				}
 				qui replace `__es' = e(sample) `__in'
 
-				* ------------------------------------------------------------
 				* Store point estimate and cell-specific treated size
-				* ------------------------------------------------------------
 				qui tempname b_att se_att tstat_att pval_att crit_att lo_att hi_att
 				if inlist("`method'", "ra", "ipw", "ipwra") {
 					scalar `b_att'  = _b[`dvar_g']
@@ -2002,6 +2153,8 @@ program define lwdid_large, eclass
 
 				qui count if `__es' & `dvar_g' == 1 `__in'
 				local Ngt = r(N)
+				qui count if `__es' & `dvar_g' == 0 `__in'
+				local N_control = r(N)
 				* Post only after the IF for this cell has passed all diagnostics.
 
 				* ------------------------------------------------------------
@@ -2045,13 +2198,9 @@ program define lwdid_large, eclass
 					* treatment column of (Z*ZZinv):*u
 					mata: __lw_ifs = (Z * ZZinv[., att_pos]) :* u
 
-					* Sampling variation of the treated covariate mean.
-					*   The coefficient on D evaluates mu1(x)-mu0(x) at the treated
-					*   mean of X; the ATT averages over the treated sample (as in
-					*   teffects ra/ipwra, atet), so the IF includes
-					*   D_i * (Xc_i - xbar1)' * delta / n1,
-					*   delta = coefficients on D#Xc (0 if omitted).
-					*   e(b) order: D, Xc (K), D#Xc (K), _cons.
+					* Add sampling variation of the treated covariate mean (as in
+					* teffects atet): D_i*(Xc_i - xbar1)'*delta/n1, where delta =
+					* coefficients on D#Xc, i.e., elements K+2 to 2K+1 of e(b).
 					if "`xlist'" != "" {
 						mata: __lw_b  = st_matrix("e(b)")
 						mata: __lw_K  = cols(Xc)
@@ -2064,12 +2213,9 @@ program define lwdid_large, eclass
 				}
 				else if "`method'" == "ipw" {
 
-					* Influence contribution for the EXACT normalized IPW point estimator:
-					* ATT = sum(D*Y)/sum(D) - sum(q*Y)/sum(q),
-					* q = (1-D)*p/(1-p).
-					* Includes the normalization of both sample means and the
-					* first-stage logit score correction. Contributions include
-					* their sample-size scaling: do NOT divide again by N.
+					* IF of the normalized IPW ATT, sum(D*Y)/sum(D) - sum(q*Y)/sum(q),
+					* q = (1-D)*p/(1-p), including the logit-score correction.
+					* Contributions are already scaled: do not divide by N.
 					mata: y = st_data(idx, "`yvar'")
 					mata: d = st_data(idx, "`dvar_g'")
 					mata: p = st_data(idx, "`p_hat_gt'")
@@ -2192,9 +2338,8 @@ program define lwdid_large, eclass
 						* treatment column of (M + IFg*H')*Qwinv
 						mata: __lw_ifs = (M + IFg * H') * Qwinv[., att_pos]
 
-						* Sampling variation of the treated covariate mean
-						*   (same term as in RA; treated weights are 1 in IPWRA-ATT).
-						*   e(b) order: D, Xc (K), D#Xc (K), _cons.
+						* Add sampling variation of the treated covariate mean (as in RA).
+						* e(b) order: D, Xc (K), D#Xc (K), _cons.
 						mata: __lw_b  = st_matrix("e(b)")
 						mata: __lw_K  = cols(Xc)
 						mata: __lw_dl = __lw_b[|1, __lw_K+2 \ 1, 2*__lw_K+1|]
@@ -2205,11 +2350,7 @@ program define lwdid_large, eclass
 					}
 				}
 
-				* ------------------------------------------------------------
-				* Cell IF -> cluster sums. The same sums give (i) the IPW/IPWRA
-				* cell SE and (ii) this cell's column of __lw_C for the WATT wild
-				* bootstrap. Missing IF values are set to 0.
-				* ------------------------------------------------------------
+				* Aggregate cell IFs by cluster for SEs and WATT bootstrap.
 				mata: __lw_ifs  = editmissing(__lw_ifs, 0)
 				mata: __lw_cl   = st_data(idx, "`__if_cluster_id'")
 				mata: __lw_o    = order(__lw_cl, 1)
@@ -2246,6 +2387,8 @@ program define lwdid_large, eclass
 				* Store this cell's cluster sums
 				local cell_count = `cell_count' + 1
 				mata: __lw_C[__lw_cls[__lw_info[., 1]], `cell_count'] = __lw_S
+				mata: __lw_Z[__lw_cls[__lw_info[., 1]], `cell_count'] = panelsum(st_data(idx, "`dvar_g'")[__lw_o], __lw_info)
+				mata: cell_b = cell_b, st_numscalar("`b_att'")
 				mata: cell_g = cell_g, `g'
 				mata: cell_t = cell_t, `t'
 
@@ -2256,7 +2399,12 @@ program define lwdid_large, eclass
 						capture drop `p_hat_gt'
 					}
 
-					post `pf' (`g') (`t') (`r') (`b_att') (`se_att') (`tstat_att') (`pval_att') (`lo_att') (`hi_att') (`Ngt')
+					* Record original unit IDs actually in THIS cell regression sample.
+					* Only reached for cells that passed all estimation/IF checks.
+					mata: __lw_mm = st_data((`__lo_`__ti''::`__hi_`__ti''), ("`__es'", "`id'", "`dvar_g'"))
+					mata: __lw_mm = select(__lw_mm, __lw_mm[,1] :== 1)
+					mata: __lw_watt_members = __lw_watt_members \ (J(rows(__lw_mm),1,`r'), __lw_mm[,2], __lw_mm[,3])
+					post `pf' (`g') (`t') (`r') (`b_att') (`se_att') (`tstat_att') (`pval_att') (`lo_att') (`hi_att') (`Ngt') (`N_control')
 				}
 						}
 							postclose `pf'
@@ -2296,12 +2444,12 @@ program define lwdid_large, eclass
 						forvalues __i = 1/`__N_attgt' {
 							if cohort[`__i'] == `__g' {
 								di as txt _col(5)  %6.0f time[`__i'] ///
-									as res _col(14) %12.7f att[`__i'] ///
-									as res _col(29) %12.7f se[`__i'] ///
-									as res _col(44) %12.7f tstat[`__i'] ///
-									as res _col(58) %10.7f pval[`__i'] ///
-									as res _col(73) %12.7f lower_ci[`__i'] ///
-									as res _col(87) %12.7f upper_ci[`__i']
+									as res _col(14) %9.0g att[`__i'] ///
+									as res _col(29) %9.0g se[`__i'] ///
+									as res _col(44) %8.2f tstat[`__i'] ///
+									as res _col(58) %7.3f pval[`__i'] ///
+									as res _col(73) %9.0g lower_ci[`__i'] ///
+									as res _col(87) %9.0g upper_ci[`__i']
 							}
 						}
 					}
@@ -2332,9 +2480,12 @@ program define lwdid_large, eclass
 			egen byte `tag' = tag(ryear cohort)
 			bys ryear: egen N_cohort = total(`tag')
 			bys ryear: egen N_units  = total(Ngt)
+			bys ryear: egen double N_unt = total(N_control)
+			gen double N_tr = N_units
+			gen double N_total = N_tr + N_unt
 			gen double weight = Ngt / N_units
 			duplicates drop ryear cohort, force
-			keep ryear cohort time Ngt N_units weight
+			keep ryear cohort time Ngt N_control N_tr N_unt N_total N_units weight
 			save "`WATT_weights'", replace
 			restore
 
@@ -2351,10 +2502,13 @@ program define lwdid_large, eclass
 			qui egen byte `tag' = tag(ryear cohort)
 			bys ryear: egen N_cohort = total(`tag')
 			bys ryear: egen N_units  = total(Ngt)
+			bys ryear: egen double N_unt = total(N_control)
+			gen double N_tr = N_units
+			gen double N_total = N_tr + N_unt
 			gen double weight = Ngt / N_units
 			gen double w_att  = weight * att
 			duplicates drop ryear cohort, force
-			collapse (sum) watt = w_att (sum) weight (first) N_cohort N_units, by(ryear)
+			collapse (sum) watt = w_att (sum) weight (first) N_cohort N_units N_tr N_unt N_total, by(ryear)
 			sort ryear
 			qui save "`WATT_point'", replace
 			restore
@@ -2376,12 +2530,15 @@ program define lwdid_large, eclass
 			replace avg_type = 2 if ryear >= 0
 			keep if inlist(avg_type,1,2)
 			bys avg_type: egen double N_units = total(Ngt)
+			bys avg_type: egen double N_unt = total(N_control)
+			gen double N_tr = N_units
+			gen double N_total = N_tr + N_unt
 			bys avg_type: gen long N_cells = _N
 			gen double weight = Ngt / N_units
 			gen double w_att  = weight * att
 				* Save cell weights before collapsing. Do not use nested preserve here.
 				qui save "`AVG_weights'", replace
-			collapse (sum) watt = w_att (sum) weight (first) N_cells N_units, by(avg_type)
+			collapse (sum) watt = w_att (sum) weight (first) N_cells N_units N_tr N_unt N_total, by(avg_type)
 			gen str8 effect = cond(avg_type==1, "Pre_avg", "Post_avg")
 			sort avg_type
 			qui save "`AVG_point'", replace
@@ -2438,6 +2595,9 @@ program define lwdid_large, eclass
                 // cluster-level cell IFs (n_clusters x n_cells)
                 IFc    = __lw_C[|1,1 \ rows(__lw_C), n_cells_m|]
                 __lw_C = J(0, 0, .)
+                Zc     = __lw_Z[|1,1 \ rows(__lw_Z), n_cells_m|]
+                __lw_Z = J(0, 0, .)
+                cellif_m = `__cellif'
 
                 // --- cell -> event-time weights; aggregated IF = IFc * Wr
                 Wr = J(n_cells_m, n_vr, 0)
@@ -2463,7 +2623,19 @@ program define lwdid_large, eclass
                 }
                 IF_r = IFc * Wr
 
-                // --- Pre_avg and Post_avg weights
+                * --- Composition adjustment for estimated weights (omitted with cellif).
+                if (!cellif_m) {
+                    for (rv=1; rv<=n_vr; rv++) {
+                        for (k=1; k<=n_cells_m; k++) {
+                            if (Wr[k, rv] == 0) continue
+                            nk = colsum(Zc[., k])
+                            if (nk <= 0 | cell_b[1, k] >= .) continue
+                            IF_r[., rv] = IF_r[., rv] + Zc[., k] * (Wr[k, rv] * (cell_b[1, k] - WATT_pmat[rv, 2]) / nk)
+                        }
+                    }
+                }
+
+                * --- Pre_avg and Post_avg weights
                 n_avg = rows(AVG_pmat)
                 Wa = J(n_cells_m, n_avg, 0)
 
@@ -2486,10 +2658,18 @@ program define lwdid_large, eclass
                     }
                 }
                 IF_avg = IFc * Wa
+                if (!cellif_m) {
+                    for (av=1; av<=n_avg; av++) {
+                        for (k=1; k<=n_cells_m; k++) {
+                            if (Wa[k, av] == 0) continue
+                            nk = colsum(Zc[., k])
+                            if (nk <= 0 | cell_b[1, k] >= .) continue
+                            IF_avg[., av] = IF_avg[., av] + Zc[., k] * (Wa[k, av] * (cell_b[1, k] - AVG_pmat[av, 2]) / nk)
+                        }
+                    }
+                }
 
-                // --- Centering: identical to centering the obs-level IF over the
-                //     Nobs estimation-sample rows. Cluster sum of (IF_i - mean) =
-                //     (cluster sum of IF_i) - n_c * mean, with mean = colsum / Nobs.
+                * --- Center cluster IF sums, equivalent to observation-level mean centering.
                 IF_r = IF_r :- __lw_nc * (colsum(IF_r) / Nobs_m)
                 if (n_avg > 0) {
                     IF_avg = IF_avg :- __lw_nc * (colsum(IF_avg) / Nobs_m)
@@ -2498,9 +2678,8 @@ program define lwdid_large, eclass
                 reps_m = `reps'
                 n_cl   = `n_clusters'
 
-                // --- Star bootstrap draws: only the fluctuation part.
-                //     One Rademacher draw per cluster; the bootstrap sum over
-                //     observations equals xi_cl' * (cluster sums of the IF).
+                * --- Generate bootstrap fluctuations using cluster-level IF sums
+                * and one Rademacher multiplier per cluster.
                 BS_star = J(reps_m, n_vr, .)
                 BS_avg  = J(reps_m, n_avg, .)
 
@@ -2540,8 +2719,6 @@ program define lwdid_large, eclass
                 WATT_pmat = WATT_pmat, WATT_plot
 
 			* --- Bootstrap matrix used for simultaneous event-study bands.
-			*     Both pointwise intervals and simultaneous bands are always computed.
-			*     Pre_avg/Post_avg do not receive simultaneous bands.
                 BS_all = BS_plot
             }
 
@@ -2714,7 +2891,10 @@ program define lwdid_large, eclass
         qui gen double weight = .
         qui gen long N_cells = .
         qui gen double N_units = .
-        qui gen double N_cohort = .
+		qui gen double N_tr = .
+		qui gen double N_unt = .
+		qui gen double N_total = .
+		qui gen double N_cohort = .
         qui gen double se = .
         qui gen double lower_ci = .
         qui gen double upper_ci = .
@@ -2733,7 +2913,7 @@ program define lwdid_large, eclass
         }
 	        * Bring in the N of contributing cells/units for Pre_avg and Post_avg.
 	        qui gen byte avg_type = cond(effect=="Pre_avg",1,cond(effect=="Post_avg",2,.))
-	        qui merge m:1 avg_type using "`AVG_point'", nogen update replace keepusing(N_cells N_units)
+	        qui merge m:1 avg_type using "`AVG_point'", nogen update replace keepusing(N_cells N_units N_tr N_unt N_total)
 	        qui drop avg_type
 
         qui append using "`__WATT_event'"
@@ -2794,7 +2974,7 @@ program define lwdid_large, eclass
 			qui replace `hi_disp'   = . if `anchor'
 
 		di as txt "{hline 93}"
-		di as txt _col(2)  "effect" ///
+		di as txt _col(2)  "r" ///
 			_col(13) "WATT" ///
 			_col(25) "Std. err." ///
 			_col(38) "t" ///
@@ -2809,12 +2989,12 @@ program define lwdid_large, eclass
 		forvalues __i = 1/`__N_display' {
 			if is_avg[`__i'] == 0 {
 		di as txt _col(2)  %7s effect[`__i'] ///
-			as res _col(11) %10.7f `watt_disp'[`__i'] ///
-			as res _col(23) %10.7f `se_disp'[`__i'] ///
-			as res _col(35) %10.7f `t_disp'[`__i'] ///
-			as res _col(47) %9.7f  `p_disp'[`__i'] ///
-			as res _col(59) %10.7f `lo_disp'[`__i'] ///
-			as res _col(71) %10.7f `hi_disp'[`__i'] ///
+			as res _col(11) %9.0g `watt_disp'[`__i'] ///
+			as res _col(23) %9.0g `se_disp'[`__i'] ///
+			as res _col(35) %8.2f `t_disp'[`__i'] ///
+			as res _col(47) %7.3f  `p_disp'[`__i'] ///
+			as res _col(59) %9.0g `lo_disp'[`__i'] ///
+			as res _col(71) %9.0g `hi_disp'[`__i'] ///
 			as txt _col(85) %7s __Ncells_disp[`__i']
 			}
 		}
@@ -2835,12 +3015,12 @@ program define lwdid_large, eclass
 		forvalues __i = 1/`__N_display' {
 			if is_avg[`__i'] == 1 {
 				di as txt _col(2)  %8s effect[`__i'] ///
-					as res _col(11) %10.7f watt[`__i'] ///
-					as res _col(23) %10.7f se[`__i'] ///
-					as res _col(35) %10.7f t_stat[`__i'] ///
-					as res _col(47) %9.7f  p_value[`__i'] ///
-					as res _col(59) %10.7f low_ci[`__i'] ///
-					as res _col(71) %10.7f up_ci[`__i']
+					as res _col(11) %9.0g watt[`__i'] ///
+					as res _col(23) %9.0g se[`__i'] ///
+					as res _col(35) %8.2f t_stat[`__i'] ///
+					as res _col(47) %7.3f  p_value[`__i'] ///
+					as res _col(59) %9.0g low_ci[`__i'] ///
+					as res _col(71) %9.0g up_ci[`__i']
 			}
 		}
 
@@ -2853,6 +3033,8 @@ program define lwdid_large, eclass
 		else {
 			di as txt "Current run: {bf:pointwise `level'% confidence intervals}."
 		}
+		if `__cellif' di as txt "Inference: cohort-size weights held fixed in the IF (cellif; as in Lee and Wooldridge 2026a)."
+		else          di as txt "Inference: IF includes the composition term of the estimated cohort-size weights (use {bf:cellif} for the fixed-weight IF)." 
 		* --- Concise exclusion warning AFTER the WATT and average ATT tables.
 		if `__n_dropped' > 0 {
 			di as err _n "Warning: Some ATT(g,t) estimates were excluded."
@@ -2978,9 +3160,10 @@ program define lwdid_large, eclass
                     xtitle("Time to Treatment (r)") ///
                     ytitle("`yttl'") ///
                     title(`"`title'"') ///
-                    xlabel(`xmin'(`xstep')`xmax' 0, labsize(small)) ///
-                    ylabel(`ymin'(`ystep')`ymax', format(%9.2f)) ///
+                    xlabel(`xmin'(`xstep')`xmax' 0, labsize(small) nogrid) ///
+                    ylabel(`ymin'(`ystep')`ymax', format(%9.2f) nogrid) ///
                     legend(off) ///
+                    graphregion(color(white)) plotregion(color(white)) ///
                     scheme(`scheme') ///
                     `gopts'
         }
@@ -2992,12 +3175,12 @@ program define lwdid_large, eclass
 				qui keep effect ryear ///
 					watt se t_stat p_value ///
 					low_ci up_ci low_band up_band ///
-					N_cells N_units
+					N_cells N_units N_tr N_unt N_total
 
 				qui order effect ryear ///
 					watt se t_stat p_value ///
 					low_ci up_ci low_band up_band ///
-					N_cells N_units
+					N_cells N_units N_tr N_unt N_total
 
 				format watt se t_stat low_ci up_ci low_band up_band %10.0g
 				format p_value %5.3f
@@ -3011,12 +3194,12 @@ program define lwdid_large, eclass
 				qui keep effect ryear ///
 					watt se t_stat p_value ///
 					low_ci up_ci ///
-					N_cells N_units
+					N_cells N_units N_tr N_unt N_total
 
 				qui order effect ryear ///
 					watt se t_stat p_value ///
 					low_ci up_ci ///
-					N_cells N_units
+					N_cells N_units N_tr N_unt N_total
 
 				format watt se t_stat low_ci up_ci %10.0g
 				format p_value %5.3f
@@ -3026,9 +3209,32 @@ program define lwdid_large, eclass
 			}
 
 			label var N_cells "Number of group-time cells contributing to estimate"
-			label var N_units "Total unit count across cells contributing to estimate"
+			label var N_units "Treated unit contributions (legacy name; sum over ATT cells)"
+			label var N_tr "Treated unit contributions across ATT(g,t) cells"
+			label var N_unt "Untreated (never-/not-yet-treated) unit contributions across ATT(g,t) cells"
+			label var N_total "Total treated + untreated unit contributions across ATT cells"
 
 			qui save "`save'", replace
+
+			* Save companion ATT(g,t) dataset ONLY when attgt is requested.
+			* Counts use the ACTUAL cell estimation e(sample), not potential-eligibility counts.
+			if "`attgt'" != "" {
+			qui use "`ATTfile'", clear
+			qui keep if !missing(att)
+			qui gen long N_tr = Ngt
+			qui rename N_control N_unt
+			qui gen long N_total = N_tr + N_unt
+			qui keep cohort time ryear att se tstat pval lower_ci upper_ci N_tr N_unt N_total
+			qui order cohort time ryear att se tstat pval lower_ci upper_ci N_tr N_unt N_total
+			label var N_tr "Treated units actually used in cell ATT(g,t)"
+			label var N_unt "Untreated comparison units (never-/not-yet-treated) used in cell ATT(g,t)"
+			label var N_total "Total units actually used in cell ATT(g,t)"
+			local __gt_save = "`save'"
+			if regexm(lower("`__gt_save'"), "[.]dta$") {
+				local __gt_save = substr("`__gt_save'", 1, length("`__gt_save'")-4)
+			}
+			qui save "`__gt_save'_attgt.dta", replace
+			}
 		}	
 			restore
 
@@ -3056,14 +3262,10 @@ program define lwdid_large, eclass
 				}
 			}
 
-			* --- Matrix of cell-level results: e(ATTgt)
-			* One row per successfully estimated ATT(g,t) cell, including
-			* pre-treatment cells (t < g). Excluded cells are in e(ATTgt_dropped).
-			* Columns: cohort time ryear att se Ngt
-			* Cell ATT(g,t) estimates are NOT in e(b); e(b) holds only Pre_avg,
-			* Post_avg and the event-study WATT(r) (Rm#, Rp#). Use e(ATTgt) to
-			* retrieve individual cell estimates.
-			tempname __lwdid_gt __lwdid_watt __lwdid_wattvar
+			* --- e(attgt): one row per estimated ATT(g,t) cell (incl. t < g);
+			*     columns: cohort time ryear att se N_tr N_unt N_total.
+			*     Excluded cells are in e(attgt_dropped); e(b) holds only the aggregates.
+			tempname __lwdid_gt __lwdid_watt __lwdid_wattvar __lwdid_wattmeta
 			quietly {
 				preserve
 				use "`ATTfile'", clear
@@ -3072,12 +3274,13 @@ program define lwdid_large, eclass
 				count
 				local __lwdid_ngt = r(N)
 				if `__lwdid_ngt' > 0 {
-					mkmat cohort time ryear att se Ngt, matrix(`__lwdid_gt')
-					matrix colnames `__lwdid_gt' = cohort time ryear att se Ngt
+					gen double N_total = Ngt + N_control
+					mkmat cohort time ryear att se Ngt N_control N_total, matrix(`__lwdid_gt')
+					matrix colnames `__lwdid_gt' = cohort time ryear att se N_tr N_unt N_total
 				}
 				restore
 			}
-            tempname __lwdid_dropped __lwdid_used
+            tempname __lwdid_dropped
             if `__n_dropped' > 0 {
                 quietly {
                     preserve
@@ -3088,19 +3291,33 @@ program define lwdid_large, eclass
                     restore
                 }
             }
+            * WATT: distinct contributing treated / comparison unit IDs per r.
+            * A unit is counted once per r and role even if used in several cells.
             quietly {
                 preserve
                 use "`WATT_point'", clear
                 sort ryear
-                mkmat ryear N_cohort, matrix(`__lwdid_used')
-                matrix colnames `__lwdid_used' = ryear N_cohorts_used
+                mkmat ryear N_cohort, matrix(`__lwdid_wattmeta')
                 restore
             }
-			* WATT(r): relative time, plotted/normalized WATT, bootstrap SE.
-			* This matches the event-study coefficients in e(b).
-			mata: st_matrix("`__lwdid_wattvar'", sqrt(diagonal(variance(BS_plot))))
-			mata: st_matrix("`__lwdid_watt'", (WATT_pmat[,1], WATT_pmat[,3], st_matrix("`__lwdid_wattvar'")))
-			matrix colnames `__lwdid_watt' = ryear watt se
+            mata {
+                __lw_wm = st_matrix("`__lwdid_wattmeta'")
+                __lw_wu = J(rows(__lw_wm), 2, 0)
+                if (rows(__lw_watt_members)) {
+                    __lw_watt_members = uniqrows(sort(__lw_watt_members, (1,2,3)))
+                    for (__lw_k=1; __lw_k<=rows(__lw_wm); __lw_k++) {
+                        __lw_sub = select(__lw_watt_members, __lw_watt_members[,1] :== __lw_wm[__lw_k,1])
+                        if (rows(__lw_sub)) {
+                            __lw_wu[__lw_k,1] = sum(__lw_sub[,3] :== 1)
+                            __lw_wu[__lw_k,2] = sum(__lw_sub[,3] :== 0)
+                        }
+                    }
+                }
+                st_matrix("`__lwdid_wattmeta'", (__lw_wm, __lw_wu))
+            }
+            mata: st_matrix("`__lwdid_wattvar'", sqrt(diagonal(variance(BS_plot))))
+            mata: st_matrix("`__lwdid_watt'", (WATT_pmat[,1], WATT_pmat[,3], st_matrix("`__lwdid_wattvar'"), st_matrix("`__lwdid_wattmeta'")[,2..4]))
+            matrix colnames `__lwdid_watt' = ryear watt se N_cohorts N_unique_tr N_unique_unt
 
 			* --- Standard e-class coefficients: average ATT and event-study WATT.
 			* Wild-bootstrap covariance includes cross-covariances, not only SEs.
@@ -3122,16 +3339,17 @@ program define lwdid_large, eclass
 			matrix colnames `__lwdid_V' = `__lwdid_names'
 			matrix rownames `__lwdid_V' = `__lwdid_names'
 			ereturn post `__lwdid_b' `__lwdid_V', depname(`y')
-			if `__lwdid_ngt' > 0 ereturn matrix ATTgt = `__lwdid_gt'
-            if `__n_dropped' > 0 ereturn matrix ATTgt_dropped = `__lwdid_dropped'
+			if `__lwdid_ngt' > 0 ereturn matrix attgt = `__lwdid_gt'
+
+            if `__n_dropped' > 0 ereturn matrix attgt_dropped = `__lwdid_dropped'
             ereturn scalar N_dropped = `__n_dropped'
-            ereturn matrix N_cohorts_used = `__lwdid_used'
-			ereturn matrix WATT = `__lwdid_watt'
+			ereturn matrix watt = `__lwdid_watt'
 			ereturn scalar N_attgt = `__lwdid_ngt'
 			ereturn local cmd "lwdid"
 			ereturn local depvar "`y'"
 			ereturn local rolling "`rolling'"
 			ereturn local method "`method'"
+			ereturn local ifagg = cond(`__cellif', "cell", "composition")
 			ereturn local controls "`xlist'"
 			ereturn scalar reps = `reps'
 			forvalues __j = 1/`n_avg' {
@@ -3169,13 +3387,14 @@ program define lwdid_large, eclass
 						
 			quietly {
 				* Free Mata objects created during estimation
-				foreach __m in IF_r IF_avg IFc Wr Wa __lw_C __lw_clv __lw_nc ///
+				foreach __m in IF_r IF_avg IFc Wr Wa __lw_C __lw_Z Zc cell_b cellif_m nk __lw_clv __lw_nc ///
 					cell_g cell_t Wmat Wavgmat WATT_pmat AVG_pmat ///
 					BS_star BS_avg BS_plot BS_all WATT_plot ///
 					n_vr n_vr_sc n_avg n_avg_sc Nobs_m n_cells_m ///
 					T_star T_sort se_vec ///
 					__lw_rng __lw_ifs __lw_cl __lw_o __lw_cls __lw_info __lw_S __lw_G ///
-					__lw_b __lw_K __lw_dl __lw_n1 __lw_xm {
+					__lw_b __lw_K __lw_dl __lw_n1 __lw_xm ///
+                    __lw_watt_members __lw_mm __lw_wm __lw_wu __lw_sub __lw_k {
 					capture mata: mata drop `__m'
 				}
 			}

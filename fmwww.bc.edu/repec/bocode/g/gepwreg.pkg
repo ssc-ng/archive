@@ -1,0 +1,50 @@
+d 'GEPWREG': module for percentile weights regression: the effect of the covariates at a quantile of the outcome
+d
+d  gepwreg estimates the effect of the covariates on an outcome for
+d the units located at a target quantile of the outcome, at the
+d initial quantile (the outcome before the contribution of chosen
+d covariates), or along the rank of an observed covariate, with the
+d percentile weights of Araar (2016): Gaussian kernel weights on
+d the percentile scale. The effect at a quantile of the outcome is
+d estimated in two steps: unit-level effects from a heterogeneity
+d model fitted on the whole sample (a conditional quantile
+d regression, or interactions with observed variables) are averaged
+d with the percentile weights on the rank of the outcome, and the
+d estimator converges to the unconditional quantile partial effect.
+d Standard errors come from the influence function of the whole
+d procedure, with Taylor linearisation under a complex survey
+d design declared by svyset, or from a bootstrap that re-runs the
+d whole procedure; the bandwidth is the MSE-optimal plug-in. ref()
+d gives the effect for a given household, which holds the
+d composition of the group at the quantile fixed, and graph() draws
+d the profile of the effects across percentiles with a simultaneous
+d confidence band and a test that the effect is constant across
+d percentiles. merr corrects the interaction model for classical
+d measurement error in the heterogeneity variables. gepwreg_setable
+d compares the standard errors; a dialog box is included, and the
+d examples of the help run from clickable links (gepwreg_examples).
+d The paper that documents the estimators is included as an
+d ancillary file (gepwreg_paper.pdf). 
+d
+d KW:  percentile weights regression
+d KW: unconditional quantile partial effect
+d KW: quantile regression
+d KW: heterogeneous effects
+d KW: survey design
+d KW: influence function
+d KW: bandwidth selection
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261005
+d
+d Author: Abdelkrim Araar,  Universite Laval 
+d Support: email aabd@@ecn.ulaval.ca
+d
+f gepwreg.ado
+f gepwreg.dlg
+f gepwreg.sthlp
+f gepwreg_examples.ado
+f gepwreg_paper.pdf
+f gepwreg_setable.ado
+f ../b/bkf98I.dta

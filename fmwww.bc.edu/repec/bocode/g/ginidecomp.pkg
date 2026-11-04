@@ -1,0 +1,26 @@
+d 'GINIDECOMP': module to decompose the Gini coefficient by population subgroups
+d
+d  The ginidecomp command calculates the Gini coefficient and
+d decomposes it into within-group and between-group inequality
+d terms. The decomposition follows the methodology introduced in
+d Heikkuri and Schief (2024). 
+d
+d KW: Gini coefficient
+d KW: decomposition
+d KW: inequality
+d
+d Requires: Stata version 10
+d
+d Distribution-Date: 20251118
+d
+d Author:  Vesa-Matti Heikkuri,    Tampere University
+d Support: email vesa-matti.heikkuri@@tuni.fi
+d
+d Author:   Matthias Schief,    Organisation for Economic Co-operation and Development (OECD)
+d Support: email matthias.schief@@oecd.org
+d
+d Author:  Aapo Välimäki, Tampere University
+d Support: aapo.j.valimaki@tuni.fi
+d
+f ginidecomp.ado
+f ginidecomp.sthlp

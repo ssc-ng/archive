@@ -1,0 +1,67 @@
+d 'FREEIV': module for instrument-free estimation of a linear structural model with an endogenous regressor
+d
+d  freeiv estimates the coefficient on an endogenous regressor
+d without an external instrument, in the linear triangular model in
+d which a single latent confounder generates the endogeneity. Under
+d scale consistency -- the confounder moves the outcome directly by
+d exactly as much as it moves it through the regressor -- the
+d second moments of the data leave one number free, and the
+d coefficient lies between half the least-squares slope and that
+d slope: an interval that assumes nothing more and is exactly the
+d set of values for which the implied variances are non-negative.
+d The routes of the command impose the same linear structure on the
+d moments of the next orders: at order three the quadratic moment
+d estimator (the default) and a closed form for symmetric noise; at
+d order four a joint and a profiled GMM, each with a Hansen J, and
+d the region where the profiled J stays within 3.84 of its minimum.
+d A second indicator of the same confounder frees the confounder's
+d direct loading and turns scale consistency into a test. The
+d estimators of Lewbel, Schennach and Zhang (2024) and of Lewbel
+d (2012), the Gaussian copula, the rank control function and the
+d coefficient-stability adjustment of Oster (2019) are computed on
+d the same data and judged by the same interval. Standard errors
+d come from the influence functions of the moments, with pweights
+d in sandwich form and Taylor linearization over a survey design
+d declared by svyset (vce(svy)). Companion commands report what the
+d data can carry before any estimation (freeivmenu), what a value
+d of the coefficient implies about the unobservables (freeivdiag),
+d tests of endogeneity and of the agreement between routes
+d (freeivtest), and all of it in one table (freeivreport); a dialog
+d box is included, and the examples of the help run from clickable
+d links (freeiv_examples). The paper that documents the models and
+d the command is included as an ancillary file (freeiv_paper.pdf). 
+d
+d KW:  endogeneity
+d KW: instrument-free estimation
+d KW: latent confounder
+d KW: higher-order moments
+d KW: partial identification
+d KW: GMM
+d KW: survey design
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261009
+d
+d Author: Abdelkrim Araar,  Universite Laval 
+d Support: email aabd@@ecn.ulaval.ca
+d
+f freeiv.ado
+f freeiv.dlg
+f freeiv.sthlp
+f freeivdiag.ado
+f freeivdiag.sthlp
+f freeivmenu.ado
+f freeivmenu.sthlp
+f freeivreport.ado
+f freeivreport.sthlp
+f freeivtest.ado
+f freeivtest.sthlp
+f freeiv_card.dta
+f freeiv_engine.ado
+f freeiv_examples.ado
+f freeiv_mata.ado
+f freeiv_paper.pdf
+f freeiv_proxy.dta
+f freeiv_sim1.dta
+f freeiv_sim2.dta

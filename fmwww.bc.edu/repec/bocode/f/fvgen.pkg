@@ -1,0 +1,40 @@
+d 'FVGEN': module to flatten factor-variable interactions into labeled main-effect and product variables
+d
+d  fvgen expands a factor-variable interaction specification, such
+d as i.sex##c.age, into ordinary variables: an indicator for each
+d categorical level (the base level dropped by default) and a
+d product variable for each interaction term, with variable labels
+d built from value labels so that a model fitted on the flattened
+d variables exports as one clean, self-labeled row per coefficient.
+d The flattened model is an exact reparameterization of the native
+d factor-variable model. Options set per-factor reference levels
+d (ref()), materialize every level, mean-center continuous terms
+d before forming products, produce per-group slopes within levels
+d of a variable (simple()), append the base level to main-effect
+d labels, control the name prefix and the interaction label symbol,
+d replace colliding variables, and drop all generated variables.
+d The margins option refits the model with native factor syntax so
+d that margins can be used, optionally storing the clone. Results
+d returned in r() include the effective specification, the counts
+d and names of main-effect, interaction, and generated variables,
+d and the variables ordered for estimation. 
+d
+d KW: factor variables
+d KW: interactions
+d KW: indicator variables
+d KW: dummy variables
+d KW: value labels
+d KW: variable labels
+d KW: regression tables
+d KW: export
+d KW: margins
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261030
+d
+d Author: Timothy P Copeland, Karolinska Institutet
+d Support: email timothy.copeland@@ki.se
+d
+f fvgen.ado
+f fvgen.sthlp

@@ -1,0 +1,26 @@
+d 'FMVARDLURT': module to provide Fourier multivariate ARDL unit-root and cointegration test with any number of covariates and bootstrap critical values
+d
+d   fmvardlurt adds a Fourier approximation of smooth, unknown
+d structural change (Enders and Lee 2012) to the multivariate ARDL 
+d   unit-root test of Sam, McNown, Goh and Goh (2025). 
+d
+d KW: ARDL
+d KW: unit root
+d KW: cointegration
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261018
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f fmvardlurt.ado
+f fmvardlurt.sthlp
+f ../_/_fmvardlurt_display.ado
+f ../_/_fmvardlurt_load.ado
+f ../_/_fmvardlurt_mata.ado
+f fmvardlurt_diag.ado
+f fmvardlurt_example.do
+f fmvardlurt_graph.ado
+f fmvardlurt_p.ado

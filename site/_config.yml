@@ -2,6 +2,8 @@ title: SSC archive
 description: Date-stamped snapshots of the SSC archive, with a browsable list of the packages in each
 
 theme: just-the-docs
+plugins:
+  - ssc-ng-theme
 
 # The site is served from GitHub *project* Pages, i.e. under a path
 # prefix rather than at the host root. `url` is the origin only; the
@@ -16,7 +18,6 @@ repo_url: "https://github.com/ssc-ng/archive"
 pkg_root: "fmwww.bc.edu/repec/bocode"
 
 search_enabled: false
-color_scheme: light
 
 nav_external_links:
   - title: GitHub

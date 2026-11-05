@@ -31,6 +31,22 @@ def read_config():
     return values
 
 
+class SharedThemeTest(unittest.TestCase):
+    """The brand comes only from the ssc-ng-theme gem, so it can't drift here."""
+
+    def test_site_uses_the_gem(self):
+        self.assertIn('gem "ssc-ng-theme"', (REPO / "site/Gemfile").read_text())
+        self.assertIn("- ssc-ng-theme", CONFIG.read_text())
+
+    def test_config_sets_no_brand_values(self):
+        self.assertNotRegex(CONFIG.read_text(), r"(?m)^(color_scheme|logo):")
+
+    def test_custom_styles_have_no_brand_values(self):
+        css = (REPO / "site/_sass/custom/custom.scss").read_text()
+        for value in ("#123a63", "18,58,99", "ui-monospace", "--navy", "--accent", "#6f8fb3", "#cfdcea", "#dce7f2"):
+            self.assertNotIn(value, css)
+
+
 class ConfigTest(unittest.TestCase):
     def test_url_is_origin_and_baseurl_is_prefix(self):
         c = read_config()

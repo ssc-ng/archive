@@ -61,20 +61,10 @@ where the date `2021-12-21` corresponds to an existing tag.
 
 ## How the mirror is created
 
-See [mirror.repec.sh](https://github.com/ssc-ng/archive/blob/main/mirror.repec.sh).
-The process can take up to 60 minutes. The downloaded mirror is in the
-[releases branch](https://github.com/ssc-ng/archive/tree/releases).
+See [notes in Github repository](https://github.com/ssc-ng/archive/).
 For known gaps and errors, see the
 [ERRATA](https://github.com/ssc-ng/archive/blob/main/ERRATA.md).
 
-## How to clone this repository
-
-This repository can get big (over 20,000 objects, approx. 320 MB for a shallow
-clone). If cloning to your local workspace, use a "shallow" clone:
-
-```bash
-git clone --depth 1 https://github.com/ssc-ng/archive.git
-```
 
 ## License
 

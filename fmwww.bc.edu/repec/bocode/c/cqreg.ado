@@ -1,7 +1,15 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 
 program define cqreg, eclass
     version 14.1
+
+    if replay() {
+        if "`e(cmd)'" != "cqreg" error 301
+        syntax [, Level(cilevel) *]
+        _get_diopts diopts, `options'
+        _cqreg_display, level(`level') `diopts'
+        exit
+    }
 
     * Start wall clock timer (must be before any work for accurate rmsg match)
     quietly _ctools_clock __ct_lap99
@@ -19,8 +27,12 @@ program define cqreg, eclass
     * Capture full command line before parsing
     local cmdline "cqreg `0'"
 
-    syntax varlist(min=2 numeric fv) [if] [in], [Quantile(real 0.5) Absorb(varlist) ///
-        VCE(string) DENmethod(string) BWmethod(string) Verbose TOLerance(real 1e-12) MAXiter(integer 200) NOPReprocess(integer 0) THReads(integer 0)]
+    syntax varlist(min=1 numeric fv) [if] [in], [Quantile(real 0.5) Absorb(varlist) ///
+        VCE(string) DENmethod(string) BWmethod(string) Verbose TOLerance(real 1e-12) MAXiter(integer 200) NOPReprocess(integer 0) THReads(integer 0) ///
+        Level(cilevel) NOLOg LOg *]
+    * qreg's display options; nolog and log are accepted (cqreg prints no
+    * iteration log)
+    _get_diopts diopts, `options'
 
     * Least-squares partialling is not valid for the quantile-loss objective.
     if "`absorb'" != "" {
@@ -49,41 +61,6 @@ program define cqreg, eclass
 
     * Mark sample
     marksample touse
-
-    * Parse variable list
-    gettoken depvar indepvars : varlist
-
-    * Expand factor variables to temporary numeric variables
-    * This handles i.varname, c.varname, etc.
-    if "`indepvars'" != "" {
-        * Expand factor variables to temp numeric vars
-        fvrevar `indepvars' if `touse'
-        local __indepvars_all "`r(varlist)'"
-
-        * Get coefficient names (same count as fvrevar, one per level)
-        fvexpand `indepvars' if `touse'
-        local coef_names_all "`r(varlist)'"
-
-        * Base/omitted placeholders are not sent to the plugin, which also
-        * detects collinearity (detect_collinearity)
-        _ctools_fvsplit, names(`coef_names_all') vars(`__indepvars_all')
-        local indepvars_expanded "`r(vars)'"
-        local coef_names "`r(names)'"
-        local coef_is_base "`r(base)'"
-
-        * Build expanded varlist for plugin (only non-base vars)
-        local varlist_expanded "`depvar' `indepvars_expanded'"
-    }
-    else {
-        local indepvars_expanded ""
-        local varlist_expanded "`depvar'"
-        local coef_names ""
-        local coef_names_all ""
-        local coef_is_base ""
-    }
-
-    local nvars : word count `varlist_expanded'
-    local K_x = `nvars' - 1  // number of independent variables (after expansion)
 
     * Parse VCE option
     local vcetype = 0   // 0=iid, 1=robust, 2=cluster
@@ -128,6 +105,41 @@ program define cqreg, eclass
             exit 198
         }
     }
+
+    * Parse variable list
+    gettoken depvar indepvars : varlist
+
+    * Expand factor variables to temporary numeric variables
+    * This handles i.varname, c.varname, etc.
+    if "`indepvars'" != "" {
+        * Expand factor variables to temp numeric vars
+        fvrevar `indepvars' if `touse'
+        local __indepvars_all "`r(varlist)'"
+
+        * Get coefficient names (same count as fvrevar, one per level)
+        fvexpand `indepvars' if `touse'
+        local coef_names_all "`r(varlist)'"
+
+        * Base/omitted placeholders are not sent to the plugin, which also
+        * detects collinearity (detect_collinearity)
+        _ctools_fvsplit, names(`coef_names_all') vars(`__indepvars_all')
+        local indepvars_expanded "`r(vars)'"
+        local coef_names "`r(names)'"
+        local coef_is_base "`r(base)'"
+
+        * Build expanded varlist for plugin (only non-base vars)
+        local varlist_expanded "`depvar' `indepvars_expanded'"
+    }
+    else {
+        local indepvars_expanded ""
+        local varlist_expanded "`depvar'"
+        local coef_names ""
+        local coef_names_all ""
+        local coef_is_base ""
+    }
+
+    local nvars : word count `varlist_expanded'
+    local K_x = `nvars' - 1  // number of independent variables (after expansion)
 
     * Parse bandwidth method
     local bwmethod_num = 0  // 0=hsheather, 1=bofinger, 2=chamberlain
@@ -216,7 +228,9 @@ program define cqreg, eclass
 
     * Pre-compute bandwidth in Stata for exact precision match with qreg.
     * Using Stata's invnormal()/normalden() avoids C approximation errors.
-    local __bw_alpha = 0.05
+    * As qreg, the Hall-Sheather and Chamberlain bandwidths use the
+    * confidence level: alpha = 1 - level/100
+    local __bw_alpha = 1 - `level'/100
     local __invtau = invnormal(`quantile')
     local __phi_invtau = normalden(`__invtau')
     local __invtau2 = (`__invtau')^2
@@ -278,6 +292,8 @@ program define cqreg, eclass
 
     * Create matrix to store VCE (plugin will fill __cqreg_V)
     matrix __cqreg_V = J(`K_x' + 1, `K_x' + 1, 0)
+    * and the same covariance in the plugin's scaled response units (rank)
+    matrix __cqreg_Vn = J(`K_x' + 1, `K_x' + 1, 0)
 
     * Call the C plugin with full_regression subcommand
     capture noisily plugin call ctools_plugin `plugin_varlist', ///
@@ -300,6 +316,7 @@ program define cqreg, eclass
     local bandwidth = __cqreg_bandwidth
     local iterations = __cqreg_iterations
     local converged = __cqreg_converged
+    local nonunique = __cqreg_nonunique
 
     * Get number of clusters if cluster VCE
     local num_clusters = 0
@@ -311,12 +328,36 @@ program define cqreg, eclass
     * e(b) and e(V) in qreg's layout: every term in order, with zeros for
     * omitted regressors (o. prefix) and for factor-variable base levels
     tempname b V
-    _ctools_ebv `b' `V', names(`coef_names_all') base(`coef_is_base') ///
-        stub(__cqreg) kkeep(`K_keep') vmatrix(__cqreg_V) cons(__cqreg_cons)
+    if `"`coef_names_all'"' == "" {
+        * constant-only model
+        matrix `b' = (__cqreg_cons)
+        matrix `V' = __cqreg_V
+        matrix colnames `b' = _cons
+        matrix colnames `V' = _cons
+        matrix rownames `V' = _cons
+    }
+    else {
+        _ctools_ebv `b' `V', names(`coef_names_all') base(`coef_is_base') ///
+            stub(__cqreg) kkeep(`K_keep') vmatrix(__cqreg_V) cons(__cqreg_cons)
+    }
     local K_full = colsof(`b')
 
-    * Post results
+    * Assess covariance rank in the plugin's scaled response units (the
+    * spread of y near one), so it does not depend on the units of y. At
+    * extreme scales Stata's ereturn post can discard even a valid
+    * covariance; do not report a successful fit with a zero matrix
+    * substituted by that host check.
+    tempname rank_V rank_scale rank_inverse posted_scale
+    matrix `rank_V' = __cqreg_Vn
+    mata: st_numscalar("`rank_scale'", max(abs(st_matrix("`V'"))))
     ereturn post `b' `V', esample(`touse') depname(`depvar') obs(`N_final')
+    mata: st_numscalar("`posted_scale'", max(abs(st_matrix("e(V)"))))
+    if !missing(`rank_scale') & `rank_scale' > 0 & `posted_scale' == 0 {
+        ereturn clear
+        _ctools_cleanup cqreg
+        di as error "cqreg: Stata cannot post the covariance at this response scale; rescale the dependent variable"
+        exit 498
+    }
 
     * Compute pseudo R-squared
     local r2_p = 1 - `sum_adev' / `sum_rdev'
@@ -324,12 +365,13 @@ program define cqreg, eclass
     * Compute density at quantile (f_r = 1/sparsity)
     local f_r = 1 / `sparsity'
 
-    * df_r for quantile regression
-    local df_r = `N_final' - `K_keep' - 1
-    if `df_r' < 1 local df_r = 1
-
     * Store scalar results (matching qreg)
-    _post_vce_rank
+    matrix `rank_inverse' = invsym(`rank_V')
+    ereturn scalar rank = rowsof(`rank_V') - diag0cnt(`rank_inverse')
+
+    * df_r as qreg: N - e(rank), so directions the VCE zeroes (no density)
+    * do not count
+    local df_r = `N_final' - e(rank)
     ereturn scalar sparsity = `sparsity'
     ereturn scalar bwidth = `bandwidth'
     if `denmethod_num' == 2 {
@@ -347,6 +389,10 @@ program define cqreg, eclass
     ereturn scalar convcode = cond(`converged', 0, 1)
     ereturn scalar iterations = `iterations'
     ereturn scalar r2_p = `r2_p'
+    * 1 when an edge of optimal solutions leaves the reported vertex (other
+    * coefficients attain the same minimum), 0 when none does, missing when
+    * the solver found no basis
+    ereturn scalar nonunique = cond(`nonunique' < 0, ., `nonunique')
 
     if `vcetype' == 2 {
         ereturn scalar N_clust = `num_clusters'
@@ -359,6 +405,7 @@ program define cqreg, eclass
     ereturn local properties "b V"
     ereturn local marginsnotok "stdp stddp residuals"
     ereturn local vce = cond(`vcetype'==0, "iid", cond(`vcetype'==1, "robust", "cluster"))
+    if `vcetype' != 0 ereturn local vcetype "Robust"
     ereturn local denmethod "`denmethod_name'"
     if `denmethod_num' == 2 {
         ereturn local kernel "`kernel_name'"
@@ -370,26 +417,7 @@ program define cqreg, eclass
     }
 
     * Display results (matching qreg format exactly)
-    di as text ""
-
-    * Title line - match qreg exactly
-    if `quantile' == 0.5 {
-        di as text "Median regression" _col(52) "Number of obs =" _col(68) as result %10.0fc `N_final'
-    }
-    else {
-        di as text "`quantile' Quantile regression" _col(52) "Number of obs =" _col(68) as result %10.0fc `N_final'
-    }
-
-    * Raw sum of deviations line - match qreg format
-    di as text "  Raw sum of deviations " as result %-8.6g `sum_rdev' as text " (about " as result %-9.7g `q_v' as text ")"
-
-    * Min sum of deviations line
-    di as text "  Min sum of deviations " as result %-8.6g `sum_adev' _col(52) as text "Pseudo R2     =" _col(68) as result %10.4f `r2_p'
-
-    di as text ""
-
-    * Display coefficient table
-    ereturn display
+    _cqreg_display, level(`level') `diopts'
 
     * Stop wall clock timer (after all work, before display)
     _ctools_lap elapsed __ct_lap99 `__ct_lap99'
@@ -470,6 +498,35 @@ program define cqreg, eclass
     }
 
     _ctools_cleanup cqreg
+end
+
+* Header and coefficient table of the posted results (also on replay)
+program define _cqreg_display
+    syntax [, Level(cilevel) *]
+    di as text ""
+
+    * Title line - match qreg exactly
+    if e(q) == 0.5 {
+        di as text "Median regression" _col(52) "Number of obs =" _col(68) as result %10.0fc e(N)
+    }
+    else {
+        di as text "`=e(q)' Quantile regression" _col(52) "Number of obs =" _col(68) as result %10.0fc e(N)
+    }
+
+    * Raw sum of deviations line - match qreg format
+    di as text "  Raw sum of deviations " as result %-8.6g e(sum_rdev) as text " (about " as result %-9.7g e(q_v) as text ")"
+
+    * Min sum of deviations line
+    di as text "  Min sum of deviations " as result %-8.6g e(sum_adev) _col(52) as text "Pseudo R2     =" _col(68) as result %10.4f e(r2_p)
+
+    di as text ""
+
+    * Display coefficient table
+    ereturn display, level(`level') `options'
+    if e(nonunique) == 1 {
+        di as text "Note: the solution is not unique; other coefficient vectors attain the"
+        di as text "      same minimum sum of deviations."
+    }
 end
 
 * Kernel of denmethod(kernel(name)), with the names and abbreviations of

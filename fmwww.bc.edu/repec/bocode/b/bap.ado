@@ -1,5 +1,6 @@
-*! version 0.21 2024-04-23 Niels Henrik Bruun	
+*! version 0.22 2024-04-23 Niels Henrik Bruun	
 *! Support: Niels Henrik Bruun, niels.henrik.bruun@gmail.com
+*! 2026-11-02 v0.22 Help examples verified
 *! 2026-10-28 v0.21 Bugfix in bapm
 *! 2026-05-18 v0.2 SEM calculating bug is fixed
 *! 2026-04-14 v0.2 SEM calculating bug is fixed

@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0 23 Apr 2024}{...}
+{* *! version 0.23 23 Apr 2024}{...}
 {vieweralsosee "" "--"}{...}
 {viewerjumpto "Syntax" "bap##syntax"}{...}
 {viewerjumpto "Description" "bap##description"}{...}
@@ -86,7 +86,7 @@ The mean measurements with 95% CI, the bias with 95% CI, the SEM, and the LOA li
 {phang}{stata `". bap mini1 mini2"'}{p_end}
 
 {phang}Making a Bland-Altman plot with different marker and line styles:{p_end}
-{phang}{stata `". bap mini1 mini2, name(g1, replace) loa(lp(dot) lc(red) lw(thick)) m(lc(green)) s(mcolor(red))"'}{p_end}
+{phang}{stata `". bap mini1 mini2, name(g1, replace) loal(lp(dot) lc(red) lw(thick)) meanl(lc(green)) s(mcolor(red))"'}{p_end}
 
 {title:Stored results}
 

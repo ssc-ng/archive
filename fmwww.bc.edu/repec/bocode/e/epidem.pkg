@@ -1,0 +1,34 @@
+d 'EPIDEM': module providing suite of tools to detect outbreaks from surveillance data
+d
+d  epidem is a wrapper that provides a unified entry point for
+d related tools: epidem channel – calls channel to construct the
+d endemic channel using the average number of cases and its lower
+d and upper	   historical limits in the corresponding week and
+d adjacent weeks from previous (reference) years as cut points, and
+d classifies	    each week as Baseline, Alarm, Alert, or
+d Epidemic. epidem rregmm – calls rregmm to classify weeks in the
+d evaluation year yeval using robust MM regression fitted to data
+d from	      the ryspan preceding years.  epidem ppvalue – calls
+d ppvalue to estimate, for a user-selected week and year, the
+d posterior probability of a progressive	increase in cases
+d over the next two weeks. 
+d
+d KW: epidemiology
+d KW: surveillance
+d KW: epidemic
+d KW: prevalence
+d
+d Requires: Stata version 10 and robreg from SSC (q.v.)
+d
+d Distribution-Date: 20261104
+d
+d Author:  Leonelo Bautista,  University of Wisconsin at Madison
+d Support: email  lebautista@@wisc.edu
+d
+f epidem.ado
+f epidem.sthlp
+f ../p/ppvalue.ado
+f ../r/rregmm.ado
+f ../c/channel.ado
+f ../d/dengue_rd8.dta
+f epidem_examples.do

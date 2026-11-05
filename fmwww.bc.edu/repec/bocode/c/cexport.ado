@@ -1,4 +1,4 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 
 program define cexport, rclass
     version 14.1
@@ -52,6 +52,14 @@ program define cexport, rclass
     syntax [anything] [using/] [if] [in], [Delimiter(string) NOVARNames QUOTE ///
         NOQUOTEif REPLACE DATAfmt DATEString(string) NOLabel Verbose ///
         MMAP NOFSYNC DIRECT PREFAULT CRLF NOPARALLEL THReads(integer 0)]
+    * The if is evaluated now, as export delimited does, before any helper
+    * replaces the r() or e() results it may name.
+    local iftouse ""
+    if `"`if'"' != "" {
+        tempvar iftouse
+        mark `iftouse' `if' `in'
+        local if "if `iftouse'"
+    }
 
     * Handle filename - can come from using/ or as last positional argument
     if `"`using'"' == "" & `"`anything'"' != "" {
@@ -69,9 +77,7 @@ program define cexport, rclass
     }
     mata: st_local("__basename", pathbasename(st_local("using")))
     if !strpos(`"`__basename'"', ".") local using `"`using'.csv"'
-    * Resolve varlist from anything.
-    * Must happen BEFORE marksample, which creates a touse tempvar
-    * that ds would include in the variable list.
+    * Resolve varlist from anything, leaving out the sample marker.
     if strtrim(`"`anything'"') != "" {
         unab varlist : `anything'
     }
@@ -79,9 +85,7 @@ program define cexport, rclass
         qui ds
         local varlist `r(varlist)'
     }
-
-    * Mark sample
-    marksample touse, novarlist
+    local varlist : list varlist - iftouse
 
     * Validate file
     if "`replace'" == "" {
@@ -111,6 +115,8 @@ program define cexport, rclass
             di as error "cexport: delimiter must be a single character"
             exit 198
         }
+        * A byte token survives whitespace and quote parsing in the dispatcher.
+        mata: st_local("plugin_delim", "byte="+strofreal(ascii(st_local("delimiter"))))
     }
 
     * Handle value labels: decode labeled variables unless nolabel specified
@@ -119,16 +125,20 @@ program define cexport, rclass
     local original_names ""
     * Preformatted string columns, which the writer never quotes
     local formatted_vars ""
+    local ndec 0
     if "`nolabel'" == "" {
         * Default: export value labels
         foreach var of local varlist {
             * Check if variable has a value label attached
             local vallbl : value label `var'
             if "`vallbl'" != "" {
-                * Has value label - decode to temporary string variable
-                tempvar decoded_`var'
-                qui decode `var', gen(`decoded_`var'')
-                qui recast str2045 `decoded_`var''
+                * Has value label - decode to temporary string variable. The
+                * tempvar is named by a counter, so any variable name fits; the
+                * replace statements below widen the decoded str# as needed.
+                local ++ndec
+                tempvar dec`ndec'
+                local dname `dec`ndec''
+                qui decode `var', gen(`dname')
                 local labfmt : format `var'
                 if !(substr("`labfmt'",1,2) == "%t" | substr("`labfmt'",1,3) == "%-t") local labfmt "%18.0g"
                 * Under quote, native export quotes only the label text; a value
@@ -137,12 +147,12 @@ program define cexport, rclass
                 * cells here and mark the column preformatted so the writer
                 * leaves the numeric fallbacks bare.
                 if "`quote'" != "" {
-                    qui replace `decoded_`var'' = char(34) + subinstr(`decoded_`var'', char(34), char(34)+char(34), .) + char(34) if `decoded_`var''!=""
-                    local formatted_vars `formatted_vars' `decoded_`var''
+                    qui replace `dname' = char(34) + subinstr(`dname', char(34), char(34)+char(34), .) + char(34) if `dname'!=""
+                    local formatted_vars `formatted_vars' `dname'
                 }
-                qui replace `decoded_`var'' = strtrim(string(`var',"`labfmt'")) if `decoded_`var''=="" & `var' != .
-                local export_varlist `export_varlist' `decoded_`var''
-                local decoded_vars `decoded_vars' `decoded_`var''
+                qui replace `dname' = strtrim(string(`var',"`labfmt'")) if `dname'=="" & `var' != .
+                local export_varlist `export_varlist' `dname'
+                local decoded_vars `decoded_vars' `dname'
                 local original_names `original_names' `var'
             }
             else {
@@ -168,8 +178,27 @@ program define cexport, rclass
         capture confirm numeric variable `var'
         if !_rc & ("`datafmt'" != "" | `is_time') {
             if `"`datestring'"' != "" & `is_time' local fmt `"`datestring'"'
+            * As export delimited does, a decimal-comma format is written with
+            * a decimal point (%9,2fc as %9.2fc) and only leading blanks
+            * removed; any other comma format loses its thousands separators
+            * and zero padding (%012.0gc as %12.0g), and a left-justified one
+            * is not zero padded (%-08.2f).
+            local trim strtrim
+            if !`is_time' {
+                if strpos("`fmt'", ",") {
+                    local fmt = subinstr("`fmt'", ",", ".", 1)
+                    local trim strltrim
+                }
+                else {
+                    if substr("`fmt'", 1, 3) == "%-0" local fmt = "%-" + substr("`fmt'", 4, .)
+                    if substr("`fmt'", -1, 1) == "c" {
+                        local fmt = substr("`fmt'", 1, length("`fmt'") - 1)
+                        if substr("`fmt'", 1, 2) == "%0" local fmt = "%" + substr("`fmt'", 3, .)
+                    }
+                }
+            }
             tempvar formatted
-            quietly gen `formatted' = cond(`var' == ., "", strtrim(string(`var', `"`fmt'"')))
+            quietly gen `formatted' = cond(`var' == ., "", `trim'(string(`var', `"`fmt'"')))
             local new_export_varlist `new_export_varlist' `formatted'
             local formatted_vars `formatted_vars' `formatted'
         }
@@ -252,8 +281,8 @@ program define cexport, rclass
         local __cexport_name_`metadata_i' : word `metadata_i' of `varlist'
         if "`firstrow'" == "varlabels" {
             local header_var : word `metadata_i' of `varlist'
-            local header_label : variable label `header_var'
-            if `"`macval(header_label)'"' != "" local __cexport_name_`metadata_i' `"`macval(header_label)'"'
+            * Labels may come from someone else's file: Mata only
+            mata: st_local("__cexport_name_`metadata_i'", st_varlabel("`header_var'") != "" ? st_varlabel("`header_var'") : st_local("__cexport_name_`metadata_i'"))
         }
         local __cexport_type_`metadata_i' : word `metadata_i' of `vartypes'
         local __cexport_date_`metadata_i' : word `metadata_i' of `date_cols'
@@ -276,21 +305,14 @@ program define cexport, rclass
     _ctools_strw `export_varlist'
 
     * Stata answers an if one observation at a time. Without one the plugin
-    * skips the check; an if is marked first and passed last, as a sample
-    * marker the plugin reads in parallel, unless in limits the range
-    * (marking covers every observation). The marker is the last variable
-    * until it is dropped after the call, which is then free.
+    * skips the check; the if marked after syntax is passed last, as a
+    * sample marker the plugin reads in parallel.
     local opt_select "skipif"
     local marker ""
-    local ifcond `"`if'"'
-    if `"`if'"' != "" & `"`in'"' == "" {
-        tempvar marker
-        mark `marker' `if'
+    local ifcond ""
+    if `"`if'"' != "" {
+        local marker "`iftouse'"
         local opt_select "touse"
-        local ifcond ""
-    }
-    else if `"`if'"' != "" {
-        local opt_select ""
     }
 
     * Call the C plugin
@@ -300,10 +322,14 @@ program define cexport, rclass
         "cexport `threads_code' `plugin_delim' `opt_replace' `opt_noheader' `opt_quote' `opt_noquoteif' `opt_verbose' `opt_mmap' `opt_nofsync' `opt_direct' `opt_prefault' `opt_crlf' `opt_noparallel' `opt_select'"
 
     local export_rc = _rc
-    if "`marker'" != "" drop `marker'
 
     * Clean up global macros
 
+    * The plugin reports a write-protected destination as r(608)
+    if `export_rc' == 608 {
+        di as error `"file `using' is read-only; cannot be modified or erased"'
+        exit 603
+    }
     if `export_rc' {
         di as error "Error exporting data (rc=`export_rc')"
         exit `export_rc'
@@ -410,20 +436,31 @@ program define cexport_excel, rclass
         REPLACE DATAfmt DATEString(string) NOLabel Verbose ///
         CELL(string) MISSING(string) KEEPCELLfmt THReads(integer 0) ///
         SHEETMODify SHEETREPlace LOCALE(string)]
+    * The if is evaluated now, as export excel does, before any helper
+    * replaces the r() or e() results it may name.
+    local iftouse ""
+    if `"`if'"' != "" {
+        tempvar iftouse
+        mark `iftouse' `if' `in'
+        local if "if `iftouse'"
+    }
 
     _cexport_excel_sheet `macval(sheet)'
     local sheet `"`r(sheet)'"'
     local sheet_action `r(action)'
-    if "`sheetmodify'" != "" {
-        if "`sheet_action'" == "sheetreplace" exit 198
-        local sheet_action "sheetmodify"
+    * As export excel does: the separate sheetmodify and sheetreplace options
+    * exclude each other and take precedence over the sheet() suboption.
+    local sheet_option `"sheet(..., `=substr("`sheet_action'", 6, .)')"'
+    if "`sheetmodify'" != "" & "`sheetreplace'" != "" {
+        di as error "invalid syntax; option sheetmodify may not be combined with option sheetreplace"
+        exit 198
     }
-    if "`sheetreplace'" != "" {
-        if "`sheet_action'" == "sheetmodify" exit 198
-        local sheet_action "sheetreplace"
+    if "`sheetmodify'`sheetreplace'" != "" {
+        local sheet_action "`sheetmodify'`sheetreplace'"
+        local sheet_option "`sheet_action'"
     }
     if "`sheet_action'" != "" & "`replace'" != "" {
-        di as error "sheet modification or replacement cannot be combined with replace"
+        di as error "invalid syntax; option `sheet_option' may not be combined with option replace"
         exit 198
     }
 
@@ -462,6 +499,7 @@ program define cexport_excel, rclass
         qui ds
         local varlist `r(varlist)'
     }
+    local varlist : list varlist - iftouse
 
     * Mark sample
     marksample touse, novarlist
@@ -510,19 +548,22 @@ program define cexport_excel, rclass
     * Handle value labels
     local export_varlist ""
     local decoded_vars ""
+    local ndec 0
     if "`nolabel'" == "" {
         foreach var of local varlist {
             local vallbl : value label `var'
             if "`vallbl'" != "" {
-                tempvar decoded_`var'
-                qui decode `var', gen(`decoded_`var'')
-                qui recast str2045 `decoded_`var''
+                * A counter names the tempvar, so any variable name fits
+                local ++ndec
+                tempvar dec`ndec'
+                local dname `dec`ndec''
+                qui decode `var', gen(`dname')
                 * Unlabeled values, extended missing values included (.b), are
                 * written as numbers as native export excel does; only system
                 * missing is left empty
-                qui replace `decoded_`var'' = string(`var',"%18.0g") if `decoded_`var''=="" & `var' != .
-                local export_varlist `export_varlist' `decoded_`var''
-                local decoded_vars `decoded_vars' `decoded_`var''
+                qui replace `dname' = string(`var',"%18.0g") if `dname'=="" & `var' != .
+                local export_varlist `export_varlist' `dname'
+                local decoded_vars `decoded_vars' `dname'
             }
             else {
                 local export_varlist `export_varlist' `var'
@@ -549,6 +590,8 @@ program define cexport_excel, rclass
             if substr("`fmt'", 1, 2) == "%t" | substr("`fmt'", 1, 3) == "%-t" {
                 local is_date_fmt = 1
             }
+            * The old %d is a daily format, as export excel reads it
+            if substr("`fmt'", 1, 2) == "%d" | substr("`fmt'", 1, 3) == "%-d" local is_date_fmt = 1
 
             if `is_date_fmt' {
                 * This is a date/time variable - convert to formatted string
@@ -588,16 +631,28 @@ program define cexport_excel, rclass
             if substr("`fmt'", 1, 2) == "%t" | substr("`fmt'", 1, 3) == "%-t" {
                 local is_date_fmt = 1
             }
+            * The old %d is a daily format, as export excel reads it
+            if substr("`fmt'", 1, 2) == "%d" | substr("`fmt'", 1, 3) == "%-d" local is_date_fmt = 1
+            if substr("`fmt'", 1, 2) == "%d" local fmt = "%t" + substr("`fmt'", 2, .)
+            if substr("`fmt'", 1, 3) == "%-d" local fmt = "%-t" + substr("`fmt'", 3, .)
+            * Determine date type: strip % and optional -
+            local fmtsub = substr("`fmt'", 2, .)
+            if substr("`fmtsub'", 1, 1) == "-" local fmtsub = substr("`fmtsub'", 2, .)
+            local datetype = substr("`fmtsub'", 2, 1)
+            * A generic %tg value has no calendar unit: write the raw number
+            if `is_date_fmt' & !inlist("`datetype'", "d", "m", "q", "w", "h", "y", "b", "c", "C") local is_date_fmt = 0
 
             if `is_date_fmt' {
                 local has_date_cols = 1
-                * Determine date type: strip % and optional -
-                local fmtsub = substr("`fmt'", 2, .)
-                if substr("`fmtsub'", 1, 1) == "-" local fmtsub = substr("`fmtsub'", 2, .)
-                local datetype = substr("`fmtsub'", 2, 1)
 
                 tempvar xldate_`export_idx'
-                if "`datetype'" == "d" {
+                if "`datetype'" == "b" {
+                    * Business dates count calendar days: %tb<cal>[:display]
+                    local bcal = substr("`fmtsub'", 3, .)
+                    if strpos("`bcal'", ":") local bcal = substr("`bcal'", 1, strpos("`bcal'", ":") - 1)
+                    qui gen double `xldate_`export_idx'' = dofb(`origvar', "`bcal'") + 21916 if !missing(`origvar')
+                }
+                else if "`datetype'" == "d" {
                     qui gen double `xldate_`export_idx'' = `origvar' + 21916 if !missing(`origvar')
                 }
                 else if "`datetype'" == "m" {
@@ -650,6 +705,17 @@ program define cexport_excel, rclass
         di as error "cexport excel: no variables to export"
         exit 198
     }
+    * As export excel does: an empty dataset is r(2000), an empty selection
+    * r(198)
+    if _N == 0 {
+        di as error "no observations"
+        exit 2000
+    }
+    if `nobs' == 0 {
+        if "`excel_engine'" == "cexport_xls" di as error "too many or no observations specified"
+        else di as error "observations must be between 1 and 1048576"
+        exit 198
+    }
 
     * Load plugin
     _ctools_load
@@ -694,19 +760,44 @@ program define cexport_excel, rclass
     }
 
 
-    * Build date column flags for plugin
+    * Cell style codes for the plugin, assigned from the display format as
+    * export excel assigns them: 1 date (m/d/yy), 3 date and time
+    * (m/d/yy h:mm), 4 time of day (h:mm:ss AM/PM) when a %tc format starts
+    * with an hour, minute or am/pm code, 2 a %tc format that shows seconds
+    * with s (native writes empty text; cexport writes the value with
+    * milliseconds), 5 0 for %tg; numbers 7 0.00 (.2f), 9 #,##0.00 (.2fc),
+    * 8 #,##0 (gc), 10 0.00E+00 (.2e) and 6 0 otherwise. 0 is General: text,
+    * and numbers under keepcellfmt, which keeps a cell's format for
+    * everything but %t formats.
     local date_cols ""
     local export_idx = 0
     foreach var of local export_varlist {
         local export_idx = `export_idx' + 1
         local origvar : word `export_idx' of `varlist'
         local fmt : format `origvar'
+        if substr("`fmt'", 1, 2) == "%d" local fmt = "%t" + substr("`fmt'", 2, .)
+        if substr("`fmt'", 1, 3) == "%-d" local fmt = "%-t" + substr("`fmt'", 3, .)
         local is_date = 0
-        if substr("`fmt'", 1, 2) == "%t" | substr("`fmt'", 1, 3) == "%-t" {
-            local is_date = 1
-            if strpos("`fmt'", "tc") | strpos("`fmt'", "tC") local is_date = 2
-            capture confirm numeric variable `var'
-            if _rc local is_date = 0
+        capture confirm numeric variable `var'
+        local isnum = !_rc
+        if `isnum' & (substr("`fmt'", 1, 2) == "%t" | substr("`fmt'", 1, 3) == "%-t") {
+            * The unit follows %t or %-t; %tg is written as its raw number
+            local unit = substr(subinstr("`fmt'", "%-t", "%t", 1), 3, 1)
+            local custom = substr(subinstr("`fmt'", "%-t", "%t", 1), 4, .)
+            local is_date = 5
+            if inlist("`unit'", "d", "m", "q", "w", "h", "y", "b") local is_date = 1
+            else if inlist("`unit'", "c", "C") {
+                local is_date = 3
+                if inlist(substr("`custom'", 1, 1), "H", "h", "a") | inlist(substr("`custom'", 1, 2), "MM", "mm") local is_date = 4
+                if strpos("`custom'", "s") local is_date = 2
+            }
+        }
+        if `isnum' & !`is_date' & "`keepcellfmt'" == "" {
+            local is_date = 6
+            if substr("`fmt'", -2, 2) == "gc" local is_date = 8
+            else if substr("`fmt'", -4, 4) == ".2fc" local is_date = 9
+            else if substr("`fmt'", -3, 3) == ".2f" local is_date = 7
+            else if substr("`fmt'", -3, 3) == ".2e" local is_date = 10
         }
         local date_cols `date_cols' `is_date'
     }
@@ -718,8 +809,8 @@ program define cexport_excel, rclass
         local __cexport_name_`metadata_i' : word `metadata_i' of `varlist'
         if "`firstrow'" == "varlabels" {
             local header_var : word `metadata_i' of `varlist'
-            local header_label : variable label `header_var'
-            if `"`macval(header_label)'"' != "" local __cexport_name_`metadata_i' `"`macval(header_label)'"'
+            * Labels may come from someone else's file: Mata only
+            mata: st_local("__cexport_name_`metadata_i'", st_varlabel("`header_var'") != "" ? st_varlabel("`header_var'") : st_local("__cexport_name_`metadata_i'"))
         }
         local __cexport_type_`metadata_i' : word `metadata_i' of `vartypes'
         local __cexport_date_`metadata_i' : word `metadata_i' of `date_cols'
@@ -752,6 +843,11 @@ program define cexport_excel, rclass
 
     * Clean up
 
+    * The plugin reports a write-protected destination as r(608)
+    if `export_rc' == 608 {
+        di as error `"file `using' could not be saved"'
+        exit 603
+    }
     if `export_rc' {
         di as error "Error exporting XLSX data (rc=`export_rc')"
         exit `export_rc'
@@ -783,17 +879,28 @@ program define cexport_excel, rclass
 end
 
 * Parse the nested native sheet(name, modify|replace) syntax independently.
+* As export excel does: one name, quoted or not, then modify or replace
+* spelled in full; when both are given the first applies.
 program define _cexport_excel_sheet, rclass
     version 14.1
-    syntax [anything(name=sheet)] [, MODify REPlace]
-    if "`modify'" != "" & "`replace'" != "" exit 198
-    local sheet = strtrim(`"`macval(sheet)'"')
-    if substr(`"`macval(sheet)'"',1,1) == char(34) {
-        gettoken sheet rest : sheet
-        if strtrim(`"`rest'"') != "" exit 198
+    gettoken sheet rest : 0, parse(" ,") quotes
+    if `"`macval(sheet)'"' == "," {
+        local rest `", `macval(rest)'"'
+        local sheet ""
+    }
+    else gettoken sheet : sheet
+    gettoken comma rest : rest, parse(" ,")
+    local action ""
+    local bad = !inlist(`"`comma'"', "", ",") | (`"`comma'"' == "" & `"`macval(rest)'"' != "")
+    while !`bad' & `"`macval(rest)'"' != "" {
+        gettoken word rest : rest, quotes
+        if !inlist(`"`macval(word)'"', "modify", "replace") local bad 1
+        else if "`action'" == "" local action "sheet`word'"
+    }
+    if `bad' {
+        di as error "invalid argument in option sheet()"
+        exit 198
     }
     return local sheet `"`macval(sheet)'"'
-    if "`modify'" != "" return local action "sheetmodify"
-    else if "`replace'" != "" return local action "sheetreplace"
-    else return local action ""
+    return local action "`action'"
 end

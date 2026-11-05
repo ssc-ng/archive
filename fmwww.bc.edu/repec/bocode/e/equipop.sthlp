@@ -1,6 +1,7 @@
 {smcl}
-{* *! version 1.48.2}{...}
-{vieweralsosee "[R] regress" "help regress"}{...}
+{* *! version 1.63.1}{...}
+{vieweralsosee "equipop_run" "help equipop_run"}{...}
+{vieweralsosee "equipop_knn" "help equipop_knn"}{...}
 {viewerjumpto "Syntax" "equipop##syntax"}{...}
 {viewerjumpto "Description" "equipop##description"}{...}
 {viewerjumpto "Options" "equipop##options"}{...}
@@ -11,7 +12,7 @@
 {title:Title}
 
 {phang}
-{bf:equipop} {hline 2} k-nearest neighbour context variables (EquiPop 1.48.2)
+{bf:equipop} {hline 2} k-nearest neighbour context variables (EquiPop 1.63.1)
 
 {marker syntax}{...}
 {title:Syntax}
@@ -35,6 +36,46 @@ Install or update the calculating engine, into the Python this Stata is using. A
 {p 8 17 2}
 {cmd:equipop setup} [{cmd:, repair}]
 
+{pstd}
+Open this help file. Stata's own convention is `help equipop`, and that
+still works; `equipop help` is accepted because it is what somebody
+types when a subcommand has just been refused.
+
+{p 8 17 2}
+{cmd:equipop help}
+
+{pstd}
+What cell size does this data want? A read-only report, and a cheap one
+- it needs no neighbour search, only a count per candidate size. For
+each size it gives the number of cells (the cost) and the share of
+people living in a cell that already holds k on its own. Those people
+have no measured radius: their whole neighbourhood is that one cell, the
+distance comes from the self-potential formula instead of from the data,
+and asking for a bigger k returns the same answer. It also flags sizes
+finer than the data itself, where the extra cells buy nothing. There is
+deliberately no single recommended number, because density is not
+uniform - what you get is the trade-off, and the choice stays yours.
+Nothing is changed by running it.
+
+{p 8 17 2}
+{cmd:equipop unit} {it:xvar} {it:yvar} {ifin} [{cmd:fweight}{cmd:=}{it:varname}]
+[{cmd:,} {opt pop(varname)} {opt k(numlist)} {opt cand:idates(numlist)} {opt tol:erance(#)} {opt originrule(string)} {opt nocache}]
+
+{pstd}
+Options for equipop unit alone. pop() or [fweight=] gives the population
+each row stands for, exactly as on a run. k() takes a numlist and the
+advice is reported per k, because the answer depends on it; without k()
+the report says it is advising for k=100. candidates() replaces the
+ladder of cell sizes tried - the size you are currently using is always
+added to it, so your own row is always there. tolerance() is the share
+of people whose radius may be estimated rather than measured before a
+size is rejected; the default 0.01 means fewer than one answer in a
+hundred. originrule() decides whether the criterion applies at all
+rather than merely labelling the output - under exclude an origin's own
+cell is never its whole neighbourhood, so no size is recommended and the
+report says why. nocache recomputes instead of reading the advice stored
+on the dataset.
+
 {synoptset 24 tabbed}{...}
 {synopthdr}
 {synoptline}
@@ -43,7 +84,7 @@ Install or update the calculating engine, into the Python this Stata is using. A
 {synopt:{opt y(varname)}}The northing, on the same system as x();{p_end}
 {syntab:Neighbourhood}
 {synopt:{opt k(numlist)}}One or more k values, space-separated (200 1600).{p_end}
-{synopt:{opt r(numlist)}}Fixed radii in metres, space-separated.{p_end}
+{synopt:{opt r(numlist)}}Fixed radii in your coordinate units, space-separated.{p_end}
 {synopt:{opt unit(#)}}The grid cell size in metres.{p_end}
 {synopt:{opt selfpot(#)}}Self-potential: how far away what is LOCAL - what your...{p_end}
 {synopt:{opt originrule(string)}}WHETHER THE ORIGIN COUNTS AS ITS OWN NEIGHBOUR.{p_end}
@@ -97,10 +138,11 @@ which rows RECEIVE results; every row still counts as a neighbour to
 others.
 
 {pstd}
-equipop needs Python. See {c -({c )-}help python{c )-} and, for the
-installation, the file TESTING_STATA.md in the EquiPop distribution.
-Note that Stata and Anaconda do not mix: use a plain python.org Python
-for Stata.
+equipop needs Python. See {help python}, the file README_STATA.md in the
+EquiPop distribution for the installation, and {cmd:equipop doctor},
+which reports the Python Stata is actually using and whether the
+libraries load in it. Note that Stata and Anaconda do not mix: use a
+plain python.org Python for Stata.
 
 {marker options}{...}
 {title:Options}
@@ -122,15 +164,23 @@ for Stata.
 {p_end}
 
 {phang}
-{opt r(numlist)} Fixed radii in metres, space-separated. The mirror image of k: the area is fixed and the population floats (N_r###).
+{opt r(numlist)} Fixed radii in your coordinate units, space-separated. The mirror image of k: the area is fixed and the population floats (N_r###), and there is no Dist_ - the radius IS the distance. Each radius becomes part of a column name, with a decimal point written as an underscore, so r=100.5 gives N_r100_5. Radii are carried to six decimal places; two that differ by less than that cannot be told apart in a name, and the run stops rather than quietly writing one column where you asked for two.
 {p_end}
 
 {phang}
-{opt unit(#)} The grid cell size in metres. Bigger cells mean fewer origins and much faster runs; smaller cells mean finer geography. This is the strongest speed control you have.
+{opt unit(#)} The grid cell size in metres. Bigger cells mean fewer origins and much faster runs; smaller cells mean finer geography. This is the strongest speed control you have. Any size above zero works, fractions included (2.5 is fine).
+{p_end}
+
+{phang2}
+NOT SURE WHAT TO PUT HERE? Ask the data, in two runs. Leave the size unset and run as usual: at the end, EquiPop reports whether another size would suit this data better, naming one. Then set it and run again. The report gives, for each candidate size, how many cells it makes - the cost - and what share of your people would end up in a cell that already holds k on its own. Those people have no measured radius: their whole neighbourhood is that one cell, so k stops making any difference to them. Nothing is ever changed for you; the size stays whatever you set or inherited.
+{p_end}
+
+{phang2}
+IN STATA you can also ask without running the analysis at all: -equipop unit xvar yvar, k(100)- prints the whole table in a second or so and changes nothing, so it is safe to try before committing to a long run. It takes the same [fweight=] or pop() as a run, and -help equipop- documents its own options and r() results. A run that does not set unit() prints the short version of the same advice when it finishes.
 {p_end}
 
 {phang}
-{opt pop(varname)} How many each point stands for - people, jobs, dwellings, services, anything countable. Leave empty when every point counts as one. k counts these, so this field decides how far the k-search must travel - and in Value Statistics every statistic is weighted by it, so a point standing for 40 counts 40 times a point standing for one.
+{opt pop(varname)} How many each point stands for - people, jobs, dwellings, services, anything countable. Leave empty when every point counts as one. k counts these, so this field decides how far the k-search must travel - and in Value Statistics every statistic is weighted by it, so a point standing for 40 counts 40 times a point standing for one. It must be ZERO OR MORE: a neighbourhood grows outward until it holds k of these, so a total that can FALL with distance has no single radius at which k was reached, and the run is refused rather than guessed at. Fractions are fine - WorldPop counts are fractional and are carried as given. A quantity that is legitimately negative - population CHANGE, net migration, a balance - is a MEASUREMENT and not a population: put it in Value Statistics' value field and keep the headcount here, and you get its population-weighted mean, median and spread over each neighbourhood.
 {p_end}
 
 {phang}
@@ -178,7 +228,11 @@ for Stata.
 {p_end}
 
 {phang}
-{opt overshoot(string)} What happens to the ring of cells that CROSSES k. EquiPop grows a neighbourhood outward until it holds k people, and the ring that takes it past k almost never lands on k exactly. 'Whole ring' takes all of it - what EquiPop did before 1.30 - so ask a 3x3 of cells holding ten each for k=11 and you receive 50. That is worst at SMALL k and AT BOUNDARIES, which is exactly where segregation is measured: on a planted sharp edge the share R_k in the boundary cell reads 0.20 whole against 0.02 proportional. 'Proportional share' takes the same fraction of every cell in that ring, so N_k is exactly k; it produces FRACTIONAL PEOPLE, which are estimates rather than persons, and value statistics refuse it because a quarter of a cell has no median, percentile or Gini. 'Sampled' takes whole cells one at a time, in an order drawn from the seed, until k is reached - this is the original EquiPop method from the 2014 C# tool, kept so old results can be reproduced and compared. Sampled is NOT proportional with the fractions removed: it is that answer rounded up to a whole cell, and different seeds do not average the difference away. Set 'whole ring' to reproduce numbers from before 1.30 exactly.
+{opt overshoot(string)} What happens to the ring of cells that CROSSES k. EquiPop grows a neighbourhood outward until it holds k people, and the ring that takes it past k almost never lands on k exactly. 'Whole ring' takes all of it - what EquiPop did before 1.30 - so ask a 3x3 of cells holding ten each for k=11 and you receive 50. That is worst at SMALL k and AT BOUNDARIES, which is exactly where segregation is measured: on a planted sharp edge the share R_k in the boundary cell reads 0.20 whole against 0.02 proportional. 'Proportional share' takes the same fraction of every cell in that ring, so N_k is exactly k; it produces FRACTIONAL PEOPLE, which are estimates rather than persons. Value statistics weight by them, so a quarter of a boundary cell counts as a quarter of its people in a mean, a median, a Gini or an MLD. 'Sampled' takes whole cells one at a time, in an order drawn from the seed, until k is reached - this is the original EquiPop method from the 2014 C# tool, kept so old results can be reproduced and compared. Sampled is NOT proportional with the fractions removed: it is that answer rounded up to a whole cell, and different seeds do not average the difference away. Set 'whole ring' to reproduce numbers from before 1.30 exactly.
+{p_end}
+
+{phang2}
+NOT AVAILABLE IN STATA: overshoot(sampled) returns an error pointing you to overshoot(proportional), or to QGIS and ArcGIS Pro, which do implement it - sampled needs a seeded draw over whole cells, and the Stata door does not carry one.
 {p_end}
 
 {phang}
@@ -217,6 +271,34 @@ for Stata.
 {synopt:{cmd:r(calibration)}}half-life or half-probability, as APPLIED{p_end}
 {p2colreset}{...}
 
+{pstd}{cmd:equipop unit} stores the following in {cmd:r()}:
+
+{synoptset 20 tabbed}{...}
+{p2col 5 20 24 2: Scalars}{p_end}
+{synopt:{cmd:r(unit)}}the RECOMMENDED cell size for the first k, in metres - missing if no candidate serves it{p_end}
+{synopt:{cmd:r(cells)}}cells that size would make{p_end}
+{synopt:{cmd:r(estimated)}}share of people whose radius would be estimated at that size{p_end}
+{synopt:{cmd:r(tolerance)}}the share treated as acceptable{p_end}
+{synopt:{cmd:r(N)}}points with usable coordinates{p_end}
+{synopt:{cmd:r(people)}}population those points carry{p_end}
+{synopt:{cmd:r(applies)}}1 if the criterion applies to the origin rule in force, 0 under originrule(exclude) where an origin's own cell is never its whole neighbourhood. r(unit) is missing both when no size serves k and when the criterion does not apply, so this is what tells them apart{p_end}
+{p2col 5 20 24 2: Macros}{p_end}
+{synopt:{cmd:r(cmd)}}equipop unit{p_end}
+{synopt:{cmd:r(cmdline)}}subcommand as typed{p_end}
+{synopt:{cmd:r(k)}}k values the advice is about{p_end}
+{synopt:{cmd:r(originrule)}}the origin rule in force{p_end}
+{synopt:{cmd:r(fingerprint)}}digest of the coordinates advised on{p_end}
+{p2col 5 20 24 2: Matrices}{p_end}
+{synopt:{cmd:r(advice)}}one row per candidate size: unit, cells, thin, then sat/shcells/shpeople per k{p_end}
+{p2colreset}{...}
+
+{pstd}
+r(unit) is a recommendation and nothing more - EquiPop never sets the
+cell size for you. Two runs on the same data would otherwise be able to
+use different sizes without saying so, and a published figure would
+depend on a heuristic that might change between versions. If you want
+the recommended size, pass it yourself: unit(`r(unit)').
+
 {pstd}
 r(varlist) is the useful one: it hands back the names just created, so a
 regression or a loop need not repeat them.
@@ -235,11 +317,10 @@ mention EquiPop.
 
 {pstd}
 installs the engine into the Python Stata is using, so it cannot land in
-a different one. Add {c -({c )-}cmd:repair{c )-} - {c -({c
-)-}cmd:equipop setup, repair{c )-} - to reinstall numpy, scipy and
-pandas as well, which is the fix when a library is installed but refuses
-to load. Restart Stata afterwards: Stata starts Python once per session
-and keeps what it first loaded.
+a different one. Add {cmd:repair} - {cmd:equipop setup, repair} - to
+reinstall numpy, scipy and pandas as well, which is the fix when a
+library is installed but refuses to load. Restart Stata afterwards:
+Stata starts Python once per session and keeps what it first loaded.
 
 {phang}{cmd:. equipop doctor}{p_end}
 
@@ -257,14 +338,48 @@ afterwards: Stata starts Python once per session and keeps the packages
 it first loaded.
 
 {pstd}
-See also {c -({c )-}help python{c )-}, and {c -({c )-}cmd:python query{c
-)-}, which reports Stata's own view of the same interpreter.
+See also {help python}, and {cmd:python query}, which reports Stata's
+own view of the same interpreter.
 
 {marker examples}{...}
 {title:Examples}
 
+{pstd}
+Two worked do-files and a test dataset install with the package if you
+ask for them - {cmd:ssc install equipop, all} - and Stata will tell you
+where they went:
+
+{phang}{cmd:. findfile equipop_example.do}{p_end}
+{phang}{cmd:. do "`r(fn)'"}{p_end}
+
+{pstd}
+The examples run on {cmd:equipop_test_data.dta}: {cmd:ID},
+{cmd:X_local}, {cmd:Y_local}, four 0/1 education markers ({cmd:LowEdu},
+{cmd:HighEdu}, {cmd:TheoEdu}, {cmd:VocaEdu}), a continuous
+{cmd:ValFloat} with missings by design, and a count {cmd:ValCount}. Load
+it the same way:
+
+{phang}{cmd:. findfile equipop_test_data.dta}{p_end}
+{phang}{cmd:. use "`r(fn)'", clear}{p_end}
+
+{pstd}
+{cmd:equipop_example.do} is the short round trip;
+{cmd:equipop_showcase.do} runs every function in turn with the expected
+numbers in comments, against {cmd:equipop_test_data.dta}. Both locate
+the data with {help findfile}, so they run from anywhere.
+
 {phang}{cmd:. equipop setup}{p_end}
 {phang}{cmd:. equipop doctor}{p_end}
+
+The examples below run on {cmd:equipop_test_data.dta}, which installs
+with the package: {cmd:ID}, {cmd:X_local}, {cmd:Y_local}, four 0/1
+education markers ({cmd:LowEdu}, {cmd:HighEdu}, {cmd:TheoEdu},
+{cmd:VocaEdu}), a continuous {cmd:ValFloat} with missings by design, and
+a count {cmd:ValCount}.
+
+{phang}{cmd:. findfile equipop_test_data.dta}{p_end}
+{phang}{cmd:. use "`r(fn)'", clear}{p_end}
+
 {phang}{cmd:. equipop, x(X_local) y(Y_local) k(50)}{p_end}
 {phang}{cmd:. equipop, x(X_local) y(Y_local) treat(HighEdu) k(25 50 200) unit(100)}{p_end}
 {phang}{cmd:. equipop if urban==1, x(X) y(Y) treat(HighEdu) k(50) replace}{p_end}
@@ -287,7 +402,22 @@ See also {c -({c )-}help python{c )-}, and {c -({c )-}cmd:python query{c
 {pstd}The new variables are named in {cmd:r(varlist)}, so they can be used directly:{p_end}
 {phang}{cmd:. regress income `r(varlist)'}{p_end}
 
+{marker related}{...}
+{title:Related commands}
+
+{pstd}{help equipop_run:equipop_run} reaches EquiPop's other engines with one command: value statistics, barriers and terrain, floating catchment accessibility and local Moran's I. {help equipop_knn:equipop_knn} is this command's former name and still works.{p_end}
+
+{marker references}{...}
+{title:References}
+
+{phang}Östh, J., W. A. V. Clark, and B. Malmberg. 2015. Measuring the scale of segregation using k-nearest neighbor aggregates. {it:Geographical Analysis} 47: 34-49.{p_end}
+
+{phang}Östh, J., J. Lyhagen, and A. Reggiani. 2016. A new way of determining distance decay parameters in spatial interaction models with application to job accessibility analysis in Sweden. {it:European Journal of Transport and Infrastructure Research} 16: 344-363.{p_end}
+
 {marker author}{...}
 {title:Author}
 
-{pstd}John Östh, OsloMet. {browse "https://github.com/GeoJohnSwe/EquiPop"}{p_end}
+{pstd}John Östh{break}
+OsloMet - Oslo Metropolitan University, Norway; Lund University and Uppsala University, Sweden{break}
+{browse "mailto:johnosth@oslomet.no":johnosth@oslomet.no}{break}
+{browse "https://github.com/GeoJohnSwe/EquiPop"}{p_end}

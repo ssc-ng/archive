@@ -1,4 +1,4 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 *! C-accelerated interval joins (ctools)
 program define crangejoin
     version 14.1
@@ -48,6 +48,17 @@ program define crangejoin
         }
         if "`mode'" == "" _ctools_undo clear CTOOLS_u_crangejoin_
         macro drop CTOOLS_crangejoin_plugin
+        * rangejoin replaces the dataset, which empties e(sample) and keeps
+        * the other estimation results; the plugin rewrote the rows in place,
+        * so the hidden e(sample) column would mark unrelated observations.
+        local esample : e(functions)
+        if `: list posof "sample" in esample' {
+            tempname eshold
+            tempvar esvar
+            _estimates hold `eshold', copy varname(`esvar')
+            drop `esvar'
+            _estimates unhold `eshold'
+        }
     }
 end
 
@@ -138,7 +149,7 @@ program define _crangejoin_impl
         frame drop `uframe'
         _crangejoin_master `"`schema'"', mastervars(`mastervars') lo(`lo') hi(`hi') ///
             renamed(`renamed') nmaster(`nmaster') byindices(`byindices') ///
-            threadopt(`threadopt') `fast'
+            threadopt(`threadopt') by(`by') usingbytypes(`usingbytypes') `fast'
         exit
     }
     * Option snapshot, and every join before Stata 16: read the using data in
@@ -149,7 +160,7 @@ program define _crangejoin_impl
         restore, preserve
         _crangejoin_master `"`schema'"', mastervars(`mastervars') lo(`lo') hi(`hi') ///
             renamed(`renamed') nmaster(`nmaster') byindices(`byindices') ///
-            threadopt(`threadopt') norestore
+            threadopt(`threadopt') by(`by') usingbytypes(`usingbytypes') norestore
     }
     local rc = _rc
     capture plugin call ctools_plugin, "crangejoin clear"
@@ -182,6 +193,7 @@ program define _crangejoin_using
         local ++i
         confirm variable `v', exact
         if (substr("`: type `v''",1,3) == "str") != `: word `i' of `bytypes'' exit 106
+        local usingbytypes `usingbytypes' `: type `v''
     }
     quietly drop if missing(`key')
     if _N == 0 error 2000
@@ -213,6 +225,7 @@ program define _crangejoin_using
     quietly keep if 0
     quietly save `"`schema'"'
     c_local renamed `renamed'
+    c_local usingbytypes `usingbytypes'
 end
 
 * Append the using schema to the master and have the plugin write the join.
@@ -220,7 +233,7 @@ program define _crangejoin_master
     version 14.1
     syntax anything(name=schema), mastervars(string) lo(name) hi(name) ///
         renamed(string) nmaster(integer) [byindices(string) threadopt(string) ///
-        fast norestore]
+        by(string) usingbytypes(string) fast norestore]
     _ctools_load
     capture program ctools_plugin, plugin using("`__ctools_plugin'")
     if _rc != 0 & _rc != 110 exit 601
@@ -240,4 +253,25 @@ program define _crangejoin_master
         "crangejoin `threadopt' write `wopts'"
     if "$CTOOLS_crangejoin_fault" == "post" error 1
     drop `lo' `hi'
+    * rangejoin's by() variables take the wider of the master and using
+    * storage types (the values are the master's)
+    local numeric_types "byte int long float double"
+    local i = 0
+    foreach v of local by {
+        local ++i
+        local mt : type `v'
+        local ut : word `i' of `usingbytypes'
+        local target `mt'
+        if substr("`mt'", 1, 3) == "str" {
+            local width = max(real(substr("`mt'", 4, .)), real(substr("`ut'", 4, .)))
+            if !missing(`width') local target str`width'
+        }
+        else {
+            local mr : list posof "`mt'" in numeric_types
+            local ur : list posof "`ut'" in numeric_types
+            local target : word `=max(`mr', `ur')' of `numeric_types'
+            if (`mr' == 3 & `ur' == 4) | (`mr' == 4 & `ur' == 3) local target double
+        }
+        if "`target'" != "`mt'" quietly recast `target' `v'
+    }
 end

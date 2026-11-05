@@ -62,6 +62,7 @@ p eofplot module to plot coefficients or loadings after principal component or f
 p eperiod module to calculate elapsed time between dates
 p epiconf module to assess confounding effects in epidemiological studies 
 p epidata module Data entry system for use with Stata, SPSS, SAS, Excel, text formats
+p epidem module providing suite of tools to detect outbreaks from surveillance data
 p epimodels module to implement epidemiological models and simulations
 p episens module for basic sensitivity analysis of epidemiological results
 p episensrri module for basic sensitivity analysis for unmeasured confounders

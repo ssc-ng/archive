@@ -1,5 +1,6 @@
-*! version 0.21 2026-03-26 Niels Henrik Bruun	
+*! version 0.22 2026-03-26 Niels Henrik Bruun	
 *! Support: Niels Henrik Bruun, niels.henrik.bruun@gmail.com
+*! 2026-11-02 v0.22 Help examples verified
 *! 2026-10-28 v0.21 Bugfix in bapm
 *! 2026-03-26 v0.2 created
 program define bapm, rclass

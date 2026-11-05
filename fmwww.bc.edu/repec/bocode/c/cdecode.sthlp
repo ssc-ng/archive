@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.2.3 20261030}{...}
+{* *! version 1.2.4 20261103}{...}
 {viewerjumpto "Syntax" "cdecode##syntax"}{...}
 {viewerjumpto "Description" "cdecode##description"}{...}
 {viewerjumpto "Options" "cdecode##options"}{...}
@@ -46,11 +46,11 @@ missing values.
 
 {pstd}
 Label text is read directly from Stata and written by the ctools plugin in
-parallel. Results that the plugin does not produce are decoded by {cmd:decode}
-itself: strL results (label text longer than 2,045 bytes), {opt maxlength()}
-cuts within text containing multibyte characters, and any call for which the
-plugin is unavailable. {cmd:r(N_plugin)} reports how many variables the plugin
-decoded.
+parallel. {cmd:cdecode} uses Stata's {cmd:decode} when the result requires
+{cmd:strL} storage (label text longer than 2,045 bytes), when
+{opt maxlength()} truncates text containing multibyte characters, or when the
+ctools plugin is unavailable. {cmd:r(N_plugin)} reports how many variables the
+plugin decoded.
 
 {pstd}
 The source variables must be numeric and have value labels attached. For each
@@ -79,7 +79,8 @@ label text. The number of names must match the number of variables in {it:varlis
 
 {phang}
 {opt replace} specifies that the variables in {it:varlist} should be replaced with their
-decoded string versions instead of creating new variables. The decoded variables keep the original names.
+decoded string versions instead of creating new variables. The decoded variables keep the original names,
+notes and characteristics.
 
 {pstd}
 You must specify either {opt generate()} or {opt replace}, but not both.
@@ -89,8 +90,8 @@ You must specify either {opt generate()} or {opt replace}, but not both.
 {phang}
 {opth maxlength(#)} specifies the maximum string length for the new variables.
 By default, the output type follows {cmd:decode}, including strL for
-long labels. {cmd:maxlength()} follows {cmd:decode}'s length and truncation rules. Use this option to truncate
-labels to a specific length.
+long labels. {cmd:maxlength()} follows {cmd:decode}'s length and truncation rules: {it:#} is an integer
+from 1 to 32,000. Use this option to truncate labels to a specific length.
 
 {phang}
 {opt threads(#)} limits the number of threads the ctools plugin uses. The

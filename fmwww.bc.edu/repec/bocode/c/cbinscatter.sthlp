@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.2.3 20261030}{...}
+{* *! version 1.2.4 20261103}{...}
 {viewerjumpto "Syntax" "cbinscatter##syntax"}{...}
 {viewerjumpto "Description" "cbinscatter##description"}{...}
 {viewerjumpto "Options" "cbinscatter##options"}{...}
@@ -84,11 +84,17 @@ bin means, and fitted lines.
 
 {phang}
 {opt nquantiles(#)} specifies the requested number of quantile bins.
-The default is 20. Must be between 2 and 1000.
+The default is 20. Must be between 2 and 1000. As with {cmd:binscatter}, when
+the estimation sample has no more than {it:#} distinct values of x (with
+{opt controls()} or {opt absorb()}, of the residualized x plus its mean as
+{cmd:binscatter} stores it, in float precision), x is treated as discrete: each
+by-group gets one bin per value it contains. This applies to the default method
+only.
 
 {phang}
 {opt controls(varlist)} specifies control variables to partial out from both
 x and y before computing bins. The residualization is performed via OLS.
+Factor variables and time-series operators are allowed.
 
 {phang}
 {opt absorb(varlist)} specifies categorical variables representing fixed effects
@@ -105,12 +111,12 @@ with {cmd:method(binsreg)} each group is binned on its own x, as in
 
 {phang}
 {opt method(method)} specifies the residualization method when controls or
-fixed effects are specified. This follows the methodology discussion in
-Cattaneo, Crump, Farrell, and Feng (2024), "On Binscatter".
+fixed effects are specified. See Cattaneo, Crump, Farrell, and Feng (2024),
+"On Binscatter", for a comparison of these methods.
 
-{phang2}{opt classic} (the default) residualizes both x and y on the controls/FE,
-then creates bins based on the residualized x values. This is the traditional
-binscatter approach.{p_end}
+{phang2}{opt classic} (the default) residualizes both x and y on the
+controls/FE, then creates bins based on the residualized x values. This is the
+method used by {cmd:binscatter}.{p_end}
 
 {phang2}{opt binsreg} creates bins based on the raw (non-residualized) x values,
 then computes the conditional mean of y within each bin after partialling out
@@ -145,6 +151,10 @@ fit to the residualized x and y after adding their sample means back, as
 match {cmd:binscatter}'s {cmd:e(y1_coefs)}. With {opt method(binsreg)}, the
 polynomial is fit jointly with the controls and absorbed effects and evaluated
 at the controls' means, as {cmd:binsreg}'s {opt polyreg()} does.
+Without controls in the fit, when x has no more distinct values than the
+polynomial's order, a lower power is omitted, as {cmd:regress} omits it in
+{cmd:binscatter}'s fit: with two values, {cmd:linetype(qfit)} keeps x^2 and
+omits x.
 
 {dlgtab:Data Options}
 
@@ -152,7 +162,13 @@ at the controls' means, as {cmd:binsreg}'s {opt polyreg()} does.
 {opt discrete} treats x as a discrete variable, creating one bin for each
 unique value of x instead of quantile-based bins. With {opt method(binsreg)},
 the bin means are adjusted for {opt controls()} and {opt absorb()} as with
-quantile bins.
+quantile bins. As in {cmd:binscatter}, x (the residualized x with
+{opt method(classic)} and {opt controls()} or {opt absorb()}, as {cmd:binscatter}
+stores it in float precision) may have at most
+half as many distinct values as the sample has observations; otherwise the
+command exits with r(134). The bins must also fit in a Stata matrix
+({cmd:c(max_matdim)} rows, over all by-groups), or the command exits with
+r(503).
 
 {phang}
 {opt savedata(filename)} saves the bin data (bin means, counts, etc.) to
@@ -162,12 +178,21 @@ Use this option for aggregate bin data; {opt genxq()} is not supported.
 {dlgtab:Graph Options}
 
 {phang}
-{opt nograph} suppresses the graph output. Useful when you only need the
-computed bin statistics in {cmd:e()}.
+{opt nograph} suppresses the graph. Bin statistics are still stored in
+{cmd:e()}.
 
 {phang}
-{opt title(string)}, {opt ytitle(string)}, {opt xtitle(string)} specify
-graph and axis titles. Defaults for axis titles are the variable names.
+{opt title()}, {opt ytitle()}, {opt xtitle()} specify graph and axis titles.
+Defaults for axis titles are the variable names. As in {cmd:binscatter}, they
+are passed to {cmd:twoway} as typed, after the defaults, so suboptions such as
+{cmd:title("Text", size(small))}, several lines ({cmd:title("One" "Two")}) and
+empty titles ({cmd:ytitle("")}) work as in {help title_options}.
+
+{phang}
+{opt legend()} specifies legend options, merged after the default legend as in
+{cmd:binscatter}: with one series the default is {cmd:legend(off)}, which
+{cmd:legend(on)} overrides. With {opt by()}, each key reads
+{it:byvar}{cmd:=}{it:value}, the value's label when it has one.
 
 {phang}
 {opt colors(string)} specifies colors for the scatter series when using
@@ -185,13 +210,24 @@ labels containing spaces. {cmd:binscatter} has no equivalent option.
 
 {phang}
 {it:twoway_options} any other options are passed through to the underlying
-{cmd:twoway} graph command.
+{cmd:twoway} graph command. With {opt nograph} they are still checked, so an
+invalid option is an error, as it is with the graph; {opt name()} and
+{opt saving()} then store and write nothing.
+
+{phang}
+{cmd:binscatter}'s options {opt medians}, {opt noaddmean}, {opt rd()}, {opt xq()},
+{opt mcolors()}, {opt lcolors()}, {opt savegraph()}, {opt randvar()},
+{opt randcut()} and {opt randn()} are not supported and exit with r(198).
+{opt replace} and {opt nofastxtile} are accepted and change nothing:
+{opt savedata()} always replaces its file, and quantiles are always exact.
 
 {dlgtab:Reporting}
 
 {phang}
-{opt reportreg} displays the fitted polynomial coefficients, R-squared, and
-number of observations for each group.
+{opt reportreg} displays the regressions behind the fit lines, as
+{cmd:binscatter} does, on the same sample as the bins, and stores their
+coefficients in {cmd:e(reportreg_b)}. All weight types are allowed; with
+{opt iweight}s, absorbed effects enter these regressions as indicators.
 
 {phang}
 {opt verbose} displays progress and elapsed times.
@@ -205,10 +241,10 @@ The default follows the {help ctools##threads:ctools thread setting}.
 
 {pstd}
 Weight expressions are evaluated once. Missing weights are excluded, selected
-weights must be positive, and fweights must be integers. Factor-variable controls
-and interactions are materialized before adjustment. Redundant control columns
-are omitted; a failed adjustment returns an error. Fixed effects are removed by iterative projection.
-{p_end}
+weights must be positive, and fweights must be integers. Factor-variable
+controls and interactions are expanded before estimation. Collinear control
+variables are omitted. If the adjustment cannot be computed, the command
+returns an error. Fixed effects are removed by iterative projection. {p_end}
 
 
 {marker examples}{...}
@@ -278,6 +314,7 @@ are omitted; a failed adjustment returns an error. Fixed effects are removed by 
 {synopt:{cmd:e(bindata)}}matrix of bin statistics: by_group, bin_id, x_mean, y_mean, n_obs{p_end}
 {synopt:{cmd:e(coefs)}}fit line coefficients, one row per by-group: constant, x, x^2, x^3 (for a polynomial fit){p_end}
 {synopt:{cmd:e(fit_stats)}}R-squared and number of observations of each fit{p_end}
+{synopt:{cmd:e(reportreg_b)}}with {opt reportreg}, the coefficients of each group's fit regression, one row per by-group{p_end}
 
 
 {title:References}

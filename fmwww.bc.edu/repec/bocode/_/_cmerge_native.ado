@@ -1,13 +1,14 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 *! Private helper for cmerge.
 program define _cmerge_native, rclass
     args cmdline
     local 0 `"`cmdline'"'
     gettoken mtype 0 : 0, parse(" ")
     syntax [anything] using/ [, Keep(string) ASSert(string) GENerate(name) ///
-        NOGENerate KEEPUSing(string) SORTED FORCE NOREPort Verbose NOLabel ///
+        NOGENerate KEEPUSing(string) SORTED FORCE NOREPort Verbose noLabels ///
         NONotes UPDATE REPLACE PRESERVE_order(integer 0) THReads(integer 0) ///
         SNAPshot FAST]
+    local nolabel = cond("`labels'" != "", "nolabel", "")
     local opts `nogenerate' `sorted' `force' `noreport' `nolabel' `nonotes' `update' `replace'
     if "`keep'" != "" local opts `opts' keep(`keep')
     if "`assert'" != "" local opts `opts' assert(`assert')

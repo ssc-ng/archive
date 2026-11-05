@@ -1,4 +1,4 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 
 * Hand one value label to the plugin as local __cd_map (format: see
 * src/cdecode/cdecode_impl.c). Sets __cd_ok to 0 when decode itself must do the
@@ -43,14 +43,24 @@ end
 
 program define cdecode, rclass
     version 14.1
-    syntax varlist [if] [in], [Generate(string) replace MAXLength(integer 0) Verbose THReads(integer 0)]
+    syntax varlist [if] [in], [Generate(string) replace MAXLength(string) Verbose THReads(integer 0)]
 
     if ("`generate'" == "") == ("`replace'" == "") {
         di as error "cdecode: specify either generate() or replace"
         exit 198
     }
-    if `maxlength' < 0 | `threads' < 0 {
-        di as error "cdecode: maxlength() and threads() must be nonnegative"
+    * As decode: an explicit maxlength() is an integer from 1 to 32000;
+    * 0 below means none
+    if "`maxlength'" != "" {
+        capture confirm integer number `maxlength'
+        if _rc | !inrange(real("`maxlength'"), 1, 32000) {
+            di as error "maxlength must be between 1 and 32000"
+            exit 198
+        }
+    }
+    else local maxlength 0
+    if `threads' < 0 {
+        di as error "cdecode: threads() must be nonnegative"
         exit 198
     }
     local nvars : word count `varlist'
@@ -77,17 +87,13 @@ program define cdecode, rclass
 
     * Stata answers an if one observation at a time, so the plugin is passed
     * the sample as a marker variable, last, and reads it in parallel. An if
-    * that names a numeric variable other than a source is that marker.
-    * Several outputs otherwise share one marked sample, evaluated once. A
-    * single output marks its if after its destination exists: the marker is
-    * then the last variable, and dropping it after the call is free. With
-    * in, which limits the range, a single output keeps any other if (marking
-    * covers every observation).
+    * that names a numeric variable other than a source is that marker. Any
+    * other if is marked here, once, before a helper can replace the r() or
+    * e() results it may name.
     local sample `"`if' `in'"'
     local plugin_sample `"`sample'"'
     local ifflag = cond(`"`if'"' != "", "ifcond", "")
     local touse ""
-    local mark_each = 0
     if `"`if'"' != "" {
         local touse = strtrim(substr(`"`if'"', 3, .))
         capture confirm numeric variable `touse', exact
@@ -97,14 +103,9 @@ program define cdecode, rclass
             local plugin_sample `"`in'"'
             local ifflag "ifcond touse"
         }
-        else if `nvars' > 1 {
+        else {
             marksample touse, novarlist
             local sample "if `touse'"
-            local plugin_sample ""
-            local ifflag "ifcond touse"
-        }
-        else if `"`in'"' == "" {
-            local mark_each = 1
             local plugin_sample ""
             local ifflag "ifcond touse"
         }
@@ -121,7 +122,8 @@ program define cdecode, rclass
     * by Stata, as are labels the plugin protocol does not cover.
     local have_plugin = 0
     capture _ctools_load
-    if !_rc {
+    * Above Stata's plugin limit of 2^31-1 observations Stata decodes everything.
+    if !_rc & !(_N > 2147483647) {
         capture program ctools_plugin, plugin using("`__ctools_plugin'")
         if _rc == 0 | _rc == 110 local have_plugin = 1
     }
@@ -141,15 +143,9 @@ program define cdecode, rclass
         }
         if `__cd_ok' {
             mata: (void) st_addvar("str`__cd_width'", "`decoded'", "`fill'" != "")
-            local marker "`touse'"
-            if `mark_each' {
-                tempvar marker
-                mark `marker' `if'
-            }
-            capture plugin call ctools_plugin `v' `decoded' `marker' `plugin_sample', ///
+            capture plugin call ctools_plugin `v' `decoded' `touse' `plugin_sample', ///
                 "cdecode `threads_code' v2 maplen=`__cd_len' width=`__cd_width' `ifflag' `fill'"
             local plugin_rc = _rc
-            if `mark_each' drop `marker'
             if `plugin_rc' == 1 exit 1
             if `plugin_rc' {
                 drop `decoded'
@@ -174,7 +170,11 @@ program define cdecode, rclass
         foreach v of local varlist {
             local ++i
             local decoded : word `i' of `staged'
-            if "`replace'" != "" drop `v'
+            * replace keeps the source's notes and characteristics
+            if "`replace'" != "" {
+                char rename `v' `decoded'
+                drop `v'
+            }
             else local v : word `i' of `generate'
             mata: st_varrename("`decoded'", "`v'")
         }

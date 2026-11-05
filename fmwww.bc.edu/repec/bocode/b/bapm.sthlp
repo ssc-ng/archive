@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0 25 Oct 2026}{...}
+{* *! version 0.23 25 Oct 2026}{...}
 {vieweralsosee "" "--"}{...}
 {viewerjumpto "Syntax" "bapm##syntax"}{...}
 {viewerjumpto "Description" "bapm##description"}{...}

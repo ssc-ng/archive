@@ -13,7 +13,7 @@ d KW: factor variables
 d
 d Requires: Stata version 14.1
 d
-d Distribution-Date: 20261102
+d Distribution-Date: 20241104
 d
 d Author: Michael Droste,  droste@usc.edu
 d Support: email University of Southern California
@@ -67,6 +67,7 @@ f csplit.ado
 f csplit.sthlp
 f cwinsor.ado
 f cwinsor.sthlp
+f ctools_licenses.sthlp
 f ctools_linux.plugin
 f ctools_mac_arm.plugin
 f ctools_mac_x86.plugin

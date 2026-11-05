@@ -1,4 +1,4 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 
 program define cppmlhdfe, eclass
     version 14.1
@@ -9,7 +9,21 @@ program define cppmlhdfe, eclass
         exit
     }
     * Accept the legacy bare verbose option as well as ppmlhdfe's verbose(#).
-    local 0 = ustrregexra(`"`0'"', "(?<=[ ,])verbose(?=[ ,]|$)", "verbose(1)")
+    * Only an option token is rewritten, never a variable named verbose in
+    * the varlist, the if condition or an option argument; e(cmdline) keeps
+    * the command as typed.
+    local cmdline_typed `"`0'"'
+    _parse comma __lhs __rhs : 0
+    if `"`__rhs'"' != "" {
+        gettoken __comma __rhs : __rhs, parse(",")
+        local __opts
+        while `"`__rhs'"' != "" {
+            gettoken __tok __rhs : __rhs, bind quotes
+            if `"`__tok'"' == "verbose" local __tok verbose(1)
+            local __opts `"`__opts' `__tok'"'
+        }
+        local 0 `"`__lhs', `__opts'"'
+    }
 
     * Check observation limit (Stata plugin API limitation)
     if _N > 2147483647 {
@@ -152,9 +166,8 @@ program define cppmlhdfe, eclass
     if "`d'" != "" & "`d2'" != "" error 198
     if "`d2'" != "" {
         local d _ppmlhdfe_d
-        capture drop `d'
     }
-    if "`d'" != "" _ctools_newvars `d'
+    if "`d'" != "" & "`d2'" == "" _ctools_newvars `d'
 
     * Parse independent absorbed-DF adjustments, matching reference semantics
     * (abbreviations included); all stands for pairwise clusters continuous.
@@ -248,6 +261,7 @@ program define cppmlhdfe, eclass
             }
         }
         if "`categories'" == "" error 198
+        local absorb_model_vars `absorb_model_vars' `categories' `continuous'
         markout `touse' `categories' `continuous', strok
         tempvar fe_id
         quietly _ctools_group `categories' if `touse', generate(`fe_id')
@@ -341,6 +355,15 @@ program define cppmlhdfe, eclass
     local num_cluster_terms = 0
 
     if `"`vce'"' != "" {
+        * ppmlhdfe reads vce() with ms_parse_vce: an ols or un prefix and
+        * conventional mean unadjusted (which PPML reports as robust), an r
+        * prefix robust; iid stays rejected, as there
+        gettoken vce_word vce_rest : vce, parse(" ,")
+        if substr("`vce_word'", 1, 3) == "ols" | substr("`vce_word'", 1, 2) == "un" | "`vce_word'" == "conventional" {
+            local vce_word unadjusted
+        }
+        else if substr("`vce_word'", 1, 1) == "r" local vce_word robust
+        local vce `"`vce_word'`vce_rest'"'
         _ctools_hdfe_vce, spec(`"`vce'"') touse(`touse') cmd(cppmlhdfe)
         local vce_kind `r(kind)'
         if "`vce_kind'" == "cluster" {
@@ -445,6 +468,27 @@ program define cppmlhdfe, eclass
 
     local nvars : word count `varlist_expanded'
     local nfe : word count `absorb'
+
+    * Automatic outputs (d2's _ppmlhdfe_d, savefe's __hdfe#__) replace an
+    * existing variable of that name; refuse when the model itself uses it
+    local automatic_targets
+    if "`d2'" != "" local automatic_targets _ppmlhdfe_d
+    forvalues g=1/`nfe' {
+        if "`fe_target_`g''" != "" & `fe_automatic_`g'' local automatic_targets `automatic_targets' `fe_target_`g''
+    }
+    if "`automatic_targets'" != "" {
+        local model_vars `absorb_model_vars' `exposure' `offset'
+        fvrevar `depvar_orig' `indepvars', list
+        local model_vars `model_vars' `r(varlist)'
+        local exp_tokens = ustrregexra(`"`exp' `clustervar_orig'"', "[^A-Za-z0-9_]", " ")
+        local model_vars `model_vars' `exp_tokens'
+        local used_targets : list automatic_targets & model_vars
+        if "`used_targets'" != "" {
+            local used_target : word 1 of `used_targets'
+            di as error "cppmlhdfe: `used_target' is used in the model and would be replaced by an automatic output; rename it or name the output"
+            exit 198
+        }
+    }
 
     * Count observations
     qui count if `touse'
@@ -711,26 +755,51 @@ program define cppmlhdfe, eclass
         matrix colnames `V' = _cons
         matrix rownames `V' = _cons
     }
+    * Prepare outputs under temporary names. Existing automatic targets
+    * remain intact until all estimation, posting and display work succeeds.
+    local publish_sources
+    local publish_targets
     if "`d'" != "" {
-        quietly generate double `d' = `saved_d'
-        label variable `d' "Sum of fixed effects"
+        label variable `saved_d' "Sum of fixed effects"
+        local publish_sources `saved_d'
+        local publish_targets `d'
     }
-
     forvalues g=1/`nfe' {
         if "`fe_target_`g''"!="" {
-            if `fe_automatic_`g'' capture drop `fe_target_`g''
-            quietly generate double `fe_target_`g'' = `fe_output_`g''
-            label variable `fe_target_`g'' "[FE] `fe_name_`g''"
+            label variable `fe_output_`g'' "[FE] `fe_name_`g''"
+            local publish_sources `publish_sources' `fe_output_`g''
+            local publish_targets `publish_targets' `fe_target_`g''
         }
     }
-    if "`tagsep'"!="" quietly generate byte `tagsep' = `separation_tag'
-    if "`zvarname'"!="" quietly generate double `zvarname' = `separation_certificate'
+    if "`tagsep'"!="" {
+        local publish_sources `publish_sources' `separation_tag'
+        local publish_targets `publish_targets' `tagsep'
+    }
+    if "`zvarname'"!="" {
+        local publish_sources `publish_sources' `separation_certificate'
+        local publish_targets `publish_targets' `zvarname'
+    }
 
     * Record results building time
     _ctools_lap __time_build __ct_lap98 `__ct_lap98'
 
-    * Post results
-    ereturn post `b' `V', esample(`final_sample') depname(`depvar_orig') obs(`N_final')
+    * Post results. With factor variables, buildfvinfo lets margins check
+    * estimability, as after ppmlhdfe.
+    * buildfvinfo costs a pass over the data and is only
+    * needed when a coefficient other than a base level is omitted; with a
+    * full-rank design every margin is estimable.
+    local bfv
+    _ms_op_info `b'
+    if r(fvops) {
+        local __bfv_names : colnames `b'
+        foreach __bfv_name of local __bfv_names {
+            if strpos("`__bfv_name'", "o.") & !strpos("`__bfv_name'", "b.") local bfv buildfvinfo
+        }
+    }
+    * Posting and publication of the automatic outputs are one transaction:
+    * a Break cannot separate the new e() from the outputs it refers to
+    nobreak {
+    ereturn post `b' `V', esample(`final_sample') depname(`depvar_orig') obs(`N_final') `bfv'
 
     * Store e() results
     ereturn scalar N = `N_final'
@@ -742,7 +811,8 @@ program define cppmlhdfe, eclass
     ereturn scalar r2_p = `r2_p'
     ereturn scalar chi2 = `F' * `df_m'
     ereturn local chi2type Wald
-    ereturn local title "HDFE PPML regression"
+    ereturn local title = cond(`has_absorb', "HDFE PPML regression", "PPML regression")
+    ereturn local marginsnotok "stdp Anscombe Cooksd Deviance Hat Likelihood Pearson Response Score Working ADJusted STAndardized STUdentized MODified"
     ereturn local separation "`separation'"
     ereturn local properties "b V"
     ereturn local marginsok default
@@ -782,12 +852,35 @@ program define cppmlhdfe, eclass
     ereturn local indepvars "`indepvars'"
     ereturn local predict "cppmlhdfe_p"
     ereturn local cmd "cppmlhdfe"
-    ereturn local cmdline "cppmlhdfe `0'"
+    ereturn local cmdline `"cppmlhdfe `cmdline_typed'"'
+    * As ppmlhdfe (from reghdfe's solve of the final working regression): the
+    * weighted residual sum of squares and its root mean square on
+    * N - df_a - rank - df_a_nested, the partialling subiterations, and the
+    * replay helpers (ppmlhdfe names reghdfe's, which refuse other commands)
+    local rss_df = `N_final' - `df_a_adjusted' - `K_keep' - `df_a_nested'
+    ereturn scalar rss = __cppmlhdfe_rss
+    ereturn scalar rmse = cond(`rss_df' == 0, sqrt(__cppmlhdfe_rss), sqrt(__cppmlhdfe_rss / `rss_df'))
+    ereturn scalar ic2 = __cppmlhdfe_ic2
+    if `has_absorb' ereturn local title2 = "Absorbing `=e(N_hdfe)' HDFE " + cond(e(N_hdfe) > 1, "groups", "group")
+    ereturn local footnote "_cppmlhdfe_footnote"
+    ereturn local estat_cmd "_cppmlhdfe_estat"
+
+    * Publication follows the last posted result and precedes the display
+    if "`publish_targets'" != "" {
+        capture noisily _cppmlhdfe_publish `publish_sources', names(`publish_targets')
+        local publish_rc = _rc
+        if `publish_rc' {
+            ereturn clear
+            exit `publish_rc'
+        }
+    }
+    }
 
     * Record ereturn posting time
     _ctools_lap __time_ereturn __ct_lap98 `__ct_lap98'
 
     * Display
+    if "$CTOOLS_cppmlhdfe_fault" == "display" error 1
     if `num_singletons' > 0 {
         di as text "(dropped " as result `num_singletons' as text " singleton observations)"
     }
@@ -811,9 +904,7 @@ program define cppmlhdfe, eclass
     di as text ""
     ereturn display, `eform_opt' `diopts'
 
-    di as text ""
-    di as text "Absorbed degrees of freedom:"
-    matrix list e(dof_table), noheader format(%9.0g)
+    _cppmlhdfe_footnote
 
     _ctools_cleanup cppmlhdfe
 
@@ -836,6 +927,36 @@ program define cppmlhdfe, eclass
         di as text "{hline 55}"
     }
 
+end
+
+* Atomically replace automatic outputs without copying the dataset. Group
+* renames validate every destination before making any change; backup names
+* retain the old values, metadata and variable positions until commit.
+program define _cppmlhdfe_publish
+    version 14.1
+    syntax varlist, NAMES(string)
+    local originals
+    local backups
+    foreach target of local names {
+        capture confirm variable `target', exact
+        if !_rc {
+            tempvar backup
+            local originals `originals' `target'
+            local backups `backups' `backup'
+        }
+    }
+    nobreak {
+        if "`originals'" != "" rename (`originals') (`backups')
+        capture noisily {
+            if "$CTOOLS_cppmlhdfe_fault" == "publish" error 459
+            rename (`varlist') (`names')
+        }
+        local rc = _rc
+        if `rc' {
+            if "`originals'" != "" rename (`backups') (`originals')
+            exit `rc'
+        }
+    }
 end
 
 capture mata: mata drop _cppmlhdfe_fix_psd()

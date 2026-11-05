@@ -1,4 +1,4 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 
 program define cpsmatch, rclass sortpreserve
     version 14.1
@@ -10,7 +10,7 @@ program define cpsmatch, rclass sortpreserve
         exit 920
     }
 
-    capture noisily syntax varlist(min=1 numeric) [if] [in], ///
+    capture noisily syntax varlist(min=1 numeric fv) [if] [in], ///
         [OUTcome(varname numeric) Pscore(varname numeric) ///
          Logit Probit ///
          Neighbor(integer 1) Caliper(real 0) Radius Kernel ///
@@ -23,6 +23,9 @@ program define cpsmatch, rclass sortpreserve
     else if _rc != 0 {
         exit _rc
     }
+    * The if is evaluated now, before any helper replaces the r() or e()
+    * results it may name; the matching sample is completed below.
+    marksample touse
 
     * =========================================================================
     * UPFRONT VALIDATION
@@ -31,14 +34,24 @@ program define cpsmatch, rclass sortpreserve
     * Split varlist into treatment variable and covariates
     gettoken depvar treatvar : varlist
     * depvar = treatment variable (first var)
-    * treatvar = covariates (remaining vars)
+    * treatvar = covariates (remaining vars); factor variables are allowed,
+    * as in psmatch2, and expanded by the score model
+    _fv_check_depvar `depvar'
+    local treatvar = strtrim(`"`treatvar'"')
 
-    * Check treatment is binary
-    quietly tab `depvar' `if' `in'
-    if r(r) != 2 {
-        di as error "cpsmatch: treatment variable must be binary (0/1)"
-        exit 2000
+    * psmatch2's option checks, in its order
+    if "`pscore'" != "" & "`treatvar'" != "" {
+        di as error "You cannot specify both a varlist AND a propensity score"
+        exit 198
     }
+    if "`descending'" != "" & "`noreplacement'" == "" {
+        di as error "Option descending makes only sense when matching without replacement"
+        exit 198
+    }
+
+    * As in psmatch2, the treatment needs no particular coding: rows with
+    * _treated == 1 are matched to rows with _treated == 0, and other codes
+    * stay in the sample, on support, with _weight = _treated.
 
     if `neighbor' <= 0 {
         di as error "variable _n1 not found"
@@ -56,16 +69,17 @@ program define cpsmatch, rclass sortpreserve
         }
     }
 
-    * Determine matching method
+    * Determine matching method. As in psmatch2, radius takes precedence
+    * over kernel.
     local method = 0  /* 0=nearest, 1=radius, 2=kernel */
+    if "`kernel'" != "" {
+        local method = 2
+    }
     if "`radius'" != "" {
         local method = 1
         if `caliper' == 0 {
             local caliper = 0.25  /* Default radius */
         }
-    }
-    if "`kernel'" != "" {
-        local method = 2
     }
 
     if "`noreplacement'" != "" & (`method' != 0 | `neighbor' != 1) {
@@ -157,7 +171,6 @@ program define cpsmatch, rclass sortpreserve
     * Matching sample as psmatch2 builds it: treatment, covariates and the
     * outcome nonmissing, restricted to the score model's e(sample), then a
     * nonmissing score.
-    marksample touse
     capture markout `touse' `outcome'
 
     if "`pscore'" != "" {
@@ -280,8 +293,6 @@ program define cpsmatch, rclass sortpreserve
 
             * psmatch2 default ATT variance: unweighted group variances,
             * with squared match-frequency weights for reused controls.
-            * cpsmatch stores unused controls with zero weight; psmatch2
-            * stores them as missing. Exclude both representations.
             local var0 = scalar(_cpsmatch_var0)
             local sum_weight_squared = scalar(_cpsmatch_w2)
             local att_se = sqrt(`var1'/`n1' + `var0'*`sum_weight_squared'/`n1'^2)
@@ -428,11 +439,15 @@ program define cpsmatch, rclass sortpreserve
     return scalar common_min = _cpsmatch_common_min
     return scalar common_max = _cpsmatch_common_max
 
-    if "`outcome'" != "" & `att' != . {
+    * psmatch2 returns the ATT and its standard error, missing when undefined
+    if "`outcome'" != "" {
         return scalar att = `att'
         return scalar att_se = `att_se'
         return scalar seatt = `att_se'
         return scalar att_t = `att_t'
+        * psmatch2's per-outcome names, where they fit in 32 characters
+        if strlen("att_`outcome'") <= 32 return scalar att_`outcome' = `att'
+        if strlen("seatt_`outcome'") <= 32 return scalar seatt_`outcome' = `att_se'
     }
 
     return local method = cond(`method'==0, "nearest", cond(`method'==1, "radius", "kernel"))

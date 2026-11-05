@@ -1,7 +1,8 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 
 program define cdestring
     version 14.1
+    local cmdargs `"`0'"'
 
     * Check observation limit (Stata plugin API limitation)
     if _N > 2147483647 {
@@ -13,6 +14,18 @@ program define cdestring
     * Parse syntax - note varlist is optional (defaults to all string vars)
     syntax [varlist] [if] [in], [Generate(string) replace ///
         IGnore(string) force float percent dpcomma Verbose THReads(integer 0)]
+    * The if is evaluated now, before any helper replaces the r() or e()
+    * results it may name.
+    local iftouse ""
+    if `"`if'"' != "" {
+        tempvar iftouse
+        mark `iftouse' `if' `in'
+        local if "if `iftouse'"
+    }
+    if !inrange(`threads', 0, 256) {
+        di as error "threads() must be between 0 and 256"
+        exit 198
+    }
 
     * =========================================================================
     * UPFRONT VALIDATION
@@ -49,23 +62,18 @@ program define cdestring
             exit 198
         }
 
-        * Check that generate variables are valid new names
-        foreach v of local generate {
-            capture confirm new variable `v'
-            if _rc != 0 {
-                * Either invalid name or already exists
-                capture confirm variable `v'
-                if _rc == 0 {
-                    di as error "cdestring: variable `v' already exists"
-                    exit 110
-                }
-                else {
-                    di as error "cdestring: invalid variable name `v'"
-                    exit 198
-                }
-            }
+        * Native destring rejects duplicate destinations before creating any.
+        local unique : list uniq generate
+        if `: word count `unique'' != `ngen' {
+            di as error "generate() contains duplicate variable names"
+            exit 110
         }
+        _ctools_newvars `generate'
     }
+
+    * destring converts a repeated variable once and then finds it numeric.
+    * Staging it twice would make the group rename fail.
+    if "`replace'" != "" local varlist : list uniq varlist
 
     * Handle already-numeric variables (match destring behavior: skip gracefully)
     local string_vars ""
@@ -130,69 +138,22 @@ program define cdestring
     if _rc != 0 & _rc != 110 exit 601
     capture confirm number 0
 
-    * Create destination variables
-    if "`replace'" != "" {
-        * For replace, we create temporary variables first, then replace
-        local dest_varlist ""
-        * Name the staging variables by position: a local named after the
-        * variable is invalid once the name has 28+ characters.
-        local i = 0
-        foreach v of local varlist {
-            local ++i
-            tempvar tmp`i'
-            if "`float'" != "" {
-                quietly generate float `tmp`i'' = .
-            }
-            else {
-                quietly generate double `tmp`i'' = .
-            }
-            local dest_varlist "`dest_varlist' `tmp`i''"
-        }
-    }
-    else {
-        * For generate, create the new variables
-        local dest_varlist ""
-        foreach gv of local generate {
-            if "`float'" != "" {
-                quietly generate float `gv' = .
-            }
-            else {
-                quietly generate double `gv' = .
-            }
-            local dest_varlist "`dest_varlist' `gv'"
-        }
-    }
-
-    * Get all variable names and build indices for plugin call
-    * Pass ALL variables to plugin so indices match dataset positions
-    unab allvars : *
-
-    * Build list of source variable indices (position in allvars)
-    local src_indices ""
+    * Both modes stage values and metadata. A plugin error or Break then
+    * removes only temporary variables, without publishing partial outputs.
+    unab original_order : _all
+    local dest_varlist ""
+    local i = 0
     foreach v of local varlist {
-        local idx = 1
-        foreach av of local allvars {
-            if "`av'" == "`v'" {
-                local src_indices "`src_indices' `idx'"
-                continue, break
-            }
-            local ++idx
+        local ++i
+        tempvar tmp`i'
+        if "`float'" != "" {
+            quietly generate float `tmp`i'' = .
         }
-    }
-
-    * Build list of destination variable indices (position in allvars)
-    local dst_indices ""
-    foreach v of local dest_varlist {
-        local idx = 1
-        foreach av of local allvars {
-            if "`av'" == "`v'" {
-                local dst_indices "`dst_indices' `idx'"
-                continue, break
-            }
-            local ++idx
+        else {
+            quietly generate double `tmp`i'' = .
         }
+        local dest_varlist "`dest_varlist' `tmp`i''"
     }
-
 
     * Build option strings for C plugin
     local threads_code ""
@@ -203,9 +164,12 @@ program define cdestring
     local ignore_code ""
     if `"`ignore'"' != "" {
         * Escape special characters for passing to C
-        * Order matters: first escape backslashes, then encode spaces
+        * Escape backslashes first so literal \t differs from an actual tab.
         local ignore_escaped = subinstr(`"`ignore'"', "\", "\\", .)
         local ignore_escaped = subinstr(`"`ignore_escaped'"', " ", "\s", .)
+        local ignore_escaped = subinstr(`"`ignore_escaped'"', char(9), "\t", .)
+        local ignore_escaped = subinstr(`"`ignore_escaped'"', char(10), "\n", .)
+        local ignore_escaped = subinstr(`"`ignore_escaped'"', char(13), "\r", .)
         local ignore_code "ignore=`ignore_escaped'"
     }
 
@@ -242,46 +206,30 @@ program define cdestring
         quietly _ctools_clock __ct_start92
     }
 
-    * Build the full command string
-    * Format: src1 dst1 src2 dst2 ... nvars=N [options]
-    local cmd_indices ""
-    local i = 1
-    foreach src_idx of local src_indices {
-        local dst_idx : word `i' of `dst_indices'
-        local cmd_indices "`cmd_indices' `src_idx' `dst_idx'"
-        local ++i
-    }
-
-    * Set string width metadata for flat buffer optimization
-    _ctools_strw `allvars'
+    * The plugin varlist holds the sources, then the destinations (seqpairs):
+    * an index list in the argument exceeds Stata's plugin-call argument
+    * length on wide data
+    _ctools_strw `varlist' `dest_varlist'
 
     * Stata answers an if one observation at a time. Without one the plugin
-    * skips the check; an if is marked first and passed last, as a sample
-    * marker the plugin reads in parallel, unless in limits the range
-    * (marking covers every observation). The marker is the last variable
-    * until it is dropped after the call, which is then free.
+    * skips the check; the if marked after syntax is passed last, as a
+    * sample marker the plugin reads in parallel.
     local select_code "skipif"
     local marker ""
     local ifcond ""
-    if `"`if'"' != "" & `"`in'"' == "" {
-        tempvar marker
-        mark `marker' `if'
+    if `"`if'"' != "" {
+        local marker "`iftouse'"
         local select_code "touse"
     }
-    else if `"`if'"' != "" {
-        local select_code ""
-        local ifcond `"`if'"'
-    }
 
-    * Call the C plugin with ALL variables (so indices match dataset positions).
     * ignore= goes last so its characters cannot be read as option keywords.
     * The plugin sets local cdestring_failed (nonnumeric count per variable).
     local cdestring_failed ""
-    plugin call ctools_plugin `allvars' `marker' `ifcond' `in', ///
-        "cdestring `threads_code' `cmd_indices' nvars=`nvars' `force_code' `percent_code' `dpcomma_code' `float_code' `verbose_code' `select_code' `ignore_code'"
+    capture noisily plugin call ctools_plugin `varlist' `dest_varlist' `marker' `ifcond' `in', ///
+        "cdestring `threads_code' seqpairs nvars=`nvars' `force_code' `percent_code' `dpcomma_code' `float_code' `verbose_code' `select_code' `ignore_code'"
 
     local plugin_rc = _rc
-    if "`marker'" != "" drop `marker'
+    if `plugin_rc' exit `plugin_rc'
 
     if `__do_timing' {
         quietly _ctools_clock __ct_now
@@ -298,16 +246,19 @@ program define cdestring
     * ignore() characters) is left untouched unless force is specified: no
     * generate, no replace (the plugin did not store it). Others proceed.
     local genrep = cond("`replace'" != "", "replace", "generate")
+    * destring records the ignore() characters it removed in char destring
+    local ignore_chars `"`ignore'"'
+    if "`percent'" != "" & !ustrpos(`"`ignore_chars'"', "%") local ignore_chars `"`ignore_chars'%"'
+    local n_ignore = ustrlen(`"`ignore_chars'"')
+    local publish
+    local final_names
+    local backups
     local i = 1
     foreach v of local varlist {
         local dv : word `i' of `dest_varlist'
         local nbad : word `i' of `cdestring_failed'
         if "`nbad'" == "" local nbad 0
-        if `plugin_rc' != 0 {
-            * Clean up temp vars on error
-            if "`replace'" != "" capture drop `dv'
-        }
-        else if `nbad' > 0 & "`force'" == "" {
+        if `nbad' > 0 & "`force'" == "" {
             drop `dv'
             if `"`ignore'"' != "" | "`percent'" != "" {
                 di as text "`v': contains characters not specified in " ///
@@ -320,28 +271,86 @@ program define cdestring
         else {
             local vlabel : variable label `v'
             label variable `dv' `"`vlabel'"'
-            local characteristics : char `v'[]
-            foreach ch of local characteristics {
-                local value : char `v'[`ch']
-                char `dv'[`ch'] `"`value'"'
+            local removed ""
+            local nremoved = 0
+            local seen_chars ""
+            forvalues m = 1/`n_ignore' {
+                local t = usubstr(`"`ignore_chars'"', `m', 1)
+                if strpos(`"`seen_chars'"', `"`t'"') continue
+                local seen_chars `"`seen_chars'`t'"'
+                if "`iftouse'" != "" quietly count if ustrpos(`v', `"`t'"') & `iftouse' `in'
+                else quietly count if ustrpos(`v', `"`t'"') `in'
+                if r(N) {
+                    if `"`t'"' == " " local removed `"`removed' space"'
+                    else local removed `"`removed' `t'"'
+                    local ++nremoved
+                }
             }
-            if "`replace'" != "" {
-                * Replace the original string variable with the temp var
-                drop `v'
-                rename `dv' `v'
-                local dv `v'
+            local removed_text = plural(`nremoved', "Character") + " removed " + ///
+                plural(`nremoved', "was", "were") + `":`removed'"'
+            char `dv'[destring] `"`removed_text'"'
+            char `dv'[destring_cmd] `"cdestring `cmdargs'"'
+            char `v'[destring]
+            char `v'[destring_cmd]
+            * destring copies the characteristics for generate() (through
+            * macros) and moves them with char rename for replace (below)
+            if "`replace'" == "" {
+                local characteristics : char `v'[]
+                foreach ch of local characteristics {
+                    local value : char `v'[`ch']
+                    char `dv'[`ch'] `"`value'"'
+                }
             }
             * Compress to the optimal storage type (mimics destring)
             quietly compress `dv'
             local vtype : type `dv'
+            local publish `publish' `dv'
             if "`replace'" != "" {
+                tempvar backup`i'
+                local backups `backups' `backup`i''
+                local final_names `final_names' `v'
                 di as text "`v': " as text "string to " as result "`vtype'"
             }
             else {
-                di as text "`v' -> `dv': " as text "string to " as result "`vtype'"
+                local final : word `i' of `generate'
+                local final_names `final_names' `final'
+                local converted_sources `converted_sources' `v'
+                di as text "`v' -> `final': " as text "string to " as result "`vtype'"
             }
         }
         local ++i
+    }
+
+    * Keep originals until the complete name swap succeeds. Group rename
+    * validates its whole mapping; nobreak prevents interruption mid-commit.
+    if "`publish'" != "" {
+        nobreak {
+            if "`replace'" != "" rename (`final_names') (`backups')
+            capture rename (`publish') (`final_names')
+            local publish_rc = _rc
+            if `publish_rc' {
+                if "`replace'" != "" rename (`backups') (`final_names')
+                exit `publish_rc'
+            }
+            if "`replace'" != "" {
+                foreach backup of local backups {
+                    gettoken final final_names : final_names
+                    char rename `backup' `final'
+                }
+                drop `backups'
+                order `original_order'
+            }
+            else {
+                * destring places each generate() output right after its source
+                local target_order ""
+                foreach v of local original_order {
+                    local target_order `target_order' `v'
+                    local pos : list posof "`v'" in converted_sources
+                    if `pos' local target_order `target_order' `: word `pos' of `final_names''
+                }
+                order `target_order'
+            }
+        }
     }
 
     * Report values that force converted to missing
@@ -409,10 +418,6 @@ program define cdestring
             di as text "    Max threads available:  " as result %8.0f `__threads_max'
             di as text "{hline 55}"
         }
-    }
-
-    if `plugin_rc' != 0 {
-        exit `plugin_rc'
     }
 
     * Ensure clean exit

@@ -1,7 +1,13 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 *! C-accelerated distinct value counts
 program define cdistinct, rclass byable(recall)
     version 14.1
+    * Check observation limit (Stata plugin API limitation)
+    if _N > 2147483647 {
+        di as error "ctools does not support datasets exceeding 2^31 (2.147 billion) observations"
+        di as error "This is a limitation of Stata's plugin API"
+        exit 920
+    }
     syntax [varlist] [if] [in], [MISSing Abbrev(integer -1) Joint ///
         MINimum(integer 0) MAXimum(integer -1) Verbose THReads(integer 0)]
     if !inrange(`threads', 0, 256) exit 198

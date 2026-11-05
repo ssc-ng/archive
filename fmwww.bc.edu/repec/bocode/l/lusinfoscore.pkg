@@ -1,0 +1,24 @@
+d 'LUSINFOSCORE': module to compute information score for free-text point-of-care lung ultrasound (LUS) reports
+d
+d    lusinfoscore reads free-text point-of-care lung ultrasound
+d reports and assigns each report an information score. The score  
+d  measures how much clinically useful information a report
+d contains, using the items and point values of Table 1 (B-lines,  
+d  sub-zones, pleural abnormalities, consolidation and air
+d bronchograms, pleural effusion, laterality, localization,
+d etiology or	 differential diagnosis, and cardiac findings).
+d Higher scores mean more documented findings and more detail about
+d them. It is not    a measure of disease severity. 
+d
+d KW: textual analysis
+d KW: ultrasound reports
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261104
+d
+d Author:  Paul Walsh ,  Sutter Health Research Institute
+d Support: email  yousentwhohome@@gmail.com
+d
+f lusinfoscore.ado
+f lusinfoscore.sthlp

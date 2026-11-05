@@ -1,4 +1,4 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 *! _ctools_group — group identifiers from the ctools plugin, in place of egen group()
 *!
 *! Usage:  _ctools_group varlist [if] [in], generate(newvar) [label]
@@ -10,7 +10,8 @@
 *! in any variable of varlist (string "" counts as missing), get missing. The
 *! new variable is a long labeled "group(varlist)". label also defines a value
 *! label named after the new variable, with egen group(, label)'s text for
-*! each group. count only counts the groups. Returns r(N_groups).
+*! each group. count only counts the groups. Returns r(N_groups), and with
+*! label r(reps), one observation number of each group in group order.
 *!
 *! The plugin reads, sorts and numbers the keys. Stata numbers them by sorting
 *! only when the plugin is unavailable or cannot read a key (strL text over
@@ -88,6 +89,8 @@ program define _ctools_group, rclass
             local rc = _rc
         }
         if "`marked'" != "" capture drop `marked'
+        * Every failure, Break included, drops the unfilled output variable.
+        if `rc' & "`generate'" != "" capture drop `generate'
         if `rc' == 1 exit 1
         if `rc' == 134 {
             di as error "too many values for {bf:label define}"
@@ -96,9 +99,6 @@ program define _ctools_group, rclass
         if !`rc' {
             local n_groups = scalar(_ctools_group_n)
             local group_reps `"`ctools_group_reps'"'
-        }
-        else if "`generate'" != "" {
-            drop `generate'
         }
         capture scalar drop _ctools_group_n
     }
@@ -127,6 +127,8 @@ program define _ctools_group, rclass
         }
     }
     return scalar N_groups = `n_groups'
+    * label: the observation number of one observation of each group
+    if "`label'" != "" return local reps `"`group_reps'"'
 end
 
 * Number groups by sorting in Stata (the data and their sort order are restored).

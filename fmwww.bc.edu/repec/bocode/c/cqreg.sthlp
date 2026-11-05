@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.2.3 20261030}{...}
+{* *! version 1.2.4 20261103}{...}
 {vieweralsosee "[R] qreg" "help qreg"}{...}
 {vieweralsosee "ctools" "help ctools"}{...}
 {viewerjumpto "Syntax" "cqreg##syntax"}{...}
@@ -21,7 +21,7 @@
 {p 8 14 2}
 {cmd:cqreg}
 {depvar}
-{indepvars}
+[{indepvars}]
 {ifin}
 [{cmd:,} {it:options}]
 
@@ -39,11 +39,14 @@
 {synopt:{opt bwmethod(method)}}bandwidth selection: {opt hsheather}, {opt bofinger}, or {opt chamberlain}{p_end}
 
 {syntab:Reporting}
+{synopt:{opt l:evel(#)}}set confidence level; default is {cmd:level(95)}{p_end}
+{synopt:{it:display_options}}{help estimation options##display_options:display options} of {cmd:qreg}{p_end}
+{synopt:{opt nolog}}accepted for compatibility with {cmd:qreg}; {cmd:cqreg} prints no iteration log{p_end}
 {synopt:{opt v:erbose}}display progress and elapsed times{p_end}
 {synopt:{opt thr:eads(#)}}maximum number of threads to use{p_end}
 
 {syntab:Optimization}
-{synopt:{opt tol:erance(#)}}convergence tolerance; default is {cmd:tolerance(1e-12)}{p_end}
+{synopt:{opt tol:erance(#)}}convergence tolerance in normalized response units; default is {cmd:tolerance(1e-12)}{p_end}
 {synopt:{opt max:iter(#)}}maximum iterations; default is {cmd:maxiter(200)}{p_end}
 {synopt:{opt nopreprocess(#)}}accepted for backward compatibility; has no effect{p_end}
 {synoptline}
@@ -59,8 +62,21 @@ primal-dual interior-point solver in C.
 
 {pstd}
 Factor-variable notation is allowed. Include explicit indicators for fixed
-effects, for example {cmd:cqreg y x i.group}. Weights and {opt absorb()} are
-not accepted.
+effects, for example {cmd:cqreg y x i.group}. Without {it:indepvars},
+{cmd:cqreg} fits the constant-only model. Weights and {opt absorb()} are
+not accepted. Typing {cmd:cqreg} without arguments, or
+{cmd:estimates replay}, redisplays the last estimates; {opt level()} and the
+display options may be given then.
+
+{pstd}
+The quantile regression objective can have several minimizers. With indicator
+regressors this is common: when a group's size times {it:q} is an integer,
+that group's coefficient can move within an interval without changing the
+objective. When the minimum is not unique, {cmd:cqreg} and {cmd:qreg} may
+report different coefficients with the same quantile loss, stored in
+{cmd:e(sum_adev)}. {cmd:cqreg} checks for alternative solutions and reports
+those it finds; see {help cqreg##methods:Methods and formulas} for the limits
+of this check.
 
 
 {marker options}{...}
@@ -90,7 +106,9 @@ Powell sandwich estimator.
 
 {phang2}
 {cmd:vce(cluster} {it:clustvar}{cmd:)} computes cluster-robust standard errors
-clustered on {it:clustvar}.
+clustered on {it:clustvar}. With a single cluster the covariance is undefined:
+as {cmd:qreg}, {cmd:cqreg} posts a zero {cmd:e(V)} with {cmd:e(rank)} 0 and
+displays no standard errors.
 
 {phang}
 {opt denmethod(method)} specifies the density estimation method for computing
@@ -130,6 +148,11 @@ density estimation used in computing standard errors.
 {dlgtab:Reporting}
 
 {phang}
+{opt level(#)} sets the confidence level of the reported intervals. As in
+{cmd:qreg}, it also enters the Hall-Sheather and Chamberlain bandwidths, and
+so the standard errors, through alpha = 1 - {it:#}/100.
+
+{phang}
 {opt verbose} displays progress and elapsed times.
 
 {phang}
@@ -139,14 +162,23 @@ The default follows the {help ctools##threads:ctools thread setting}.
 {dlgtab:Optimization}
 
 {phang}
-{opt tolerance(#)} specifies the convergence tolerance for the IPM solver.
-The default is {cmd:tolerance(1e-12)}.
+{opt tolerance(#)} specifies the convergence tolerance for the IPM solver. The
+default is {cmd:tolerance(1e-12)}. The response is centered at its median and
+scaled by a power of two before fitting, so its median absolute deviation is
+between 1 and 2 (the mean absolute deviation when most values are tied). Data
+whose spread is already in that range are only centered. Centering reduces
+rounding error when the dependent variable has a large level relative to its
+variation. Convergence is assessed in these normalized units. Coefficients,
+covariance, sparsity and deviation statistics are returned in the original
+response units. If covariance values are too small or too large to calculate
+or store in Stata, {cmd:cqreg} returns error 498 without storing new
+estimates. Rescale the dependent variable and estimate the model again.
 
 {phang}
-{opt maxiter(#)} specifies the maximum number of IPM iterations. The default
-is {cmd:maxiter(200)}. If the solver exhausts this limit, encounters a numerical
-breakdown, or produces nonfinite results, {cmd:cqreg} returns error 430 and does
-not post new estimates.
+{opt maxiter(#)} sets the maximum number of iterations of the interior-point
+algorithm. The default is 200. If the algorithm fails to converge or cannot
+calculate finite estimates, {cmd:cqreg} returns error 430 without storing new
+estimates.
 
 {phang}
 {opt nopreprocess(#)} accepts nonnegative integers for compatibility and has
@@ -203,13 +235,20 @@ the linear prediction. {cmd:if} and {cmd:in} may restrict the predictions.
 {synopt:{cmd:e(q_v)}}unconditional sample quantile of the dependent variable{p_end}
 {synopt:{cmd:e(f_r)}}estimated density, 1/e(sparsity){p_end}
 {synopt:{cmd:e(sum_w)}}number of observations (weights are not accepted){p_end}
-{synopt:{cmd:e(sparsity)}}estimated sparsity (1/f(0)); missing for the kernel
-method with {cmd:vce(robust)} or {cmd:vce(cluster)}, as in {cmd:qreg}{p_end}
+{synopt:{cmd:e(sparsity)}}estimated sparsity (1/f(0)); missing with
+{cmd:vce(robust)} or {cmd:vce(cluster)}, as in {cmd:qreg}; zero when the
+dependent variable has a mass point at the fitted quantile, as in {cmd:qreg},
+which then gives a zero covariance{p_end}
 {synopt:{cmd:e(bwidth)}}bandwidth used for sparsity estimation{p_end}
 {synopt:{cmd:e(kbwidth)}}kernel bandwidth (kernel method){p_end}
 {synopt:{cmd:e(iterations)}}number of IPM iterations{p_end}
 {synopt:{cmd:e(convcode)}}0 for a successfully converged fit{p_end}
-{synopt:{cmd:e(df_r)}}residual degrees of freedom{p_end}
+{synopt:{cmd:e(nonunique)}}1 if the check finds other coefficients with the same minimum;
+0 if it does not; missing if the check could not be performed. A value of 0
+does not establish that the solution is unique{p_end}
+{synopt:{cmd:e(df_r)}}residual degrees of freedom, N - {cmd:e(rank)}{p_end}
+{synopt:{cmd:e(rank)}}rank of {cmd:e(V)}; 0 for a zero covariance (a single
+cluster, or zero sparsity), as in {cmd:qreg}{p_end}
 {synopt:{cmd:e(df_m)}}model degrees of freedom{p_end}
 {synopt:{cmd:e(N_clust)}}number of clusters (if {opt vce(cluster)}){p_end}
 
@@ -218,12 +257,12 @@ method with {cmd:vce(robust)} or {cmd:vce(cluster)}, as in {cmd:qreg}{p_end}
 {synopt:{cmd:e(cmd)}}{cmd:cqreg}{p_end}
 {synopt:{cmd:e(depvar)}}name of dependent variable{p_end}
 {synopt:{cmd:e(vce)}}variance estimation method{p_end}
+{synopt:{cmd:e(vcetype)}}{cmd:Robust} with {cmd:vce(robust)} or {cmd:vce(cluster)}{p_end}
 {synopt:{cmd:e(denmethod)}}density estimation method{p_end}
 {synopt:{cmd:e(kernel)}}kernel function (kernel method){p_end}
 {synopt:{cmd:e(bwmethod)}}bandwidth selection method{p_end}
 {synopt:{cmd:e(clustvar)}}cluster variable (if {opt vce(cluster)}){p_end}
 {synopt:{cmd:e(predict)}}program used to implement {cmd:predict}{p_end}
-{synopt:{cmd:e(title)}}title in estimation output{p_end}
 
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Matrices}{p_end}
@@ -252,7 +291,21 @@ where {it:q} is the quantile, {it:u_i} represents positive deviations, and
 {it:v_i} represents negative deviations.
 
 {pstd}
-The solver uses primal-dual iterations with Mehrotra predictor-corrector steps.
+The solver uses primal-dual iterations with Mehrotra predictor-corrector steps,
+then moves to a vertex of the linear program: the fit through K observations
+(the basis) with zero residuals.
+
+{pstd}
+The optimum need not be unique, which is common with indicator regressors (a
+group whose size times q is an integer). At the vertex, each edge of the
+linear program moves one basis residual off zero; {cmd:cqreg} computes the
+rate at which the objective changes along each edge (the reduced costs) and,
+when a rate is zero to rounding, sets {cmd:e(nonunique)} to 1 and notes that
+other coefficients attain the same minimum. {cmd:qreg} and {cmd:cqreg} can
+then report different, equally optimal coefficients. The check can miss
+alternative solutions when additional observations have zero residuals. A
+finding of nonuniqueness identifies an alternative solution; failure to find
+one does not establish uniqueness.
 
 {pstd}
 Standard errors follow {cmd:qreg}. The IID variance formula is:

@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.2.3 20261030}{...}
+{* *! version 1.2.4 20261103}{...}
 {viewerjumpto "Syntax" "cmerge##syntax"}{...}
 {viewerjumpto "Description" "cmerge##description"}{...}
 {viewerjumpto "Options" "cmerge##options"}{...}
@@ -31,6 +31,10 @@ where {it:merge_type} is one of
 {p2col :{opt m:1}}many-to-one merge{p_end}
 {p2col :{opt 1:m}}one-to-many merge{p_end}
 {p2col :{opt m:m}}match repeated keys sequentially within each key group{p_end}
+
+{pstd}
+As with {cmd:merge}, {opt n} may be written for {opt m} ({opt 1:n}, {opt n:1}, {opt n:n},
+{opt n:m}, {opt m:n}).
 
 {synoptset 28 tabbed}{...}
 {synopthdr}
@@ -73,11 +77,11 @@ where {it:merge_type} is one of
 
 
 {pstd}
-For an observation-by-observation merge, use
-{cmd:cmerge 1:1 _n using} {it:filename}. For a keyed merge, missing key values
-participate in matching. {cmd:m:m} pairs observations sequentially within each
-key group and repeats the last observation of the shorter group; it does not
-form every pair. Use {help joinby} for all combinations.
+For an observation-by-observation merge, use {cmd:cmerge 1:1 _n using}
+{it:filename}. For a keyed merge, missing key values participate in matching.
+{cmd:m:m} pairs observations sequentially within each key group and repeats
+the last observation of the shorter group; it does not form every pair. Use
+{help joinby} for all combinations.
 
 {marker options}{...}
 {title:Options}
@@ -120,7 +124,7 @@ missing. Key variables must have matching string/numeric types even with
 {p_end}
 
 {phang}
-{opt nolabel} prevents copying value-label definitions from the using data.
+{opt nolabel} (or {opt nolabels}) prevents copying value-label definitions from the using data.
 Without this option, labels are copied, but an existing master definition
 with the same name takes precedence.
 
@@ -140,7 +144,13 @@ nonmissing master values.
 
 {phang}
 {opt preserve_order(1)} retains master observation order, with using-only
-observations appended. The default is {cmd:preserve_order(0)}.
+observations appended. The default is {cmd:preserve_order(0)}: rows come out in
+{cmd:merge}'s order, the master observations in key order (the first output row
+of each), then the using-only rows and the later {opt 1:m} or {opt m:m}
+pairings of a master row, in key order. A {opt 1:1} result without using-only
+rows is sorted by the keys. Where the keys of an unsorted master have ties,
+{cmd:merge}'s order within them depends on {help set sortseed}; {cmd:cmerge}
+keeps their existing order.
 
 {phang}
 {opt noreport} suppresses the table of merge results.
@@ -166,10 +176,10 @@ leave a partially merged dataset. It cannot be combined with {opt snapshot}.
 
 {pstd}
 Shared numeric and fixed-width string variables are widened as needed to hold
-both inputs; a {cmd:long}/{cmd:float} combination uses {cmd:double}. New variables
-retain the using data's formats, labels, notes, and characteristics. If either
-dataset contains a retained {cmd:strL} variable, the merge uses Stata's
-{cmd:merge}; {opt preserve_order()} does not apply on this path.
+both inputs; a {cmd:long}/{cmd:float} combination uses {cmd:double}. New
+variables retain the using data's formats, labels, notes, and characteristics.
+If either dataset contains a {cmd:strL} variable that will be retained,
+{cmd:cmerge} uses Stata's {cmd:merge} and ignores {opt preserve_order()}.
 
 {marker failure}{...}
 {pstd}
@@ -232,7 +242,7 @@ recovery.
 {synopt:{cmd:r(N_3)}}number of matched observations{p_end}
 {synopt:{cmd:r(N_4)}}matches with missing values updated (with {opt update}){p_end}
 {synopt:{cmd:r(N_5)}}matches with conflicting nonmissing values (with {opt update}){p_end}
-{synopt:{cmd:r(time)}}elapsed time in seconds; missing on the native merge path{p_end}
+{synopt:{cmd:r(time)}}elapsed time in seconds; missing when Stata's {cmd:merge} is used{p_end}
 
 {p2col 5 20 24 2: Macros}{p_end}
 {synopt:{cmd:r(using)}}name of using file{p_end}

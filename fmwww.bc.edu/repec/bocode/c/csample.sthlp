@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.2.3 20261030}{...}
+{* *! version 1.2.4 20261103}{...}
 {viewerjumpto "Syntax" "csample##syntax"}{...}
 {viewerjumpto "Description" "csample##description"}{...}
 {viewerjumpto "Options" "csample##options"}{...}
@@ -49,10 +49,11 @@ selected by {cmd:if} and {cmd:in}, it drops those not drawn. Observations outsid
 that selection remain in the dataset.
 
 {pstd}
-The positional {it:#} specifies a percentage from 0 to 100. The number drawn
-is rounded to the nearest integer, separately within each {opt by()} group.
-Use {opt count(#)} to specify a positive integer count instead. If a group has
-fewer than {it:#} observations, all its observations are kept.
+The number following {cmd:csample} specifies a percentage from 0 to 100. The
+number drawn is rounded to the nearest integer, separately within each
+{opt by()} group. Use {opt count(#)} to specify a nonnegative integer count
+instead. If a group has fewer than {it:#} observations, all its observations
+are kept.
 
 {pstd}
 Use {help set seed} to reproduce a draw with the same data, observation order,
@@ -66,12 +67,13 @@ and need not select the same observations from the same seed.
 {dlgtab:Main}
 
 {phang}
-{opt count(#)} specifies the number of observations to draw. This may not be
+{opt count(#)} specifies the number of observations to draw, zero or more. This may not be
 combined with the {it:#} percent syntax. When used with {opt by()}, {it:#}
 observations are drawn from each group, or all observations if the group is smaller.
+{cmd:count(0)}, like {cmd:sample 0, count}, drops every observation in the sample.
 
 {phang}
-{opt by(varlist)} specifies that sampling should be performed separately within
+{opt by(varlist)}, or the {cmd:by} {it:varlist}{cmd::} prefix as with {cmd:sample}, specifies that sampling should be performed separately within
 each group defined by {it:varlist}. Each group will have the specified
 percentage or count of observations sampled.
 

@@ -1,4 +1,4 @@
-*! version 1.2.3 20261030 github.com/mdroste/stata-ctools
+*! version 1.2.4 20261103 github.com/mdroste/stata-ctools
 
 program define cwinsor
     version 14.1
@@ -13,7 +13,7 @@ program define cwinsor
     _ctools_mode `0'
     * Break is recognized only inside _cwinsor_impl.
     nobreak {
-        macro drop CTOOLS_cwinsor_plugin CTOOLS_cwinsor_targets
+        macro drop CTOOLS_cwinsor_plugin CTOOLS_cwinsor_targets CTOOLS_cwinsor_recast
         if "`mode'" == "snapshot" preserve
         else if "`mode'" == "" _ctools_undo record CTOOLS_u_cwinsor_
         capture noisily break _cwinsor_impl `0'
@@ -26,6 +26,14 @@ program define cwinsor
                     capture noisily plugin call ctools_plugin $CTOOLS_cwinsor_targets, "cwinsor rollback"
                     if _rc di as error "cwinsor: the original values could not be restored"
                 }
+                * Storage promoted for fractional cutoffs goes back too (recast
+                * refuses if a value would change)
+                local recast "$CTOOLS_cwinsor_recast"
+                while "`recast'" != "" {
+                    gettoken target recast : recast
+                    gettoken vtype recast : recast
+                    capture recast `vtype' `target'
+                }
                 _ctools_undo rollback CTOOLS_u_cwinsor_
             }
             else if "`mode'" == "snapshot" restore
@@ -33,14 +41,14 @@ program define cwinsor
                 capture program ctools_plugin, plugin using("$CTOOLS_cwinsor_plugin")
                 capture plugin call ctools_plugin, "cwinsor commit"
             }
-            macro drop CTOOLS_cwinsor_plugin CTOOLS_cwinsor_targets
+            macro drop CTOOLS_cwinsor_plugin CTOOLS_cwinsor_targets CTOOLS_cwinsor_recast
             exit `rc'
         }
         if "$CTOOLS_cwinsor_plugin" != "" {
             capture program ctools_plugin, plugin using("$CTOOLS_cwinsor_plugin")
             capture plugin call ctools_plugin, "cwinsor commit"
         }
-        macro drop CTOOLS_cwinsor_plugin CTOOLS_cwinsor_targets
+        macro drop CTOOLS_cwinsor_plugin CTOOLS_cwinsor_targets CTOOLS_cwinsor_recast
         if "`mode'" == "snapshot" restore, not
         else if "`mode'" == "" _ctools_undo clear CTOOLS_u_cwinsor_
     }
@@ -82,8 +90,9 @@ program define _cwinsor_impl
         di as error "cwinsor: upper percentile must be between 0 and 100"
         exit 198
     }
-    if `p' >= `q' {
-        di as error "cwinsor: lower percentile (`p') must be less than upper (`q')"
+    * Equal percentiles are allowed, as in winsor2
+    if `p' > `q' {
+        di as error "cwinsor: lower percentile (`p') must not exceed upper (`q')"
         exit 198
     }
 
@@ -107,6 +116,20 @@ program define _cwinsor_impl
     }
 
     local nvars : word count `varlist'
+
+    * The plugin's stores into a frame alias variable have no effect; refuse
+    * them as replace and winsor2 do
+    local inplace = "`suffix'`prefix'" == ""
+    if `inplace' & c(stata_version) >= 18 {
+        foreach v of local varlist {
+            mata: st_local("__cw_alias", strofreal(st_isalias(st_local("v"))))
+            if `__cw_alias' {
+                di as error "cannot change values of alias variables"
+                di as error "    You tried to change values in alias variable `v'."
+                exit 109
+            }
+        }
+    }
 
     * Mark sample
     marksample touse, novarlist
@@ -139,7 +162,6 @@ program define _cwinsor_impl
     * Floating-point outputs can be written directly from the plugin's double
     * working columns. Native recast otherwise copies and scans each column
     * again, then moves it back through the entire dataset.
-    local inplace = "`suffix'`prefix'" == ""
     local direct_outputs = !`inplace' & "`trim'" == ""
     local overlap : list varlist & by
     if "`overlap'" != "" local direct_outputs = 0
@@ -190,12 +212,10 @@ program define _cwinsor_impl
 
     * Checked SPI stores use positions in the plugin varlist, just like reads.
     * Only target variables need store indices; by-variables are read-only.
-    local store_indices ""
-    local __pos = cond(`direct_outputs', `nvars' + `nby', 0)
-    foreach v of local target_varlist {
-        local ++__pos
-        local store_indices "`store_indices' `__pos'"
-    }
+    * The targets are consecutive, so the plugin receives only the position
+    * before the first one (a per-variable list overflows the plugin argument
+    * on wide data).
+    local store_indices = "storebase=" + string(cond(`direct_outputs', `nvars' + `nby', 0))
 
     * Build options
     local opts "p=`p' q=`q'"
@@ -209,6 +229,17 @@ program define _cwinsor_impl
         tempname cwinsor_bounds
         matrix `cwinsor_bounds' = J(`nvars', 2, .)
         local opts "`opts' deferbounds"
+    }
+    else {
+        * winsor2 stores by() cutoffs with egen in the source's type: the
+        * plugin truncates them for byte, int and long (t) and rounds them to
+        * float for float (f); double cutoffs are used as computed (d).
+        local cwinsor_rounding
+        foreach v of local varlist {
+            local vtype : type `v'
+            local cwinsor_rounding = "`cwinsor_rounding'" + cond(inlist("`vtype'", "byte", "int", "long"), "t", cond("`vtype'" == "float", "f", "d"))
+        }
+        local opts "`opts' rounding"
     }
 
     if "`verbose'" != "" local opts "`opts' verbose"
@@ -256,6 +287,15 @@ program define _cwinsor_impl
             local upper = `cwinsor_bounds'[`bound_index',2]
             matrix `cwinsor_bounds'[`bound_index',1] = `lower'
             matrix `cwinsor_bounds'[`bound_index',2] = `upper'
+            * winsor2's replace promotes an integer variable that receives a
+            * fractional cutoff: byte and int to float, long to double.
+            local vtype : type `target'
+            if `inplace' & "`trim'" == "" & inlist("`vtype'", "byte", "int", "long") & ///
+                (`lower' != floor(`lower') | `upper' != floor(`upper')) {
+                local promoted = cond("`vtype'" == "long", "double", "float")
+                global CTOOLS_cwinsor_recast "$CTOOLS_cwinsor_recast `target' `vtype'"
+                recast `promoted' `target'
+            }
         }
         capture noisily plugin call ctools_plugin `plugin_varlist', "cwinsor `threads_opt' apply"
         local apply_rc = _rc
@@ -300,6 +340,8 @@ program define _cwinsor_impl
     }
     * Validation hook: fail after the targets were written and relabeled
     if "$CTOOLS_cwinsor_fault" == "post" error 1
+    * Plugin stores do not mark the data changed; replace and winsor2 do
+    if `inplace' mata: st_updata(1)
 
     * Finish timing
     quietly _ctools_clock __ct_now

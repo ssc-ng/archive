@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.2.3 20261030}{...}
+{* *! version 1.2.4 20261103}{...}
 {viewerjumpto "Syntax" "cppmlhdfe##syntax"}{...}
 {viewerjumpto "Description" "cppmlhdfe##description"}{...}
 {viewerjumpto "Options" "cppmlhdfe##options"}{...}
@@ -86,7 +86,9 @@ Examples include {cmd:g#h}, {cmd:g#c.z}, {cmd:g##c.z}, and
 {cmd:g##c.(z t)}. Up to ten expanded FE terms are supported. Omitting
 {cmd:absorb()} estimates a model with a constant and no absorbed effects.
 Save individual effects with {cmd:absorb(firm_fe=firm year_fe=year)} or
-{cmd:absorb(firm year, savefe)}. The latter uses names {cmd:__hdfe1__}, etc.
+{cmd:absorb(firm year, savefe)}. The latter uses names {cmd:__hdfe1__}, etc.,
+replacing those variables if they exist; when the model itself uses such a
+variable, {cmd:cppmlhdfe} exits with error 198 and changes nothing.
 Slope coefficients use suffixes {cmd:Slope1}, {cmd:Slope2}, etc.
 Their contributions reconstruct the sum saved by {cmd:d(newvar)}; individual fixed-effect levels depend on normalization. Absorb suboptions also accept
 {cmd:generate}, {cmd:keepsingletons}, {cmd:tolerance()}, {cmd:iterate()},
@@ -112,7 +114,10 @@ count for its finite-sample multiplier. Negative eigenvalues of the full
 covariance are set to zero, matching {cmd:ppmlhdfe}. Every cluster dimension must
 retain at least two clusters. Computation grows with the number of nonempty
 cluster subsets (2^Q-1). {cmd:vce(unadjusted)} is accepted as an alias for
-{cmd:vce(robust)}; it does not select a model-based Poisson covariance.
+{cmd:vce(robust)}; it does not select a model-based Poisson covariance. As in
+{cmd:ppmlhdfe}, a type beginning with {cmd:ols} or {cmd:un}, or
+{cmd:conventional}, means {cmd:unadjusted}, and one beginning with {cmd:r}
+means {cmd:robust}; {cmd:vce(iid)} is an error.
 
 {pstd}
 Inference uses normal critical values and Wald chi-squared tests, as in
@@ -134,12 +139,13 @@ on the standardized response with a common weight normalization. Default is
 Default is 10000. {cmd:maxiterations()} is an alias.
 
 {phang}
-{opt separation(fe simplex relu)} is the default. All-zero FE groups and
-singletons are screened first. Native simplex and iterated-rectifier (ReLU)
-checks then detect general regressor and FE separation. The model is rebuilt
-after deleting separated rows, including another singleton and collinearity
-check. {cmd:separation(mu)} enables fitted-mean screening;
-{cmd:separation(all)} runs all four methods. {cmd:separation(none)} disables checks.
+{opt separation(fe simplex relu)} is the default. The command first checks for
+fixed-effect groups with only zero outcomes and for singleton groups. It then
+uses the simplex and ReLU methods to check for separation involving regressors
+and fixed effects. After removing separated observations, it checks again for
+singletons and collinear variables. {cmd:separation(mu)} enables fitted-mean
+screening; {cmd:separation(all)} runs all four methods. {cmd:separation(none)}
+disables checks.
 
 {phang}
 {opt septolerance(#)} is accepted for compatibility and has no effect on
@@ -149,24 +155,34 @@ fitted-mean screening.
 
 {phang}
 {opt d(newvar)} saves the normalized sum of fixed effects for prediction.
-{opt d2} uses {cmd:_ppmlhdfe_d}, replacing that variable if it exists. {cmd:keepsingletons} disables singleton
-removal.
+{opt d2} uses {cmd:_ppmlhdfe_d}, replacing that variable if it exists. If
+{cmd:_ppmlhdfe_d} is also used as a regressor, weight, offset, cluster
+variable, or absorbed variable, the command returns error 198 without changing
+the data. {cmd:keepsingletons} disables singleton removal.
 
 {dlgtab:Advanced controls}
 
 {phang}
 {cmd:guess(simple)} (default), {cmd:guess(ols)}, and
-{cmd:guess(variable varname)} select initial fitted means.
+{cmd:guess(variable varname)} select initial fitted means. The variable must
+be nonmissing in the estimation sample.
 {cmd:standardize_data(1)} and {cmd:remove_collinear_variables(1)} control
 standardization and the preliminary collinearity check.
 
 {phang}
 {cmd:use_exact_solver(1)} selects weighted pivoted QR; default is 0.
-{cmd:use_exact_partial(1)} (default) projects the original working response and
-regressors each iteration; 0 reuses preceding residuals.
-{cmd:min_ok(1)} sets the required number of qualifying convergence checks.
-{cmd:use_heuristic_tol(1)}, {cmd:start_inner_tol(1e-4)}, and {cmd:itolerance()}
-control adaptive projection accuracy.
+{cmd:use_exact_partial(1)} (default) projects the working response and the
+original regressors each iteration. From the second iteration the projected
+response is the working response less the previous iteration's fitted effects
+(the same residual, with the projection tolerance applied to the difference);
+this calculation allows iterations to continue when an observation has a zero
+outcome and a fitted mean close to zero. If an observation has a positive
+outcome and its fitted mean reaches the imposed lower bound, the working
+response is projected directly. {cmd:use_exact_partial(0)} reuses residuals
+from the previous iteration. {cmd:min_ok(1)} sets the required number of
+qualifying convergence checks. {cmd:use_heuristic_tol(1)},
+{cmd:start_inner_tol(1e-4)}, and {cmd:itolerance()} control adaptive
+projection accuracy.
 
 {phang}
 {cmd:use_step_halving(0)}, {cmd:step_halving_memory(.9)}, and
@@ -175,12 +191,15 @@ control adaptive projection accuracy.
 {phang}
 ReLU controls are {cmd:relu_tol(1e-4)}, {cmd:relu_zero_tol(1e-8)},
 {cmd:relu_maxiter(100)}, {cmd:relu_strict(0)}, and {cmd:relu_accelerate(0)}.
-Strict mode returns 9010 when the ReLU limit is exhausted.
-{cmd:simplex_tol(1e-12)}, {cmd:simplex_maxiter(1000)}, and {cmd:mu_tol(1e-6)}
-control the other separation methods. {cmd:tagsep(newvar)} switches to a
-ReLU diagnostic-only run, overriding the requested separation methods and
-saving the indicator without estimating a model. Add {cmd:zvarname(newvar)}
-to save the certificate. Excluded observations remain missing.
+With {cmd:relu_strict(1)}, failure to converge within {cmd:relu_maxiter()}
+iterations returns error 9010. {cmd:simplex_tol(1e-12)},
+{cmd:simplex_maxiter(1000)}, and {cmd:mu_tol(1e-6)} control the other
+separation methods. {cmd:tagsep(newvar)} runs only the ReLU separation check
+and saves an indicator for separated observations. It ignores other separation
+methods and does not estimate the model. {cmd:zvarname(newvar)} also saves the
+fitted values used to identify separated observations, with zero for
+observations not identified as separated. Excluded observations remain
+missing.
 
 {phang}
 {cmd:acceleration()} accepts {cmd:cg} (default), {cmd:none}, {cmd:sd},
@@ -194,8 +213,8 @@ LSMR accepts {cmd:btol(1e-8)} and {cmd:conlim(1e8)}.
 {opt tolerance(#)} sets the deviance convergence tolerance; default 1e-8.
 {opt irlstolerance()} overrides it for the outer iteration. {opt iterate(#)}
 sets the maximum number of inner projection iterations; default 10000.
-Iteration limits and tolerances must be positive. An exhausted projection or
-IRLS loop returns error 430.
+Iteration limits and tolerances must be positive. Failure to converge within
+either iteration limit returns error 430.
 
 {phang}
 {opt dofadjustments(list)} controls absorbed degrees of freedom. The default
@@ -241,10 +260,11 @@ absorbed-effect uncertainty. {opt response} and {opt scores} return y-mu;
 when y=0. {opt anscombe} returns 1.5*(y^(2/3)-mu^(2/3))/mu^(1/6).
 
 {pstd}
-{cmd:e(sample)} marks the retained observations after missing values, singleton
-chains, and FE/regressor separation are removed. With fweights, {cmd:e(N)} is the
-sum of frequency weights rather than the number of marked physical rows.
-Weight expressions such as {cmd:[aw=2*w]} are evaluated into temporary doubles.
+{cmd:e(sample)} identifies observations retained after excluding missing
+values, repeatedly removing singleton groups, and removing separated
+observations. With frequency weights, {cmd:e(N)} is the sum of those weights;
+otherwise, it is the number of retained observations. Weight expressions such
+as {cmd:[aw=2*w]} are allowed and are evaluated in double precision.
 
 
 {marker examples}{...}
@@ -287,6 +307,9 @@ Weight expressions such as {cmd:[aw=2*w]} are evaluated into temporary doubles.
 {synopt:{cmd:e(N_clustervars)}}number of cluster dimensions{p_end}
 {synopt:{cmd:e(N_clust1)}, etc.}marginal cluster counts{p_end}
 {synopt:{cmd:e(ic)}}number of IRLS iterations{p_end}
+{synopt:{cmd:e(ic2)}}number of fixed-effect partialling subiterations in the IRLS{p_end}
+{synopt:{cmd:e(rss)}}weighted residual sum of squares of the final working regression{p_end}
+{synopt:{cmd:e(rmse)}}its root mean squared error, on N - df_a - rank - df_a_nested{p_end}
 {synopt:{cmd:e(converged)}}1 if IRLS converged, 0 otherwise{p_end}
 {synopt:{cmd:e(N_hdfe)}}number of absorbed FE groups{p_end}
 {synopt:{cmd:e(num_singletons)}}number of singleton observations dropped{p_end}
@@ -296,6 +319,11 @@ Weight expressions such as {cmd:[aw=2*w]} are evaluated into temporary doubles.
 
 {p2col 5 24 28 2: Macros}{p_end}
 {synopt:{cmd:e(cmd)}}{cmd:cppmlhdfe}{p_end}
+{synopt:{cmd:e(title)}}{cmd:HDFE PPML regression}, or {cmd:PPML regression} without absorbed effects{p_end}
+{synopt:{cmd:e(title2)}}{cmd:Absorbing} # {cmd:HDFE group(s)} (with absorbed effects){p_end}
+{synopt:{cmd:e(footnote)}}{cmd:_cppmlhdfe_footnote}, the program displaying the absorbed degrees of freedom{p_end}
+{synopt:{cmd:e(estat_cmd)}}{cmd:_cppmlhdfe_estat}: {cmd:estat summarize}, {cmd:estat vce}, and {cmd:estat ic} with e(df_m) + 1 degrees of freedom{p_end}
+{synopt:{cmd:e(marginsnotok)}}predictions {cmd:margins} may not use, as {cmd:ppmlhdfe}{p_end}
 {synopt:{cmd:e(cmdline)}}command as typed{p_end}
 {synopt:{cmd:e(depvar)}}name of dependent variable{p_end}
 {synopt:{cmd:e(absorb)}}absorbed variables{p_end}
@@ -317,6 +345,16 @@ Weight expressions such as {cmd:[aw=2*w]} are evaluated into temporary doubles.
 {p2col 5 24 28 2: Functions}{p_end}
 {synopt:{cmd:e(sample)}}marks estimation sample{p_end}
 {p2colreset}{...}
+
+{pstd}
+{cmd:e(rss)} and {cmd:e(rmse)} are those {cmd:ppmlhdfe} posts from its final
+working regression: the squared partialled working residuals weighted by the
+IRLS weights rescaled to sum to N (to the frequency-weight total).
+{cmd:e(ic2)} equals {cmd:ppmlhdfe}'s with one absorbed effect or none (one
+demeaning per iteration); with several, the partialling algorithms differ and
+so do the counts. {cmd:cppmlhdfe} provides its own programs for displaying
+absorbed degrees of freedom and running {cmd:estat summarize},
+{cmd:estat vce}, and {cmd:estat ic}. {cmd:e(title)} contains plain text.
 
 
 {marker references}{...}

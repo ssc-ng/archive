@@ -1,0 +1,23 @@
+---
+layout: default
+title: Availability
+nav_order: 5
+browser: true
+description: "Contiguous ranges of date tags in the SSC archive mirror"
+---
+  <div class="kicker">SSC archive · availability</div>
+  <h1>Availability</h1>
+  <p class="lede">Every mirror run is tagged with its date. These are the
+    contiguous ranges of tags; the gaps between them are dates with no
+    snapshot (hover over or focus a gap for the reason, or see the
+    <a href="https://github.com/ssc-ng/archive/blob/main/ERRATA.md">ERRATA</a>).</p>
+
+  <div id="tagsummary" class="tagsummary" role="status">loading&hellip;</div>
+  <table class="ranges" id="ranges" hidden>
+    <caption class="sr-only">Contiguous ranges of snapshot tags</caption>
+    <thead><tr><th>From</th><th>To</th><th class="num">Tags</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="hint" style="margin-top:1rem">The oldest tags (before 2021-12-21) are
+    isolated; continuous daily snapshots begin with 2021-12-23. Every tag is available
+    on the <a href="{{ '/browse.html' | relative_url }}">package pages</a>.</p>

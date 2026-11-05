@@ -1,0 +1,8 @@
+_site/
+_site-preview/
+.jekyll-cache/
+.sass-cache/
+vendor/
+.bundle/
+# Generated in CI by build_data.py; never committed.
+assets/data/

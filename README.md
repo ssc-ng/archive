@@ -28,9 +28,14 @@ ssc2 install <package_name>, date(<YYYY-MM-DD>)
 
 For more information, see the [`ssc2`](https://ssc-ng.net/ssc2/) project page.
 
-## Website
+## What you can do on the website
 
-The [website](https://ssc-ng.net/archive/) is a Jekyll site (just-the-docs theme, shared with [ssc2](https://ssc-ng.net/ssc2/)) in [`site/`](site/). Its package browser loads data asynchronously from static JSON files generated at build time by [`site/build_data.py`](site/build_data.py); pull requests get a Cloudflare Pages preview (see [`site/DEPLOY-PREVIEW.md`](site/DEPLOY-PREVIEW.md)).
+The [website](https://ssc-ng.net/archive/) lets you explore the snapshots without cloning anything:
+
+- [Select packages](https://ssc-ng.net/archive/browse.html): pick a snapshot, search its packages, tick the ones you want, and get the `ssc2` commands that install them as they stood on that day.
+- [Compare](https://ssc-ng.net/archive/compare.html): see which packages were added, removed or changed between any two snapshots.
+- [Package history](https://ssc-ng.net/archive/history.html) *(under development)*: see in which snapshots a package is available, and when its package file changed.
+- [Availability](https://ssc-ng.net/archive/tags.html): see the contiguous ranges of date tags, the earliest and the latest, and the reasons for the gaps.
 
 ## How the mirror is created
 
@@ -69,7 +74,7 @@ This repository can get big (over 20,000 objects, approx. 320 MB for a shallow c
 
 ## Contributing
 
-Fork, and create a pull request.
+Fork, and create a pull request. For how the website is built, see [`site/README-site.md`](site/README-site.md).
 
 ## License
 

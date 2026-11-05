@@ -13,6 +13,11 @@ This repository holds a sequence of date-stamped snapshots of the
 A new snapshot is taken (and tagged with its date) every time the archive is
 mirrored.
 
+## Status
+
+[![Mirror workflow](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml/badge.svg)](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml)
+[![Latest tag](https://img.shields.io/github/v/tag/ssc-ng/archive?sort=date&label=Latest%20snapshot)](https://github.com/ssc-ng/archive/tags)
+
 ## How can you use it?
 
 Use the [`ssc2`](https://ssc-ng.net/ssc2/) package to install from date-stamped
@@ -56,22 +61,13 @@ where the date `2021-12-21` corresponds to an existing tag.
 
 ## How the mirror is created
 
-See [mirror.repec.sh](https://github.com/ssc-ng/archive/blob/main/mirror.repec.sh).
-The process can take up to 60 minutes. The downloaded mirror is in the
-[releases branch](https://github.com/ssc-ng/archive/tree/releases).
+See [notes in Github repository](https://github.com/ssc-ng/archive/).
 For known gaps and errors, see the
 [ERRATA](https://github.com/ssc-ng/archive/blob/main/ERRATA.md).
 
-## How to clone this repository
-
-This repository can get big (over 20,000 objects, approx. 320 MB for a shallow
-clone). If cloning to your local workspace, use a "shallow" clone:
-
-```bash
-git clone --depth 1 https://github.com/ssc-ng/archive.git
-```
 
 ## License
 
-The code that creates this repository is under a BSD-3 license. All other code
-(the mirror) is under whatever license the original authors granted.
+The code that creates this repository is under a
+[BSD-3 license](https://github.com/ssc-ng/archive/blob/main/LICENSE). All other
+code (the mirror) is under whatever license the original authors granted.

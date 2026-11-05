@@ -13,6 +13,11 @@ This repository holds a sequence of date-stamped snapshots of the
 A new snapshot is taken (and tagged with its date) every time the archive is
 mirrored.
 
+## Status
+
+[![Mirror workflow](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml/badge.svg)](https://github.com/ssc-ng/archive/actions/workflows/mirror.yml)
+[![Latest tag](https://img.shields.io/github/v/tag/ssc-ng/archive?sort=date&label=Latest%20snapshot)](https://github.com/ssc-ng/archive/tags)
+
 ## How can you use it?
 
 Use the [`ssc2`](https://ssc-ng.net/ssc2/) package to install from date-stamped
@@ -73,5 +78,6 @@ git clone --depth 1 https://github.com/ssc-ng/archive.git
 
 ## License
 
-The code that creates this repository is under a BSD-3 license. All other code
-(the mirror) is under whatever license the original authors granted.
+The code that creates this repository is under a
+[BSD-3 license](https://github.com/ssc-ng/archive/blob/main/LICENSE). All other
+code (the mirror) is under whatever license the original authors granted.

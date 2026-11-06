@@ -1,6 +1,6 @@
-d 'HSCC': module to provide Heterogeneous-Slope SCC (HSCC) estimator for panel data
+d 'HSCC3': module to provide Heterogeneous-Slope SCC (HSCC) estimator for panel data
 d
-d    HSCC provides a data-driven joint partial-pooling framework
+d    HSCC3 provides a data-driven joint partial-pooling framework
 d between conventional pooled/SCC estimation and fully
 d heterogeneous Mean Group approaches. The method jointly models
 d systematic and residual slope heterogeneity and applies an
@@ -20,6 +20,6 @@ d
 d Author:  Zehra Yalnız,  Kocaeli University
 d Support: email zehrayalnizz41@@gmail.com
 d
-f hscc.ado
-f hscc.sthlp
-f hscc_example.do
+f hscc3.ado
+f hscc3.sthlp
+f hscc3_example.do

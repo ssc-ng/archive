@@ -1,5 +1,5 @@
 *******************************************************
-* HSCC example
+* HSCC3 example
 * Version 1.0.2
 *******************************************************
 
@@ -12,17 +12,17 @@ use "your_panel_data.dta", clear
 * Declare panel structure
 xtset id time
 
-* HSCC with automatic DK lag
-hscc y x1 x2 x3 x4
+* HSCC3 with automatic DK lag
+hscc3 y x1 x2 x3 x4
 
-* HSCC with user-defined DK lag
-hscc y x1 x2 x3 x4, lag(2)
+* HSCC3 with user-defined DK lag
+hscc3 y x1 x2 x3 x4, lag(2)
 
-* HSCC with common time fixed effects
-hscc y x1 x2 x3 x4, timefe
+* HSCC3 with common time fixed effects
+hscc3 y x1 x2 x3 x4, timefe
 
-* HSCC with common time fixed effects and user-defined DK lag
-hscc y x1 x2 x3 x4, timefe lag(2)
+* HSCC3 with common time fixed effects and user-defined DK lag
+hscc3 y x1 x2 x3 x4, timefe lag(2)
 
 * Stored results
 matrix list e(b)

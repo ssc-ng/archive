@@ -1,443 +1,362 @@
-*! v1.22 Even more graph options
-* v1.21 other Graph options
-* v1.2  Compatible with new Group Averages
-* v1.1  Problem with TM TP
-/*capture program drop  csdid_plot
-capture program drop  adds
-capture program drop csdid_default
-capture program drop csdid_default
-capture program drop csdid_plot_event
-capture program drop csdid_plot_group
-capture program drop isgroup_eq
-capture program drop csdid_plot_calendar
-capture program drop _matrix_list*/
+*! csdid_plot 2.0.3 30oct2026
+program define csdid_plot
+    version 14
+    if "`e(cmd)'" != "csdid" {
+        display as error "csdid_plot requires prior csdid results"
+        exit 301
+    }
+    syntax [, SAVing(string) REPLACE GROUP(numlist) *]
+    if `"`options'"' != "" {
+        * a documented option syntax could not take lands here too: given
+        * twice, or with a value its type refuses
+        local opt_rest `"`options'"'
+        while `"`opt_rest'"' != "" {
+            gettoken opt opt_rest : opt_rest, bind
+            local opt_name = lower(regexr(`"`opt'"', "\(.*$", ""))
+            foreach opt_decl in sav:saving replace:replace group:group {
+                gettoken opt_min opt_full : opt_decl, parse(":")
+                local opt_full = substr(`"`opt_full'"', 2, .)
+                if strlen(`"`opt_name'"') >= strlen("`opt_min'") & ///
+                    `"`opt_name'"' == substr("`opt_full'", 1, strlen(`"`opt_name'"')) {
+                    display as error `"option `opt_full'() is given more than once or with a value it does not take: `opt'"'
+                    exit 198
+                }
+            }
+        }
+        * D-1: compound quotes. A quoted option VALUE (e.g.
+        * title("Cohort 2004")) puts a double quote inside `options', and the
+        * plain-quoted display then breaks the string, producing a garbled
+        * message and r(111) instead of the documented r(198).
+        display as error `"unsupported option(s): `options'"'
+        exit 198
+    }
+    * Without saving(), draw. With saving(), export the plot dataset and draw
+    * nothing -- scripted exports stay exactly as they were.
+    * saving() took its whole argument as a filename, so the
+    * standard saving(filename, replace) idiom returned rc 0 after writing a
+    * file literally called "filename, replace.dta" (csdid_plot.sthlp:114-116
+    * anticipates the mistake; nothing guarded it). The comma form is now
+    * parsed: replace is the only sub-option saving() accepts, and anything
+    * else refuses by name instead of becoming part of the filename.
+    local plotgroup `"`group'"'
+    local dorepl `"`replace'"'
+    local savefile `"`saving'"'
+    * st_local() reads the macro's raw text, so a quoted filename cannot break
+    * the scan the way strpos(`"`saving'"', ",") would.
+    mata: st_local("_sp04comma", strofreal(strpos(st_local("saving"), ",")))
+    if `_sp04comma' {
+        gettoken savefile srest : saving, parse(",")
+        if `"`savefile'"' == "," {
+            * saving(, replace): the comma itself came back as the token, so
+            * there is no filename at all.
+            local savefile ""
+        }
+        else {
+            gettoken comma srest : srest, parse(",")
+            mata: st_local("savefile", strtrim(st_local("savefile")))
+        }
+        local 0 `", `srest'"'
+        capture syntax [, REPLACE]
+        if _rc {
+            display as error `"saving() accepts only the replace sub-option; cannot parse: `srest'"'
+            exit 198
+        }
+        if "`replace'" != "" local dorepl replace
+        if `"`savefile'"' == "" {
+            display as error "saving() requires a filename before the comma, as in saving(myfile, replace)"
+            exit 198
+        }
+    }
 
-program csdid_agg_cat, sclass
-** levels for agg 
-	syntax , [agg(str) ragg(str) eagg(str)]
+    local drawplot 0
+    * replace is meaningless without saving(): the plot then writes only its
+    * own tempfile, which needs no permission to overwrite. Refused before
+    * any work, mirroring csdid_estat's rule for replace without saving().
+    if "`replace'" != "" & `"`saving'"' == "" {
+        display as error "replace has no effect without saving(); specify saving(filename) or drop replace"
+        exit 198
+    }
+    if `"`savefile'"' == "" {
+        tempfile csdid_plotdata
+        local savefile `"`csdid_plotdata'"'
+        local dorepl replace
+        local drawplot 1
+    }
 
-	if "`agg'"!="" {
-		if "`agg'"=="attgt" 		 local agg_cat=1
-		else if "`agg'"=="event"     local agg_cat=2
-		else if "`agg'"=="calendar"  local agg_cat=3
-		else if "`agg'"=="group"     local agg_cat=4
-	}
-	else if "`ragg'"!="" {
-		if "`ragg'"=="attgt" 		 local agg_cat=1
-		else if "`ragg'"=="event"    local agg_cat=2
-		else if "`ragg'"=="calendar" local agg_cat=3
-		else if "`ragg'"=="group"    local agg_cat=4
-	}
-	else if "`eagg'"!="" {
-		if "`eagg'"=="attgt" 		 local agg_cat=1
-		else if "`eagg'"=="event"    local agg_cat=2
-		else if "`eagg'"=="calendar" local agg_cat=3
-		else if "`eagg'"=="group"    local agg_cat=4
-	}
-	sreturn local agg_cat = `agg_cat'
+    capture confirm matrix e(aggte)
+    if _rc {
+        _csdid_plot_attgt using `"`savefile'"', `dorepl' group(`plotgroup')
+    }
+    else {
+        * F-053 fix: group() was silently discarded on this branch (fourth
+        * F-045-family instance). It is now forwarded: group-type
+        * aggregations filter to the requested cohorts (absent cohorts fall
+        * back to all, with the same note as the attgt branch); for other
+        * aggregation types the option is meaningless and says so out loud.
+        _csdid_plot_aggte using `"`savefile'"', `dorepl' group(`plotgroup')
+    }
+    if `drawplot' {
+        _csdid_plot_draw using `"`savefile'"'
+    }
 end
 
-program csdid_plot, rclass
-	syntax, [*]
-	local cmd `r(cmd)'
-	local agg `r(agg)'
-	tempname  b V table bb vv
-	matrix `b' = r(b)
-	matrix `V' = r(V)
-	matrix `bb' = r(bb)
-	matrix `vv' = r(vv)
-	matrix `table' = r(table)
-	
-	capture noisily csdid_plot_wh, `options'
-	return local cmd `cmd'
-	return local agg `agg'
-	
-	return matrix b     =`b'
-	return matrix V 	=`V'
-	return matrix b     =`bb'
-	return matrix vv 	=`vv'
-	return matrix table =`table'
-	
-end 
+program define _csdid_plot_attgt
+    version 14
+    syntax using/ [, REPLACE GROUP(numlist)]
 
-program csdid_plot_wh
-	syntax, [style(passthru) title(passthru) name(passthru) Group(str) ///
-							 ytitle(passthru) xtitle(passthru)	///
-							 legend(passthru) agg(str) * ]
-	tempvar mm 
-	tempvar kk
-	
-	csdid_agg_cat, agg(`agg') ragg(`r(agg)') eagg(`e(agg)')
-	
-	if `s(agg_cat)'==2 {
-		
-		if "`e(agg)'"=="event" {
-			 qui:csdid
-			 local evlist = subinstr("`:colname r(table)'","T","",.)
-			 local evlist = subinstr("`evlist'","m","-",.)
-			 local evlist = subinstr("`evlist'","p","+",.)
-			 matrix `mm'=r(table)'
-			 matrix `mm'=`mm'[3...,....]
-		}
-		else if "`r(agg)'"=="event" {		 
-			 local evlist = subinstr("`:colname r(table)'","T","",.)
-			 local evlist = subinstr("`evlist'","m","-",.)
-			 local evlist = subinstr("`evlist'","p","+",.)
-			 matrix `mm'=r(table)'
-			 matrix `mm'=`mm'[3...,....]
-		}
-		tempvar mm1 mm2 mm3 mm4 mm5 mm6
-		qui:tsvmat `mm', name(`mm1' `mm2' `mm3' `mm4' `mm5' `mm6')
-		qui:gen `kk' =.
- 		foreach i of local evlist {
-		 	if !inlist("`i'","Pre_avg","Post_avg")  {
-				local k = `k'+1
-				qui:replace `kk'=`i' in `k'
-			} 	
-		}
-				
-		csdid_plot_event `kk'  `mm1'  `mm5' `mm6'	, ///
-					  `style' `title' `name'  `ytitle'	`xtitle' `legend'	`options'    
-	 
-	}
-	
-	else if `s(agg_cat)'==4 {
-		if "`e(agg)'"=="group" {
-			 qui:csdid
-			 local evlist :colname r(table)
-			 matrix `mm'=r(table)'
-		}
-		else if "`r(agg)'"=="group" {		 
-			 local evlist :colname r(table)
-			 matrix `mm'=r(table)'
-		}
-		
-		tempvar mm1 mm2 mm3 mm4 mm5 mm6
-		qui:tsvmat `mm', name(`mm1' `mm2' `mm3' `mm4' `mm5' `mm6')
-		
-		qui:gen str `kk' =""
-		foreach i of local evlist {
-		 	local k = `k'+1
-		 	qui:replace `kk'="`i'" in `k'
-		}
-		tempname k2
-		qui:encode `kk', gen(`k2')
-		 
-		csdid_plot_group `k2'  `mm1'  `mm5' `mm6'	, ///
-						 `style' `title' `name'  `ytitle'	`xtitle' `legend'	 `options'  
-		 
-	}
-	
-	else if `s(agg_cat)'==3 {
-		if "`e(agg)'"=="calendar" {
-			 qui:csdid
-			 local evlist :colname r(table)
-			 matrix `mm'=r(table)'
-		}
-		else if "`r(agg)'"=="calendar" {		 
-			 local evlist :colname r(table)
-			 matrix `mm'=r(table)'
-		}
-		
-		tempvar mm1 mm2 mm3 mm4 mm5 mm6
-		qui:tsvmat `mm', name(`mm1' `mm2' `mm3' `mm4' `mm5' `mm6')
-		
-		qui:gen str `kk' =""
-		foreach i of local evlist {
-		 	local k = `k'+1
-		 	qui:replace `kk'="`i'" in `k'
-		}
-		tempname k2
-		qui:encode `kk', gen(`k2')
-		 
-		
-		csdid_plot_calendar `k2'  `mm1'  `mm5' `mm6'	, ///
-					`style'  `title' `name'  `ytitle'	`xtitle' `legend' `options'		   
-		*drop `mm'? 
-	}
-	
-	else if `s(agg_cat)'==1 {
-		* First check all info from e(b)
-		if "`e(agg)'"=="attgt" {
-			 qui:csdid
-			 local evlist : colname e(b)
-			 local evqlist: coleq e(b)
-			 matrix `mm'=r(table)'
-			 matrix roweq `mm'=`evqlist'
-			 matrix `mm'=`mm'[1..rowsof(`mm')/2,....]			
-		}
-		else if "`r(agg)'"=="attgt" {		 
-			 local evlist : colname r(b)
-			 local evqlist: coleq r(b)
-			 matrix `mm'=r(table)'
-			 matrix roweq `mm'=`evqlist'
-			 matrix `mm'=`mm'[1..rowsof(`mm')/2,....]			
-		}
-//////////////////////////
-		if "`group'"=="" {
-			display "Please specify group"
-			error 1
-		}
-		else {
-			numlist "`group'"
-			isgroup_eq, group(`group') eqlist(`evqlist')
- 		}
-//////////////////////////
-// Break down matrix and create list. 
-		tempname nmm
-		_matrix_list, group(`group') matrix(`mm')  nmatrix(`nmm')
-		local evlist `s(mt0t1)'
-		adds local mt0t1
-		
-		tempvar nmm1 nmm2 nmm3 nmm4 nmm5 nmm6
-		qui:tsvmat `nmm', name(`nmm1' `nmm2' `nmm3' `nmm4' `nmm5' `nmm6')
-						
-		qui:gen `kk' =.
-		foreach i of local evlist {
-		 	local k = `k'+1
-		 	qui:replace `kk'=`i' in `k'
-		}
-		tempname k2
-				*sum `kk'  `nmm'1  `nmm'5 `nmm'6
-		csdid_plot_event `kk'  `nmm1'  `nmm5' `nmm6' , ///
-					`style'	  `title' `name'  `ytitle'	`xtitle' `legend' `options'		   
-		*drop `nmm'? 	
-		
-	}
+    tempname A
+    matrix `A' = e(attgt)
+    * this export block ran noisily, so a successful export
+    * printed scratch-data chatter ("number of observations will be reset to
+    * 12", "(1 real change made)", "(file ... not found)") and, worse, svmat's
+    * observation-count notice raised a BLOCKING "Press any key to continue,
+    * or Break to abort" prompt on the happy path. The whole block is quiet
+    * now; genuinely user-facing notes are emitted with `noisily'.
+    quietly {
+        preserve
+        clear
+        svmat double `A', names(col)
+        generate str24 plot_type = "attgt"
+        generate str8 series = cond(time >= group, "Post", "Pre")
+        generate double x = time
+        * the value as the coefficient names write it: the shortest of
+        * %16.0g ... %21.0g that reads back as x (1.2, not 1.199999999999999956)
+        generate str32 x_label = strtrim(strofreal(x, "%16.0g"))
+        foreach w in 17 18 19 20 21 {
+            replace x_label = strtrim(strofreal(x, "%`w'.0g")) if real(x_label) != x | strpos(x_label, "e")
+        }
+        rename att estimate
+        * The ATT(g,t) band, from the matrix an aggregation cannot touch:
+        * every bootstrap aggregation overwrites e(crit_val) with its OWN
+        * critical value (and the banded analytical aggregation now posts
+        * one too), so reading e(crit_val) here banded this table with
+        * whatever aggregation happened to run last. Same fix as estat
+        * attgt's (F-057): the (g,t) critical value lives in e(boot_attgt),
+        * and a run without one is analytical, whose table is banded at the
+        * normal quantile.
+        local crit = .
+        capture confirm matrix e(boot_attgt)
+        if !_rc {
+            tempname plot_ba
+            matrix `plot_ba' = e(boot_attgt)
+            local plot_ba_c = colnumb(`plot_ba', "crit_val")
+            if !missing(`plot_ba_c') local crit = `plot_ba'[1, `plot_ba_c']
+        }
+        if missing(`crit') local crit = invnormal(1 - (100 - e(level)) / 200)
+        generate double ci_low = estimate - `crit' * se
+        generate double ci_high = estimate + `crit' * se
+        generate byte significant = ((ci_low > 0 & ci_low < .) | (ci_high < 0 & ci_high < .))
+
+        if `"`group'"' != "" {
+            * R's rule (ggdid.R:100-104): if ANY requested cohort is absent,
+            * warn and report every cohort. Mata, not -count-: see the note in
+            * _csdid_plot_draw; this export path is r()-transparent.
+            generate byte _csdid_keep = 0
+            tempname ghit
+            local gabsent ""
+            foreach g of numlist `group' {
+                replace _csdid_keep = 1 if group == `g'
+                mata: st_numscalar("`ghit'", any(st_data(., "group") :== `g'))
+                if !scalar(`ghit') local gabsent `gabsent' `g'
+            }
+            if "`gabsent'" != "" {
+                noisily display as text "Some of the specified groups do not exist in the data. Reporting all available groups."
+                local gabsent : list uniq gabsent
+                noisily display as text "(no cohort `gabsent' among the estimated ATT(g,t) cells)"
+                replace _csdid_keep = 1
+            }
+            keep if _csdid_keep
+            drop _csdid_keep
+        }
+
+        keep plot_type series x x_label estimate ci_low ci_high group time event_time significant
+        order plot_type series x x_label estimate ci_low ci_high group time event_time significant
+        sort group time
+        save `"`using'"', `replace'
+        restore
+    }
 end
 
-/***
-Idea Get a program that gets this list, and another that IDS the relevant columns.
-local evlist1 :colname e(b)
-local evlist2 :coleq e(b)
+program define _csdid_plot_aggte
+    version 14
+    * F-053: accept the group() option forwarded by csdid_plot.
+    syntax using/ [, REPLACE GROUP(numlist)]
 
-display "`evlist1'"
-display "`evlist2'"
+    * The refusal line is R's own (did, ggdid.R), kept verbatim for parity and
+    * pinned by the rt013/f028/f029 contract fixtures. What it does not do is
+    * say what to type instead, and the answer is not obvious: the simple
+    * aggregation is a single overall number, so it has no axis to plot along.
+    * The way forward goes on its own line, error-styled so a caller's
+    * -quietly- cannot swallow half a diagnosis.
+    if "`e(agg_type)'" == "simple" {
+        display as error "Plot method not available for this type of aggregation"
+        display as error "The simple aggregation is one overall effect, so there is no axis to plot it against. Compute an aggregation that has one (estat event, estat group, or estat calendar) and plot that, or re-run csdid to plot the ATT(g,t) estimates themselves."
+        exit 498
+    }
+    if !inlist("`e(agg_type)'", "dynamic", "group", "calendar") {
+        display as error "unknown aggregation type `e(agg_type)'"
+        display as error "csdid_plot draws the ATT(g,t) estimates or a dynamic, group, or calendar aggregation. Re-run csdid, or compute one of those aggregations, before plotting."
+        exit 498
+    }
+    * F-053: group() selects treatment cohorts, which only exist as rows on a
+    * group-type aggregation; on dynamic/calendar plots it is meaningless and
+    * is dropped loudly instead of being silently discarded.
+    if `"`group'"' != "" & "`e(agg_type)'" != "group" {
+        display as text "group() applies to group-type aggregations; ignored for the `e(agg_type)' aggregation plot."
+        local group ""
+    }
 
-local lst "t_1_2 t_2_3 t_3_4 t_4_5 t_5_6 t_6_7 t_7_8 t_8_9 t_9_10 t_9_11 t_9_12 t_9_13 t_9_14 t_9_15"
-foreach i of local lst {
-	local j: word 2 of `=subinstr(subinstr("`i'","t","",.),"_"," ",.)'
-	display "`=`j'-10'"
-}
-***/
+    tempname A
+    matrix `A' = e(aggte)
+    * quiet export block - see _csdid_plot_attgt.
+    quietly {
+    preserve
+    clear
+    svmat double `A', names(col)
+    * F-053: same cohort filter and same absent-cohort fallback note as the
+    * attgt branch, applied to the group-type aggregation rows (egt = cohort).
+    if `"`group'"' != "" {
+        * the attgt branch's rule: any absent cohort reports them all
+        generate byte _csdid_keep = 0
+        tempname ghit
+        local gabsent ""
+        foreach g of numlist `group' {
+            replace _csdid_keep = 1 if egt == `g'
+            mata: st_numscalar("`ghit'", any(st_data(., "egt") :== `g'))
+            if !scalar(`ghit') local gabsent `gabsent' `g'
+        }
+        if "`gabsent'" != "" {
+            noisily display as text "Some of the specified groups do not exist in the data. Reporting all available groups."
+            local gabsent : list uniq gabsent
+            noisily display as text "(no cohort `gabsent' among the aggregated effects)"
+            replace _csdid_keep = 1
+        }
+        keep if _csdid_keep
+        drop _csdid_keep
+    }
+    generate str24 plot_type = "aggte_" + "`e(agg_type)'"
+    generate str8 series = cond(egt >= 0, "Post", "Pre")
+    generate double x = egt
+    * written as in _csdid_plot_attgt
+    generate str32 x_label = strtrim(strofreal(x, "%16.0g"))
+    foreach w in 17 18 19 20 21 {
+        replace x_label = strtrim(strofreal(x, "%`w'.0g")) if real(x_label) != x | strpos(x_label, "e")
+    }
+    rename att estimate
+    capture confirm scalar e(agg_level)
+    if _rc local agg_level = e(level)
+    else local agg_level = e(agg_level)
+    local crit = invnormal(1 - (100 - `agg_level') / 200)
+    * the band critical value applies under bootstrap inference AND under the
+    * banded analytical aggregation (e(agg_cband) = 1 with e(bstrap) = 0),
+    * whose simultaneous band is bootstrapped by csdid_stats -- the exported
+    * band must match the displayed one.
+    local plot_use_crit 0
+    capture confirm scalar e(bstrap)
+    if !_rc {
+        if e(bstrap) == 1 local plot_use_crit 1
+    }
+    capture confirm scalar e(agg_cband)
+    if !_rc {
+        if e(agg_cband) == 1 local plot_use_crit 1
+    }
+    if `plot_use_crit' {
+        capture confirm scalar e(crit_val)
+        if !_rc local crit = e(crit_val)
+    }
+    generate double ci_low = estimate - `crit' * se
+    generate double ci_high = estimate + `crit' * se
+    generate double group = .
+    generate double time = .
+    generate double event_time = .
+    if "`e(agg_type)'" == "dynamic" {
+        replace event_time = egt
+    }
+    else if "`e(agg_type)'" == "calendar" {
+        replace time = egt
+    }
+    else if "`e(agg_type)'" == "group" {
+        replace group = egt
+    }
+    generate byte significant = ((ci_low > 0 & ci_low < .) | (ci_high < 0 & ci_high < .))
 
-program _matrix_list, sclass
-	syntax, group(str) matrix(str) nmatrix(str)
-	local eqlist: roweq `matrix'
-	tempname mm
-	foreach i of local eqlist {
-		local k = `k' +1
-		if "`i'"=="g`group'" {
-			matrix `mm'=nullmat(`mm') \ `matrix'[`k',....]
-		}
-	}
-	local tlist:rowname `mm'
-	foreach i in `e(tlev)' {
-		*local j1: word 1 of `=subinstr(subinstr("`i'","t","",.),"_"," ",.)'
-		*local j2: word 2 of `=subinstr(subinstr("`i'","t","",.),"_"," ",.)'
-		local t0t1 `t0t1' `=`i'-`group''
-	}
-		
-	matrix `nmatrix'   = `mm'
-	
-	sreturn local  mt0t1 `t0t1'
+    keep plot_type series x x_label estimate ci_low ci_high group time event_time significant
+    order plot_type series x x_label estimate ci_low ci_high group time event_time significant
+    sort x
+    save `"`using'"', `replace'
+    restore
+    }
 end
 
-program isgroup_eq
-	syntax, group(str) eqlist(str)
-	local group g`group'
-	local flag = 0
-	foreach i of local eqlist {
-		if "`i'"=="`group'" local flag = 1
-	}
-	if `flag' == 0 {
-		display "group not found"
-		error 
-	}	
+* Draw the default graph from a plot dataset built by either subprogram above.
+* One graph, standard scheme, no styling surface: customisation goes through
+* the saving() export and twoway, as documented in the help file.
+program define _csdid_plot_draw
+    version 14
+    syntax using/
+
+    preserve
+    quietly use `"`using'"', clear
+    local ptype = plot_type[1]
+    local xt "Time"
+    local yt "ATT"
+    local byopt ""
+    if "`ptype'" == "attgt" {
+        local yt "ATT(g,t)"
+        local byopt by(group, note("") legend(position(6)))
+    }
+    else if "`ptype'" == "aggte_dynamic" local xt "Periods to treatment"
+    else if "`ptype'" == "aggte_group" local xt "Group first treated"
+
+    * A series can be absent (a group-type aggregation has no pre rows, a
+    * two-period panel may have no pre estimates), and an empty if-subset
+    * aborts twoway; assemble only the series that exist.
+    * The series counts are taken in Mata rather than with -count-, which is
+    * r-class and replaces the caller's r() wholesale. csdid_plot computes no
+    * results of its own, so it has no business changing r(): before this, a
+    * bare `estat plot' after `estat event' left r(table) GONE (measured, rc
+    * 111 on the following -matrix list-), while `estat plot, saving()' left it
+    * standing -- the same command reporting two different r() states
+    * depending on an option that has nothing to do with r().
+    local plots ""
+    local legorder ""
+    local j 0
+    foreach s in Pre Post {
+        local color = cond("`s'" == "Pre", "navy", "maroon")
+        tempname nseries
+        mata: st_numscalar("`nseries'", sum((st_sdata(., "series") :== st_local("s")) :& (st_data(., "estimate") :< .)))
+        if scalar(`nseries') {
+            local plots `"`plots' (rcap ci_high ci_low x if series == "`s'", lcolor(`color')) (scatter estimate x if series == "`s'", mcolor(`color'))"'
+            local j = `j' + 2
+            local legorder `"`legorder' `j' "`s'-treatment""'
+        }
+    }
+    if `"`plots'"' == "" {
+        * Same class as the two refusals above: the diagnosis was accurate and
+        * silent about what to do next. Every estimate missing means the 2x2
+        * comparisons failed; point at what the estimation left behind -- the
+        * warnings it printed and the counts in e(attgt), since a cell with no
+        * treated or no comparison unit in either period is blanked without a
+        * warning -- rather than leaving the user with an empty graph window
+        * and a return code.
+        display as error "nothing to plot: every estimate is missing"
+        display as error "The ATT(g,t) cells this plot draws from could not be estimated, so there is nothing to draw. The usual causes are a covariate that is collinear or constant within the 2x2 comparisons, a propensity-score trim that empties a comparison group, or too few treated or comparison units; the warnings printed during estimation name any cause csdid detected. Check the counts in e(attgt), then re-run csdid with a different covariate list or method(reg)."
+        restore
+        exit 498
+    }
+    * yline() does not extend the axis, so when every band lies on one side
+    * of zero the promised zero line fell outside the plot region. An
+    * invisible series at zero puts 0 inside the data range, and the scheme's
+    * own ticks then span it; it is not in the legend order.
+    quietly generate byte _csdid_zero = 0
+    local plots `"`plots' (scatter _csdid_zero x, msymbol(none))"'
+    * Ticks at the periods, event times or cohorts themselves: the scheme's
+    * own ticks fell between them (3.5 on a yearly calendar, 2005 on a cohort
+    * axis). Past 20 values the scheme's spacing reads better, so it keeps it.
+    local xlab ""
+    mata: st_local("xlev", invtokens(strofreal(uniqrows(select(st_data(., "x"), st_data(., "x") :< .))', "%21.0g")))
+    if `: word count `xlev'' <= 20 local xlab "xlabel(`xlev')"
+    twoway `plots', yline(0, lpattern(dash) lcolor(gs8)) `xlab' ///
+        xtitle("`xt'") ytitle("`yt'") legend(order(`legorder')) `byopt'
+    restore
 end
-
-
-
-program adds, sclass
-	sreturn `0'
-end
-
- 
-
-program csdid_default, sclass
-	syntax, [style(str) PSTYle1(str) color1(str) ///
-						PSTYLE2(str) color2(str) ///
-						LWidth1(str) lwidth2(str) ///
-						BARWidth1(str) barwidth2(str) * ]  
-	
- 	if "`style'"=="" local style rspike
-	
-	
-	if "`pstyle1'"=="" local pstyle1 pstyle(p1)
-	else  local pstyle1 pstyle(`pstyle1')             
-	if "`pstyle2'"=="" local pstyle2 pstyle(p2)
-	else  local pstyle2 pstyle(`pstyle2') 
-	
-	if "`color1'"=="" local color1 color(%40)
-	else local color1 color(`"`color1'"')
-	if "`color2'"=="" local color2 color(%40)
-	else local color2 color(`"`color2'"')
-	
-	if "`style'"=="rspike" {
-		if "`lwidth1'"=="" local lwidth1 lwidth(3)		
-		if "`lwidth2'"=="" local lwidth2 lwidth(3)
-	}
-	
-	if "`style'"=="rarea" {
-		if "`lwidth1'"=="" local lwidth1 lwidth(0)		
-		if "`lwidth2'"=="" local lwidth2 lwidth(0) 
-		local conn connect(l)
-	}
-	
-	if "`style'"=="rcap" {
-		if "`lwidth1'"=="" local lwidth1 lwidth(1)		
-		if "`lwidth2'"=="" local lwidth2 lwidth(1) 
-		local conn connect(l)
-	}
-		
-	if "`style'"=="rbar" {
-		if "`lwidth1'"=="" local lwidth1 lwidth(0)		
-		if "`lwidth2'"=="" local lwidth2 lwidth(0) 
-		if "`barwidth1'"=="" local barwidth1 barwidth(0.5)		
-		if "`barwidth2'"=="" local barwidth2 barwidth(0.5)
-		local conn connect(l)
-	}
-	 
-	
-	sreturn local style `style' 
-	sreturn local df11  `pstyle1'  `color1'  `lwidth1'  `barwidth1' 
-	sreturn local df12  `pstyle1'  `conn'
-	sreturn local df21  `pstyle2' `color2' `lwidth2' `barwidth2'
-	sreturn local df22  `pstyle2'  `conn'					  
-	sreturn local delse `options'
-end
-
- 
-
-program csdid_plot_event 
-	syntax varlist,  [style(passthru) title(passthru) name(passthru) ///
-								ytitle(passthru) xtitle(passthru)	///
-								legend(passthru) * ]
-	gettoken t rest:varlist
-	gettoken b rest:rest
-	gettoken ll rest:rest 
-	gettoken uu rest:rest 
-		
-	** defaults
-	if `"`xtitle'"'=="" local xtitle xtitle("Periods to Treatment")
-	if `"`ytitle'"'=="" local ytitle ytitle("ATT")
-	
-	if `"`legend'"'=="" local legend legend(order(1 "Pre-treatment" 3 "Post-treatment"))
-	csdid_default , `options' `style'
-	
-	local gf11  `s(df11)'
-	local gf12 `s(df12)'
-	local gf21 `s(df21)'
-	local gf22 `s(df22)'
-	local style `s(style)'
-	local dels  `s(delse)'
- 	two   (`style'  `ll' `uu' `t'  if `t'<=-1 , `gf11') ///
-		  (scatter  `b'      `t'   if `t'<=-1 , `gf12')  ///
-		  (`style'  `ll' `uu' `t'  if `t'>-1, `gf21')  ///
-		  (scatter  `b'      `t'   if `t'>-1, `gf22') , ///
-		   `legend'  `xtitle' `ytitle' ///
-		  yline(0 , lp(dash) lcolor(black)) `title' `name'  `dels'
-end
-
-
-
-program csdid_plot_group
-	syntax varlist, [ style(str) title(passthru) name(passthru)	///
-								ytitle(passthru) xtitle(passthru) * ]
-	gettoken t rest:varlist
-	gettoken b rest:rest
-	gettoken ll rest:rest 
-	gettoken uu rest:rest 
-		
-	qui:levelsof `t', local(tlev)
-	local tlb: value label `t'
-	local xlab 0 " "
-	foreach i of local tlev {
-	    local j = `j'+1
-	    local xlab `xlab' `i' "`:label `tlb' `i''"
-	}
-	
-	if `"`xtitle'"'=="" local xtitle xtitle("Groups")
-	if `"`ytitle'"'=="" local ytitle ytitle("ATT")
-	
-	local xlab `xlab' `=`j'+1' " "
-	
-	csdid_default , `options' `style'
-	local gf11  `s(df11)'
-	local gf12 `s(df12)'
-	
-	local style `s(style)'
-		local dels  `s(delse)'
-	
-	two   (`style'  `ll' `uu' `t'  , `gf11' )  ///
-		  (scatter  `b'      `t'   , `gf12' ) , ///
-		  legend(off) `xtitle'  `ytitle'  ///
-		  yline(0 , lp(dash) lcolor(black)) `title' `name' xlabel(`xlab') `dels'
-	}
-	
-end
-
-
-program csdid_plot_calendar
-	syntax varlist, [style(str) title(passthru) name(passthru)	///
-								ytitle(passthru) xtitle(passthru) * ]
-	gettoken t rest:varlist
-	gettoken b rest:rest
-	gettoken ll rest:rest 
-	gettoken uu rest:rest 
-		
-	qui:levelsof `t', local(tlev)
-	local tlb: value label `t'
-	local xlab 0 " "
-	foreach i of local tlev {
-	    local j = `j'+1
-	    local xlab `xlab' `i' "`:label `tlb' `i''"
-	}
-	
-	if `"`xtitle'"'=="" local xtitle xtitle("Periods")
-	if `"`ytitle'"'=="" local ytitle ytitle("ATT")
-	
-
-	local xlab `xlab' `=`j'+1' " "
-	
-	csdid_default , `options' `style'
-	local gf11  `s(df11)'
-	local gf12 `s(df12)'
-	
-	local style `s(style)'
-	local dels  `s(delse)'
-
-	
-	two   (`style'  `ll' `uu' `t'  , `gf11' )  ///
-		  (scatter  `b'      `t'   , `gf12'  ) , ///
-		  legend(off) `xtitle'  `ytitle'  ///
-		  yline(0 , lp(dash) lcolor(black)) `title' `name' xlabel(`xlab') `dels'
-		  
-end
-
-
-
-/***
-Idea Get a program that gets this list, and another that IDS the relevant columns.
-local evlist1 :colname e(b)
-local evlist2 :coleq e(b)
-
-display "`evlist1'"
-display "`evlist2'"
-
-local lst "t_1_2 t_2_3 t_3_4 t_4_5 t_5_6 t_6_7 t_7_8 t_8_9 t_9_10 t_9_11 t_9_12 t_9_13 t_9_14 t_9_15"
-foreach i of local lst {
-	local j: word 2 of `=subinstr(subinstr("`i'","t","",.),"_"," ",.)'
-	display "`=`j'-10'"
-}
-***/

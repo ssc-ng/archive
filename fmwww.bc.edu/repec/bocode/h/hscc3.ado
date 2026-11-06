@@ -1,4 +1,4 @@
-*! hscc 1.0.2 28sep2026
+*! hscc3 1.0.2 28sep2026
 *! Heterogeneous-Slope SCC estimator
 *! Joint partial-pooling heterogeneous slopes + HC3 Driscoll-Kraay inference
 *!
@@ -16,8 +16,8 @@
 *!     hscc GGI lnREC lnT GPATDE FD, lag(2)
 *!     hscc GGI lnREC lnT GPATDE FD, timefe
 
-capture program drop hscc
-program define hscc, eclass sortpreserve
+capture program drop hscc3
+program define hscc3, eclass sortpreserve
     version 17.0
 
     syntax varlist(min=2 numeric) [if] [in] [, LAG(integer -1) TIMEFE]
@@ -33,7 +33,7 @@ program define hscc, eclass sortpreserve
     local timevar  "`r(timevar)'"
 
     if "`panelvar'" == "" | "`timevar'" == "" {
-        di as err "data must be xtset before using hscc"
+        di as err "data must be xtset before using hscc3"
         exit 459
     }
 
@@ -58,7 +58,7 @@ program define hscc, eclass sortpreserve
     quietly levelsof `timevar' if `touse', local(__hscc_timevals)
 
     if `Ng' < 2 {
-        di as err "hscc requires at least two panel units"
+        di as err "hscc3 requires at least two panel units"
         exit 459
     }
 
@@ -68,7 +68,7 @@ program define hscc, eclass sortpreserve
     quietly summarize `__hscc_n' if `touse', meanonly
 
     if r(min) != r(max) | r(min) != `Tdim' {
-        di as err "hscc v1.0 requires a strongly balanced estimation sample"
+        di as err "hscc3 v1.0 requires a strongly balanced estimation sample"
         exit 459
     }
 
@@ -118,8 +118,8 @@ program define hscc, eclass sortpreserve
         ereturn local timefe_normalization "centered_mean_zero"
     }
 
-    ereturn local cmd "hscc"
-    ereturn local cmdline `"hscc `0'"'
+    ereturn local cmd "hscc3"
+    ereturn local cmdline `"hscc3 `0'"'
     ereturn local depvar "`depvar'"
     ereturn local indepvars "`indepvars'"
     ereturn local panelvar "`panelvar'"

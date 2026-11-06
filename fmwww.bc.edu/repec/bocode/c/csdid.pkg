@@ -19,10 +19,10 @@ d KW: drdid
 d
 d Requires: Stata version 14 and drdid from SSC (q.v.)
 d
-d Distribution-Date: 20251005
+d Distribution-Date: 20261105
 d
 d Author: Fernando Rios-Avila, Levy Economics Institute of Bard College
-d Support: email friosavi@@levy.org
+d Support: email f.rios.a@@gmail.com
 d
 d Author: Pedro H.C. Sant'Anna, Vanderbilt University
 d Support: email pedro.h.santanna@@vanderbilt.edu
@@ -31,12 +31,31 @@ d Author: Brantly Callaway, University of Georgia
 d Support: email brantly.callaway@@uga.edu
 d
 f csdid.ado
-f csdid_estat.ado
-f csdid_rif.ado
-f csdid_stats.ado
-f csdid_table.ado
-f csdid_plot.ado
-f ../_/_gcsgvar.ado
-f ../t/tsvmat.ado
+f csdid.mata
 f csdid.sthlp
+f csgvar.ado
+f csgvar.sthlp
+f ../d/dipt.ado
+f ../d/dipt.sthlp
+f ../m/mpdta.dta
+f ../t/tsvmat.ado
+f ../t/tsvmat.sthlp
+f csdid_estat.ado
+f csdid_estat.sthlp
+f csdid_legacy.sthlp
+F csdid_license.txt
+f csdid_p.ado
+f csdid_plot.ado
+f csdid_plot.sthlp
 f csdid_postestimation.sthlp
+f csdid_rif.ado
+f csdid_rif.sthlp
+f csdid_stats.ado
+f csdid_stats.sthlp
+f csdid_table.ado
+f csdid_table.sthlp
+f csdid_whatsnew.sthlp
+f ../_/_csdid_engine_load.ado
+f ../_/_csdid_post.ado
+f ../_/_gcsgvar.ado
+f ../l/lcsdid_v2.mlib

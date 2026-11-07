@@ -1,0 +1,10 @@
+{
+  "compiler_release": "15",
+  "objects": {
+    "_fereg_ppml_post_scalars.mo": "6ac01b45c76dd26c03671c29ffc9897481c031a86ee5fbe8ea5b1cb5f929b9bd",
+    "_fereg_ppml_validate_result.mo": "1b34397bb3ce1df178155a5d061307b467686d432726941576c2bd07976beb99",
+    "_fereg_ppml_validation_error.mo": "9232a5be494ea41b13d0c69016ffa5fd35c6d03062dfbaa6da5c5ea4739aeca7"
+  },
+  "schema": "fereg-ppml-mata-v1",
+  "source_sha256": "d379f5f14429882ab081adadc9c95a0f776c600a77ab23a864ad11be32a89f41"
+}

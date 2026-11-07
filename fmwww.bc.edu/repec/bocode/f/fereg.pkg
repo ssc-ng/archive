@@ -1,0 +1,56 @@
+d 'FEREG': module to perform fast high-dimensional fixed-effects regressions
+d
+d  The package provides fereg for ordinary and weighted least
+d squares and feppml for Poisson pseudo-maximum likelihood. Both
+d support multiple high-dimensional fixed effects, robust and
+d multiway-clustered inference, predictions, and saved fixed
+d effects. They share a parallel Rust runtime. 
+d
+d KW: fixed effects
+d KW: high dimension
+d KW: PPML
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261106
+d
+d Author: Johannes F. Schmieder,  Boston University
+d Support: email johannes@@bu.edu
+d
+f fereg.ado
+f fereg.sthlp
+f feppml_p.ado
+f feppml.ado
+f feppml.sthlp
+f fereg_estat.ado
+F fereg_windows.plugin.sha256
+F fereg_linux.plugin.sha256
+F fereg_macos.plugin.sha256
+g MACARM64 fereg_macos.plugin
+g OSX.ARM64 fereg_macos.plugin
+g MACINTEL64 fereg_macos.plugin
+g OSX.X8664 fereg_macos.plugin
+g LINUX64 fereg_linux.plugin
+g LINUX64P fereg_linux.plugin
+g WIN64 fereg_windows.plugin
+f fereg_p.ado
+f fereg_parse.ado
+f fereg_parse.sthlp
+f fereg_postestimation.sthlp
+f fereg_run.ado
+f ../_/_fereg_display.ado
+f ../_/_fereg_estimate_ols.ado
+f ../_/_fereg_estimate_ppml.ado
+f ../_/_fereg_estimate_public.ado
+f ../_/_fereg_factor_sample.ado
+f ../_/_fereg_indepvars.ado
+f ../_/_fereg_input_host.ado
+f ../_/_fereg_load.ado
+f ../_/_fereg_memory_baseline.ado
+f ../_/_fereg_memory_validate.ado
+f ../_/_fereg_ppml_post_scalars.mo
+f ../_/_fereg_ppml_result_mata.ado
+f ../_/_fereg_ppml_result_mata.json
+f ../_/_fereg_ppml_validate_result.mo
+f ../_/_fereg_ppml_validation_error.mo
+f ../_/_fereg_ppml.ado

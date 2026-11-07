@@ -157,6 +157,7 @@ p xtoos module for evaluating the out-of-sample prediction performance of panel-
 p xtoutliers module providing outlier detection and robust estimation for panel data 
 p xtoverid module to calculate tests of overidentifying restrictions after xtreg, xtivreg, xtivreg2, xthtaylor
 p xtpanelcoint module to perform panel cointegration and multiple long-run relations estimation
+p xtpanelgarch module for panel GARCH models: estimation, pre-testing and diagnostics 
 p xtpattern module to generate code showing pattern of xt data
 p xtpatternvar module to generate string variable describing panel patterns
 p xtpcaus module to perform Panel Granger Causality Tests: Panel Fourier Toda-Yamamoto (PFTY) and Panel Quantile Causality (PQC)
@@ -229,4 +230,5 @@ p xtvar2 module to compute panel vector autoregression
 p xtvc module to compute confidence intervals for the variance component of random-intercept linear models
 p xtvfreg module for estimating variance function panel regression
 p xtwest module for testing for cointegration in heterogeneous panels
+p xtxai module providing explainability tools for estimation and machine-learning models
 p xvalols module to crossvalidate an OLS regression

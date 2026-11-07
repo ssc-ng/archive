@@ -1,0 +1,48 @@
+d 'XTPANELGARCH': module for panel GARCH models: estimation, pre-testing and diagnostics 
+d
+d      xtpanelgarch brings conditional heteroskedasticity into
+d panel data. Each subcommand implements one estimator from the   
+d panel-GARCH literature exactly as written in its source paper and
+d reports tables in the format used by those papers: a mean   
+d block, a variance block, a covariance block, and a "volatility
+d dynamics" block (persistence, half-life, positive-definiteness   
+d checks). 
+d
+d KW: panel data
+d KW: GARCH
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261106
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f xtpanelgarch.ado
+f xtpanelgarch.sthlp
+f ../_/_xtpg_balance.ado
+f ../l/lxtpanelgarch.mlib
+f xtpanelgarch_armagarch.ado
+f xtpanelgarch_armagarch.sthlp
+f xtpanelgarch_cg.ado
+f xtpanelgarch_cg.sthlp
+f xtpanelgarch_cl.ado
+f xtpanelgarch_cl.sthlp
+f xtpanelgarch_cluster.ado
+f xtpanelgarch_cluster.sthlp
+f xtpanelgarch_estat.ado
+f xtpanelgarch_example.do
+f xtpanelgarch_hgarch.ado
+f xtpanelgarch_hgarch.sthlp
+f xtpanelgarch_mata.mata
+f xtpanelgarch_methods.sthlp
+f xtpanelgarch_msgarch.ado
+f xtpanelgarch_msgarch.sthlp
+f xtpanelgarch_p.ado
+f xtpanelgarch_postestimation.sthlp
+f xtpanelgarch_pretest.ado
+f xtpanelgarch_pretest.sthlp
+f xtpanelgarch_qgarch.ado
+f xtpanelgarch_qgarch.sthlp
+f xtpanelgarch_vt.ado
+f xtpanelgarch_vt.sthlp

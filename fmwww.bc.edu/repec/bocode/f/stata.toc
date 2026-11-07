@@ -31,6 +31,7 @@ p fedit module to find and edit text file from within Stata
 p fejiv module to perform fixed effect jackknife IV (FEJIV) estimation
 p feldti module to compare two independent coefficients of reliability
 p fencode module to provide frequency-based encoding of string and numeric variables
+p fereg module to perform fast high-dimensional fixed-effects regressions
 p fese module to calculate standard errors for fixed effects
 p fevc module for leave-out bias-corrected variance decompositions
 p ff module to browse and search Stata's built-in functions

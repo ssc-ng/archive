@@ -1,0 +1,20 @@
+d 'XTXAI': module providing explainability tools for estimation and machine-learning models
+d
+d   XTXAI is a practical and extensible tool that connects
+d traditional econometric analysis with modern explainable
+d machine-learning methods, particularly for researchers working
+d with panel data, heterogeneous relationships, and dynamic models. d
+d KW: econometrics
+d KW: machine learning
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261006
+d
+d Author:  Zehra Yalnız,  Kocaeli University
+d Support: email zehrayalnizz41@@gmail.com
+d
+f xtxai.ado
+f xtxai.sthlp
+f xtxaiml_engine.py
+f xtxaiml_pssa_engine.py

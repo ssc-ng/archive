@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 2.0  29oct2026}{...}
+{* *! version 2.1  07nov2026}{...}
 {* *! Manh Hoang-Ba, hbmanh9492@gmail.com}{...}
 
 help for {helpb xtgmmfa}{right:Manh Hoang-Ba (hbmanh9492@gmail, {browse "https://www.youtube.com/@manhb.econometrics":Youtube}, {browse "https://www.facebook.com/ManhHB94/":Facebook}, {browse "https://manhb94econometrics.wordpress.com":Website})}
@@ -29,21 +29,22 @@ See {browse "https://doi.org/10.1080/07350015.2020.1766469":Juodis and Sarafidis
 {marker options}{...}
 {title:Options}
 
-{synoptset 28 tabbed}{...}
+{synoptset 23 tabbed}{...}
 {synopthdr:options}
 {synoptline}
 {syntab:Model}
-{p2coldent :* {opt gmm:vars(varlist [, gmm_opts])}}GMM-style instruments; can be specified more than once{p_end}
-{synopt:{opt iv:vars(varlist)}}IV-style instruments{p_end}
-{synopt:{opt unof:actors(Vlist [, unof_opts])}}construction or selection of the factor proxies{p_end}
-{synopt:{opt obsf:actors(varlist)}}observed factors with unit-specific loadings{p_end}
+{p2coldent :* {opt gmm:vars}{cmd:(}{help xtgmmfa##gmm_spec:{it:gmm_spec}}{cmd:)}}GMM-style instruments; can be specified more than once{p_end}
+{synopt:{opt iv:vars}{cmd:(}{varlist}{cmd:)}}IV-style instruments{p_end}
+{synopt:{opt unof:actors}{cmd:(}{help xtgmmfa##unof_spec:{it:unof_spec}}{cmd:)}}construction or selection of the factor proxies{p_end}
+{synopt:{opt obsf:actors}[{cmd:(}{varlist}{cmd:)}}observed factors with unit-specific loadings{p_end}
 {synopt:{opt w:mat(1|2)}}initial weighting matrix; default is {cmd:wmat(2)}{p_end}
 {synopt:{opt nocons:tant}}suppress constant term{p_end}
+{synopt:{opt one:step}}use onestep estimator{p_end}
 {synopt:{opt rho(#)}}penalty constant of the BIC; default is {cmd:rho(0.75)}{p_end}
 
 {syntab:SE/Robust}
 {synopt:{opt r:obust}}Windmeijer-corrected robust standard errors{p_end}
-{synopt:{opt cl:uster(varname)}}Windmeijer-corrected cluster-robust standard errors{p_end}
+{synopt:{opt cl:uster}{cmd:(}{varname}{cmd:)}}Windmeijer-corrected cluster-robust standard errors{p_end}
 {synopt:{opt small}}small-sample adjustment; t and F statistics{p_end}
 
 {syntab:Reporting}
@@ -56,32 +57,40 @@ See {browse "https://doi.org/10.1080/07350015.2020.1766469":Juodis and Sarafidis
 {p 4 6 2}
 You must {cmd:xtset} your data before using {cmd:xtgmmfa}; see {helpb xtset:[XT] xtset}.{p_end}
 {p 4 6 2}
-All {it:varlists} may contain factor variables; see {help fvvarlist}.{p_end}
+All {it:{help varlist}} may contain factor variables; see {help fvvarlist}.{p_end}
 {p 4 6 2}
-{it:depvar} and all {it:varlists} may contain time-series operators; see {help tsvarlist}.{p_end}
+{depvar} and all {it:{help varlist}} may contain time-series operators; see {help tsvarlist}.{p_end}
 
+{marker gmm_spec}{...}
 {pstd}
-{opt gmm_opts} are
+{opt gmm_spec} are
 
-{synoptset 28 tabbed}{...}
+	{it: {varlist}} [{cmd:,} {it:gmm_opts}]
+
+{pstd}where {varlist} specifies the variables and their lags to be used as GMM-style instruments, as defined by {cmd:lag(}{it:a b}{cmd:)}.	
+	
+{synoptset 23 tabbed}{...}
 {synopthdr:gmm_opts}
 {synoptline}
-{synopt:{cmd:lag(}{it:a b}{cmd:)}}use lags {it:a} to {it:b} of the variables; {it:b} = {cmd:.} means all earlier periods; default is {cmd:lag(0 .)}{p_end}
-{synopt:{cmd:mlag(}{it:#}{cmd:)}}shorthand for {cmd:lag(0 }{it:#}{cmd:-1)}{p_end}
+{synopt:{cmd:lag(}{it:a b}{cmd:)}}use lags {it:a} to {it:b} of the variables; {it:a} < {it:b}; {it:b} = {cmd:.} means all earlier periods; default is {cmd:lag(}0 .{cmd:)}{p_end}
 {synopt:{opt col:lapse}}one moment condition per lag instead of one per lag and period{p_end}
 {synopt:{opt pre:sample}}also use values from periods before the first estimation period{p_end}
 {synoptline}
 {p2colreset}{...}
 
+{marker unof_spec}{...}
 {pstd}
-{opt unof_opts} are
+{opt unof_spec} are
 
-{synoptset 28 tabbed}{...}
+	{it: Vlist} [{cmd:,} {it:unof_opts}]
+
+{pstd}where {it:Vlist} is a {varlist} of time-varying variables driven by the factors; the dependent variable and the regressors are added after {it:Vlist}; {it:Vlist} may be empty.
+	
+{synoptset 23 tabbed}{...}
 {synopthdr:unof_opts}
 {synoptline}
-{synopt:{it:Vlist}}time-varying variables driven by the factors; the dependent variable and the regressors are added after {it:Vlist}; {it:Vlist} may be empty{p_end}
 {synopt:{opt noreg:ressor}}do not add the dependent variable and the regressors to {it:Vlist}{p_end}
-{synopt:{opt w:var(varname)}}time-invariant variable that defines the weights w_i; default is the first available value of the dependent variable{p_end}
+{synopt:{opt w:var}{cmd:(}{varname}{cmd:)}}time-invariant variable that defines the weights w_i; default is the first available value of the dependent variable{p_end}
 {synopt:{opt ty:pe(1|2|3)}}how {it:Vlist} and the weights are combined; default is {cmd:type(1)}{p_end}
 {synopt:{opt p:ower(#)}}power of {cmd:wvar()} used as the single weight by {cmd:type(2)}; default is {cmd:power(0)}{p_end}
 {synopt:{opt er}}use the eigenvalue-ratio statistic instead of the growth ratio (default) to estimate the number of factor proxies{p_end}
@@ -112,11 +121,15 @@ they are used to construct the vector v_i of equation (11) and the matrix V_i of
  so {it:Vlist} can be empty. The proxies are cross-sectional averages of the variables multiplied by the weights w_i, which are powers of the variable in {cmd:wvar()}.
 
 {phang2}
-{cmd:type(1)} uses the first variable in {it:Vlist} (after added y, X) and several weights (the powers 0 to T-2 of w_i, where T is the length of the longest panel), {cmd:type(2)} uses all variables in {it:Vlist} and a single weight w_i^{cmd:power()}, and {cmd:type(3)} combines both.
+{cmd:type(1)} uses the first variable in {it:Vlist} (after added y, X) and several weights (the powers 0 to T-2 of w_i, where T is the length of the longest panel), 
+{cmd:type(2)} uses all variables in {it:Vlist} and a single weight w_i^{cmd:power()}, and {cmd:type(3)} combines both.
 
 {phang2}
-By default the number of factor proxies is estimated (regularization): the proxies are replaced by the principal components of the proxy matrix and their number is chosen by the growth-ratio statistic; 
-{cmd:er} uses the eigenvalue-ratio statistic instead. The GR statistic requires at least 3 periods. {cmd:le(#)} fixes the number of proxies. With {cmd:bss} all subsets of the proxies with up to {cmd:lmax(#)} elements are estimated 
+By default the number of factor proxies ({cmd:Le}) is estimated (regularization): the proxies are replaced by the principal components of the proxy matrix and their number is chosen by the growth-ratio statistic; 
+{cmd:er} uses the eigenvalue-ratio statistic instead. The GR statistic requires at least 3 periods. {cmd:le(#)} fixes the number of proxies.
+
+{phang2}
+With {cmd:bss} all subsets of the proxies with up to {cmd:lmax(#)} elements are estimated 
 and the one with the smallest BIC is selected; the command reports the number of candidates it searches and stores it in {cmd:e(n_cand)}.
 
 {phang}
@@ -168,11 +181,11 @@ The reported J statistic (Hansen) has {cmd:e(j_df)} degrees of freedom, equal to
 
 {pstd}
 {bf:Singular covariance matrix.} The covariance matrix of the moment conditions cannot have a rank larger than the number of units (clusters). If its rank is smaller than the number of moment conditions, 
-the weighting matrix is not defined, and the coefficients, standard errors and J statistic would be unreliable. {cmd:xtgmmfa} then stops with the message:
+the weighting matrix is not defined, and the coefficients, standard errors and J statistic would be unreliable. {cmd:xtgmmfa} then raises the warning:
 
-{p 8 8 2}{err:- moment covariance matrix is singular (rank r < z moments, g units/clusters)}{p_end}
-{p 8 8 2}{err:- 2-step GMM estimates, standard errors and the J test would be unreliable}{p_end}
-{p 8 8 2}{err:- too many or dependent instruments; use {bf:lag()}, {bf:collapse} or fewer variables in {bf:gmmvars()}/{bf:ivvars()}}{p_end}
+{p 8 8 2}{err:- moment covariance matrix is singular (rank {bf:r} < {bf:j} moments, {bf:G} units/clusters)}{p_end}
+{p 8 8 2}{err:- Using a generalized inverse to calculate the weighting matrix; the J test and standard errors may be unreliable}{p_end}
+{p 8 8 2}{err:- Number of moments is large relative to the number of units/clusters; consider {bf:lag()}, {bf:collapse} or fewer variables in {bf:gmmvars()}}{p_end}
 
 {pstd}
 {bf:Collinearity.} Collinear regressors, collinear variables within each {cmd:gmmvars()} group, {cmd:ivvars()} and {cmd:obsfactors()} are dropped with the note of {cmd:_rmcoll}, and collinear variables in {it:Vlist} are dropped silently.
@@ -206,9 +219,6 @@ the weighting matrix is not defined, and the coefficients, standard errors and J
 {pstd}Frequency weights constant within firm{p_end}
 {phang2}. {stata gen byte ones = 1}{p_end}
 {phang2}. {stata xtgmmfa l(0/1).n k w ys [pw=ones], gmm(l.n l.k) iv(w ys) r}{p_end}
-
-{pstd}With all lags of four variables there are more moment conditions than units; the command stops with an error message{p_end}
-{phang2}. {stata xtgmmfa l(0/1).n k w ys, gmm(l.n l.k l.w l.ys)}{p_end}
 
 
 {marker results}{...}
@@ -308,7 +318,8 @@ hbmanh9492@gmail.com
 {title:Acknowledgement}
 
 {pstd}
-I would like to express my sincere gratitude to Arturas Juodis and Vasilis Sarafidis, who developed the linear GMM approach for this class of models. The implementation of {cmd:xtgmmfa} benefited substantially from the MATLAB code provided with their research.
+I would like to express my sincere gratitude to Arturas Juodis and Vasilis Sarafidis, who developed the linear GMM approach for this class of models. 
+The implementation of {cmd:xtgmmfa} benefited substantially from the MATLAB code provided with their research.
 
 
 {marker references}{...}
@@ -326,5 +337,5 @@ Windmeijer, F. 2005. A finite sample correction for the variance of linear effic
 {title:Also see}
 
 {phang}
-{help xtset}, {help xtdpd}, {help xtabond2} (if installed), {help xtdpdgmm} (if installed)
+{helpb xtset}, {helpb xtdpd}, {helpb xtabond2} (if installed), {helpb xtdpdgmm} (if installed)
 

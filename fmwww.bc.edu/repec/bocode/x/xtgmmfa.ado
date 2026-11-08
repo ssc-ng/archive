@@ -1,5 +1,5 @@
 *! xtgmmfa     - Fixed-T linear GMM for factor-augmented panels (Juodis & Sarafidis)
-*! version 2.0 - 29/10/2026 
+*! version 2.1 - 07/11/2026
 *! author: Manh Hoang-Ba, hbmanh9492@gmail.com
 
 cap program drop xtgmmfa
@@ -14,6 +14,12 @@ program define xtgmmfa, eclass sortpreserve
         syntax [, Level(cilevel)]
         mhb_display, level(`level')
         exit
+    }
+
+    cap mata: mata which mhb_estimate()
+    if _rc {
+        di in red "Mata library lmhb_xtgmmfa not found. Run mhb_build_mlib.do first."
+        exit 111
     }
 
 *-- 1. parse varlist, repeated gmmvars(), other options
@@ -42,12 +48,9 @@ program define xtgmmfa, eclass sortpreserve
         local mhb_col  = r(col)
         local mhb_pres = r(pres)
         local mhb_gv `r(vars)'
-        _rmcoll `mhb_gv' if `mhb_touse'
-        local mhb_gv `r(varlist)'
+        mhb_fvterms `mhb_gv' if `mhb_touse'
+        local mhb_gv `r(terms)'
         foreach mhb_tk in `mhb_gv' {
-            if substr("`mhb_tk'", 1, 2) == "o." {
-                continue
-            }
             local mhb_ix 0
             local mhb_c 0
             foreach mhb_e of local mhb_zexpr {
@@ -81,8 +84,8 @@ program define xtgmmfa, eclass sortpreserve
     }
 
     local 0 `", `options'"'
-    syntax [, UNOFactors(string asis) IVvars(varlist ts fv) Wmat(integer 2) Robust ///
-              CLuster(varname) Level(cilevel) NOCONStant OBSFactors(varlist ts fv) ///
+    syntax [, UNOFactors(string asis) IVvars(string asis) Wmat(integer 2) Robust ONEstep ///
+              CLuster(varname) Level(cilevel) NOCONStant OBSFactors(string asis) ///
               rho(real 0.75) small]
     if !inlist(`wmat', 1, 2) {
         di in red "wmat(`wmat') invalid"
@@ -173,25 +176,23 @@ program define xtgmmfa, eclass sortpreserve
     if !`mhb_cons' {
         local mhb_nocons nocons
     }
-    * drop collinear regressors (omitted variables are flagged o.)
-    _rmcoll `mhb_varlist' if `mhb_touse', `mhb_nocons'
-    local mhb_rl "`r(varlist)'"
-    gettoken mhb_first : mhb_rl
-    if substr("`mhb_first'", 1, 2) == "o." {
+    * dependent variable, then regressors as single terms (base levels and omitted terms dropped)
+    fvexpand `mhb_varlist' if `mhb_touse'
+    local mhb_fl `r(varlist)'
+    gettoken mhb_depname : mhb_fl
+    mhb_fvterms `mhb_varlist' if `mhb_touse', `mhb_nocons'
+    local mhb_tl `r(terms)'
+    gettoken mhb_first mhb_regnames : mhb_tl
+    if "`mhb_first'" != "`mhb_depname'" {
         di in red "dependent variable is omitted because of collinearity"
         exit 198
     }
-    local mhb_varlist ""
-    foreach mhb_tk of local mhb_rl {
-        if substr("`mhb_tk'", 1, 2) != "o." {
-            local mhb_varlist `mhb_varlist' `mhb_tk'
-        }
+    * one fvrevar call per term (a list of explicit levels would be merged and its first level become the base)
+    local mhb_varlist_fv ""
+    foreach mhb_tk in `mhb_tl' {
+        fvrevar `mhb_tk' if `mhb_touse'
+        local mhb_varlist_fv `mhb_varlist_fv' `r(varlist)'
     }
-    fvexpand `mhb_varlist' if `mhb_touse'
-    local mhb_names "`r(varlist)'"
-    gettoken mhb_depname mhb_regnames : mhb_names
-    fvrevar `mhb_varlist' if `mhb_touse'
-	local mhb_varlist_fv `r(varlist)'
     gettoken mhb_dep mhb_xvars : mhb_varlist_fv
     local mhb_nreg : word count `mhb_xvars'
 
@@ -209,16 +210,13 @@ program define xtgmmfa, eclass sortpreserve
     }
     if "`ivvars'" != "" {
         if `mhb_cons' {
-            _rmcoll `ivvars' `mhb_one' if `mhb_touse', noconstant
+            mhb_fvterms `ivvars' if `mhb_touse', extra(`mhb_one')
         }
         else {
-            _rmcoll `ivvars' if `mhb_touse'
+            mhb_fvterms `ivvars' if `mhb_touse'
         }
-        local mhb_ivl `r(varlist)'
+        local mhb_ivl `r(terms)'
         foreach mhb_tk in `mhb_ivl' {
-            if substr("`mhb_tk'", 1, 2) == "o." | "`mhb_tk'" == "`mhb_one'" {
-                continue
-            }
             fvrevar `mhb_tk'
             local mhb_zvars `mhb_zvars' `r(varlist)'
             local mhb_zexpr `mhb_zexpr' `mhb_tk'
@@ -229,6 +227,11 @@ program define xtgmmfa, eclass sortpreserve
 
     * factor proxy variables: Vlist plus (Y, X) unless noregressor
     local mhb_xnames = subinstr("`mhb_regnames'", "_cons", "", .)
+    local mhb_vlt ""
+    if "`mhb_vlist'" != "" {
+        mhb_fvterms `mhb_vlist' if `mhb_touse', nocons
+        local mhb_vlt `r(terms)'
+    }
     if "`mhb_vlist'" == "" {
         if "`mhb_noreg'" != "" {
             di in red "noregressor cannot be specified with an empty Vlist."
@@ -239,14 +242,21 @@ program define xtgmmfa, eclass sortpreserve
     }
     else {
         if "`mhb_noreg'" != "" {
-            local mhb_vexpr `mhb_vlist'
+            local mhb_vexpr `mhb_vlt'
         }
         else {
-            local mhb_vexpr `mhb_vlist' `mhb_depname' `mhb_xnames'
+            local mhb_vexpr `mhb_vlt' `mhb_depname' `mhb_xnames'
         }
     }
-    fvrevar `mhb_vexpr' if `mhb_touse'
-    local mhb_vvars `r(varlist)'
+    if "`mhb_vexpr'" == "" {
+        di in red "no variable left in Vlist"
+        exit 198
+    }
+    local mhb_vvars ""
+    foreach mhb_tk in `mhb_vexpr' {
+        fvrevar `mhb_tk' if `mhb_touse'
+        local mhb_vvars `mhb_vvars' `r(varlist)'
+    }
     qui _rmcoll `mhb_vvars' if `mhb_touse', nocons forcedrop
     local mhb_vvars `r(varlist)'
     if `mhb_type' == 1 {
@@ -270,22 +280,19 @@ program define xtgmmfa, eclass sortpreserve
     }
     local mhb_vvars `mhb_vtmp'
     if "`mhb_vvars'" == "" {
-        di in red "no time-varying variable available to construct factor proxies"
+        di in red "no time-varying variable available to build factor proxies"
         exit 198
     }
 
     local mhb_hvars ""
     if "`obsfactors'" != "" {
-        _rmcoll `obsfactors' if `mhb_touse', `mhb_nocons'
-        local mhb_ol ""
-        foreach mhb_tk in `r(varlist)' {
-            if substr("`mhb_tk'", 1, 2) != "o." {
-                local mhb_ol `mhb_ol' `mhb_tk'
-            }
-        }
+        mhb_fvterms `obsfactors' if `mhb_touse', `mhb_nocons'
+        local mhb_ol `r(terms)'
         if "`mhb_ol'" != "" {
-            fvrevar `mhb_ol' if `mhb_touse'
-            local mhb_hvars `r(varlist)'
+            foreach mhb_tk in `mhb_ol' {
+                fvrevar `mhb_tk' if `mhb_touse'
+                local mhb_hvars `mhb_hvars' `r(varlist)'
+            }
         }
     }
     else {
@@ -307,10 +314,11 @@ program define xtgmmfa, eclass sortpreserve
 
 *-- 4. option matrix for Mata (read by name)
     local mhb_robust  = ("`robust'" != "")
+    local mhb_onestep = ("`onestep'" != "")
     local mhb_small   = ("`small'" != "")
     matrix `mhb_tn_opt' = (`mhb_cons', `mhb_type', `mhb_power', `mhb_lmax', `mhb_bss', ///
                          `mhb_er', `mhb_le', `wmat', `mhb_robust', ///
-                         `mhb_small', `rho', `mhb_seed', `mhb_wcode')
+                         `mhb_small', `rho', `mhb_seed', `mhb_wcode', `mhb_onestep')
 
     local mhb_idvar `mhb_i'
     local mhb_tpvar `mhb_tp'
@@ -363,6 +371,7 @@ program define xtgmmfa, eclass sortpreserve
     ereturn scalar j_s    = scalar(`mhb_ts_J')
     ereturn scalar j_df   = scalar(`mhb_ts_Jdf')
     ereturn scalar rank_D = scalar(`mhb_ts_rkD')
+    ereturn scalar sing_D = (e(rank_D) < e(j))
     ereturn scalar sum_w  = scalar(`mhb_ts_sumw')
     if `mhb_bss' {
         ereturn scalar n_cand = scalar(`mhb_ts_ncand')
@@ -392,18 +401,34 @@ program define xtgmmfa, eclass sortpreserve
         ereturn scalar chi2_b_p = chi2tail(e(df_b_m), e(chi2_b))		
     }
 
-    * two-step only
-    if "`mhb_clvar'" != "" {
-        ereturn local clustvar "`mhb_clvar'"
-        ereturn scalar N_clust = scalar(`mhb_ts_G')
-        ereturn local vcetype "WC-Robust"
+
+    if `mhb_onestep' {
+        * one-step: variance always robust; J is the two-step Hansen statistic
+        if "`mhb_clvar'" != "" {
+            ereturn local clustvar "`mhb_clvar'"
+            ereturn scalar N_clust = scalar(`mhb_ts_G')
+        }
+        else {
+            ereturn local clustvar "`mhb_pv'"
+            ereturn scalar N_clust = scalar(`mhb_ts_N')
+        }
+        ereturn local vcetype "Robust"
+        ereturn local gmmstep "onestep"
+        ereturn local note "One-step estimates with robust variance; Hansen J computed from the two-step estimates."
     }
-    else if `mhb_robust' {
-        ereturn local clustvar "`mhb_pv'"
-        ereturn scalar N_clust = scalar(`mhb_ts_N')
-        ereturn local vcetype "WC-Robust"
+    else {
+        if "`mhb_clvar'" != "" {
+            ereturn local clustvar "`mhb_clvar'"
+            ereturn scalar N_clust = scalar(`mhb_ts_G')
+            ereturn local vcetype "WC-Robust"
+        }
+        else if `mhb_robust' {
+            ereturn local clustvar "`mhb_pv'"
+            ereturn scalar N_clust = scalar(`mhb_ts_N')
+            ereturn local vcetype "WC-Robust"
+        }
+        ereturn local gmmstep "twostep"
     }
-    ereturn local gmmstep "twostep"
     if "`mhb_wtype'" != "" {
         ereturn local wtype "`mhb_wtype'"
         ereturn local wexp "= `mhb_wexp'"
@@ -440,6 +465,64 @@ program define xtgmmfa, eclass sortpreserve
 
 
     mhb_display, level(`level')
+end
+
+/*------------------------------------------------------------------------------
+    Expand a varlist (factor variables, time-series operators) into single terms;
+    drop base levels, then drop terms omitted by _rmcoll. Returns r(terms).
+    extra(): variable added to the collinearity check only (e.g. the constant)
+------------------------------------------------------------------------------*/
+cap program drop mhb_fvterms
+program define mhb_fvterms, rclass
+    version 13
+    syntax varlist(ts fv) [if] [in] [, NOCONStant EXTRA(varname)]
+    marksample mhb_tu, novarlist
+    * single terms; base levels (1b.g) are dropped here, once, before any other step
+    fvexpand `varlist' if `mhb_tu'
+    local mhb_tl ""
+    foreach mhb_tk in `r(varlist)' {
+        if !regexm("`mhb_tk'", "(^|#|\.)([0-9]+b|[0-9]*o|[0-9]+bo)\.") {
+            local mhb_tl `mhb_tl' `mhb_tk'
+        }
+    }
+    if "`mhb_tl'" == "" {
+        di in red "no variable left after dropping base levels"
+        exit 198
+    }
+    * one variable per term; collinearity is checked on these plain variables
+    local mhb_tv ""
+    foreach mhb_tk in `mhb_tl' {
+        fvrevar `mhb_tk' if `mhb_tu'
+        local mhb_tv `mhb_tv' `r(varlist)'
+    }
+    local mhb_nt : word count `mhb_tl'
+    local mhb_nv : word count `mhb_tv'
+    if `mhb_nt' != `mhb_nv' {
+        di in red "internal error: terms and variables differ in number"
+        exit 498
+    }
+    if "`extra'" != "" {
+        qui _rmcoll `mhb_tv' `extra' if `mhb_tu', noconstant
+    }
+    else {
+        qui _rmcoll `mhb_tv' if `mhb_tu', `noconstant'
+    }
+    local mhb_rl `r(varlist)'
+    * keep terms whose variable was not flagged o. (same position in both lists)
+    local mhb_out ""
+    local mhb_ix = 0
+    foreach mhb_tk in `mhb_rl' {
+        local ++mhb_ix
+        if `mhb_ix' > `mhb_nt' {
+            continue
+        }
+        if substr("`mhb_tk'", 1, 2) == "o." {
+            di as txt "note: `: word `mhb_ix' of `mhb_tl'' omitted because of collinearity."
+            continue
+        }
+        local mhb_out `mhb_out' `: word `mhb_ix' of `mhb_tl''
+    }
+    return local terms `mhb_out'
 end
 
 /*------------------------------------------------------------------------------
@@ -486,11 +569,25 @@ program define mhb_display
     version 13
     syntax [, Level(cilevel)]
 
-    if e(wald_a) > 999999 {
+    if "`e(small)'" == "" {
+        local mhb_wstat = e(chi2)
+		local mhb_wstat_b = e(chi2_b)
+    }
+    else {
+        local mhb_wstat = e(F)
+		local mhb_wstat_b = e(F_b)
+    }
+    if `mhb_wstat' > 999999 {
         local mhb_cfmt `"%10.0g"'
     }
     else {
         local mhb_cfmt `"%10.3f"'
+    }
+    if `mhb_wstat_b' > 999999 {
+        local mhb_cfmt_b `"%10.0g"'
+    }
+    else {
+        local mhb_cfmt_b `"%10.3f"'
     }
 
     di
@@ -558,7 +655,7 @@ program define mhb_display
 			_col(49) in gr "Wald chi2(" ///
             in ye e(df_b_m) ///
             in gr ")" ///
-            _col(67) "= " in ye `mhb_cfmt' e(chi2_b)
+            _col(67) "= " in ye `mhb_cfmt_b' e(chi2_b)
         local mhb_wald_b_p = e(chi2_b_p)
         local mhb_wald_b_l "Prob > chi2"
     }
@@ -569,7 +666,7 @@ program define mhb_display
             in gr ", " ///
             in ye e(df_r) ///
             in gr ")" ///
-            _col(67) "= " in ye `mhb_cfmt' e(F_b)
+            _col(67) "= " in ye `mhb_cfmt_b' e(F_b)
         local mhb_wald_b_p = e(F_b_p)
         local mhb_wald_b_l "Prob > F"
     }
@@ -582,10 +679,9 @@ program define mhb_display
     ereturn display, level(`level') noemptycells
 
     if e(v_bad) == 1 {
-        di in red "Warning: non-positive or missing variance for some coefficient (ill-conditioned weighting matrix)."
+        di in red "{bf:Warning:} non-positive or missing variance for some coefficient (ill-conditioned weighting matrix)."
     }
 end
-
 
 
 /*==============================================================================
@@ -598,10 +694,16 @@ end
           - Repeatable gmmvars(); new sub-options lag(a b), collapse, presample.
           - Two-step only (drop onestep option).
           - [fweight aweight pweight] are allowed
-		  - Rank(Delta)-based J df
-		  - Stops if Delta is singular of Rank(Delta) < N.o. moments.
-		  - Correct dof and F statistic when small specified.
-		  - Correct moments in unbalanced panels (online appendix S1.1).
-		  - Reset initial weighting matrix C for every candidate in BSS.
+          - Rank(Delta)-based J df
+          - Stops if Delta is singular of Rank(Delta) < N.o. moments.
+          - Correct dof and F statistic when small specified.
+          - Correct moments in unbalanced panels (online appendix S1.1).
+          - Reset initial weighting matrix C for every candidate in BSS.
+  ver 2.1 - 07/11/2026
+          - Fixed error with factor variable in ivvars()
+          - onestep option restored;
+            Hansen J, its df and the BIC come from the two-step estimates.
+          - Singular Delta: warning (generalized inverse) instead of error;
+            new e(sing_D).
 
 ==============================================================================*/

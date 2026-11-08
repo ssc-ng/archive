@@ -149,6 +149,7 @@ p skilmack module to calculate Skillings-Mack statistic
 p sknor module to generate a sample from a normal or skewed (skew-normal) distribution, as defined by the user
 p skprobit module to perform Lagrange Multiplier Test for Normality for Probit model
 p sliceplot module for time series or other plot in slices
+p slidegraph module to automate stepped and layered graphs for presentation slides
 p slideplot module for sliding bar plot for frequencies or percents
 p slideviewer module to navigate SMCL slides, presentations, and tutorials in the Stata Viewer
 p slist module to "smart list" variables in compact format

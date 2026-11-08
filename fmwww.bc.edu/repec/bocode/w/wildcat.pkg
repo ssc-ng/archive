@@ -1,0 +1,50 @@
+d 'WILDCAT': module to provide a modern Stata graph scheme and Northwestern University brand colors
+d
+d    wildcat provides a modern, publication-grade Stata graph
+d scheme designed to  align closely with the clean, minimalist
+d aesthetic of R's ggplot2  (theme_minimal) and companion
+d theme_wildcat(). It includes Northwestern  University's official
+d brand colors across 23 named color styles (color-*.style)  for
+d direct use in graph commands, unshaded transparent facet banners
+d without  framing borders, subtle horizontal gridlines with
+d vertical gridlines eliminated,  and native palette integration
+d with Ben Jann's colorpalette package. 
+d
+d KW: graph schemes
+d KW: colors
+d
+d Requires: Stata version 14.2
+d
+d Distribution-Date: 20261107
+d
+d Author:   Aaron Wolf,   Northwestern University
+d Support: email  aaron.wolf@@u.northwestern.edu
+d
+f wildcat.sthlp
+f ../s/scheme-wildcat.sthlp
+f ../s/scheme-wildcat.scheme
+f ../c/color-nubrightblue.style
+f ../c/color-nubrightgreen.style
+f ../c/color-nubrightorange.style
+f ../c/color-nubrightred.style
+f ../c/color-nubrightteal.style
+f ../c/color-nubrightyellow.style
+f ../c/color-nudarkblue.style
+f ../c/color-nudarkgreen.style
+f ../c/color-nudarkorange.style
+f ../c/color-nudarkred.style
+f ../c/color-nudarkteal.style
+f ../c/color-nudarkyellow.style
+f ../c/color-nupurple.style
+f ../c/color-nupurple150.style
+f ../c/color-nupurple20.style
+f ../c/color-nupurple40.style
+f ../c/color-nupurple50.style
+f ../c/color-nurichblack.style
+f ../c/color-wc_axis.style
+f ../c/color-wc_bg.style
+f ../c/color-wc_body.style
+f ../c/color-wc_grid.style
+f ../c/color-wc_title.style
+f ../c/colorpalette_nu.ado
+f ../c/colorpalette_wildcat.ado

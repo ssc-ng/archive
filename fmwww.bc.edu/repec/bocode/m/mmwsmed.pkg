@@ -1,0 +1,30 @@
+d 'MMWSMED': module for conducting causal mediation analysis using ratio-of-mediator-probability weighting with parametric or nonparametric weights
+d
+d  mmwsmed decomposes the total effect of a treatment on an outcome
+d into natural direct and indirect effects using
+d ratio-of-mediator-probability weighting (RMPW; Hong 2010; Hong,
+d Deutsch, and Hill 2015; Hong 2015, chapters 11 to 13).  RMPW
+d allows the effect of the mediator on the outcome to differ by
+d treatment (a treatment-by-mediator interaction), makes no
+d assumption about the distribution of the outcome, and requires no
+d model for the outcome. The estimators, the extensions implemented
+d here, and their finite-sample performance are described in Linden
+d (2026). The syntax follows that of mediate. 
+d
+d KW: mediation analysis
+d KW: ratio-of-mediator-probability weighting
+d KW: marginal mean weighting through stratification
+d KW: inverse probability of treatment weights
+d KW: causal inference
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261107
+d
+d Author: Ariel Linden, Linden Consulting Group, LLC
+d Support: email alinden@@lindenconsulting.org
+d
+f mmwsmed.ado
+f mmwsmed.sthlp
+f ../r/Riverside.dta
+f MMWSMED.pdf

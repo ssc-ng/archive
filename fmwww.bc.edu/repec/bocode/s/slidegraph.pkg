@@ -1,0 +1,27 @@
+d 'SLIDEGRAPH': module to automate stepped and layered graphs for presentation slides
+d
+d     slidegraph automates the creation of layered, stepped
+d sequence graphs for  presentation slides (such as LaTeX Beamer or
+d PowerPoint builds). Instead of  omitting series across sequential
+d slides (which causes axis bounds, tick  intervals, margins, and
+d legend bounding boxes to jump between frames),  slidegraph plots
+d all series in every frame and modulates visibility using  Stata
+d opacity modifiers (%0, %20, etc.). It supports binary revelation,
+d  3-state narrative spotlighting (focus, dimmed ghost context, and
+d off),  automated export to LaTeX Beamer overlay code, and dual
+d paper/slide output  from a single command. 
+d
+d KW: graphics
+d KW: sequence graphs
+d KW: presentation slides
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261107
+d
+d Author:   Aaron Wolf,   Northwestern University
+d Support: email  aaron.wolf@@u.northwestern.edu
+d
+f slidegraph.ado
+f slidegraph.sthlp
+f slidegraph_demo.do

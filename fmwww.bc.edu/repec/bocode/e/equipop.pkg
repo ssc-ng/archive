@@ -21,9 +21,9 @@ d KW: spatial contexts
 d KW: geography
 d KW: nearest neighbors
 d
-d Requires: Stata version 17 and Python packages eqipop, numpy, pandas, scipy
+d Requires: Stata version 17 and Python 3.11 packages eqipop, numpy, pandas, scipy
 d
-d Distribution-Date: 20261104
+d Distribution-Date: 20261108
 d
 d Author: John Östh,  Oslo Metropolitan University
 d Support: email johnosth@@oslomet.no

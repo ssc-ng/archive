@@ -19149,6 +19149,7 @@ fmwww.bc.edu/repec/bocode/w/wtdtttpreddur.sthlp
 fmwww.bc.edu/repec/bocode/w/writepsfrag.html
 fmwww.bc.edu/repec/bocode/w/webdoc.sthlp
 fmwww.bc.edu/repec/bocode/w/webdoc.ado
+fmwww.bc.edu/repec/bocode/w/scheme-wildcat.sthlp
 fmwww.bc.edu/repec/bocode/w/whichdidshouldiuse.ado
 fmwww.bc.edu/repec/bocode/w/welflossas.ado
 fmwww.bc.edu/repec/bocode/w/weaver.ado

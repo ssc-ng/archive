@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 3.5.0 31 OCTOBER 2026 Soo Jeong Lee and Jeffrey M. Wooldridge *}
+{* *! version 3.6, 8 NOVEMBER 2026 Soo Jeong Lee and Jeffrey M. Wooldridge *}
 {viewerjumpto "Syntax" "lwdid##syntax"}{...}
 {viewerjumpto "Options" "lwdid##options"}{...}
 {viewerjumpto "Saved results" "lwdid##results"}{...}
@@ -57,7 +57,7 @@
 {cmd:ipwra} for inverse probability weighted regression adjustment (doubly robust){break}
 {cmd:ipw} and {cmd:ipwra} require covariates.{p_end}
 
-{synopt:{opt small}}Required for the small-N implementation (few treated or control units). Covariates are currently allowed only with common timing and require N_tr > K+1 and N_unt > K+1 (K = number of covariates).{p_end}
+{synopt:{opt small}}Required for the small-N implementation (few treated or control units). Additive covariates are supported for both common timing and staggered adoption. In staggered designs, the pooled ATT uses common covariate slopes, while cohort and cohort-time regressions use separate slopes. The overall regression requires N_tr + N_unt > K+2 (K covariates).{p_end}
 
 {syntab:Optional options}
 
@@ -68,17 +68,17 @@ For example, {cmd:pre(1)} uses only the last pre-treatment period, while
 
 {synopt:{opt never}}{it:Large-N only.} Uses only never-treated units as controls; by default, {cmd:lwdid} uses both never-treated and not-yet-treated units.{p_end}
 
-{synopt:{opt attgt}}Displays cell-specific estimates: ATT(g,t) in large-N mode, cohort-time (staggered) or period-specific (common timing) estimates in small-N mode. In small-N mode, at most 20 rows are displayed. Full results are stored in {cmd:e(attgt)}.{p_end}
+{synopt:{opt attgt}}Displays cell-specific estimates: ATT(g,t) in large-N mode, cohort-time (staggered) or period-specific (common timing) estimates in small-N mode. In small-N staggered mode, cohort-specific averages appear by default; {cmd:attgt} displays all cohort-time estimates. Full results remain in {cmd:e(attgt)}.{p_end}
 
 {synopt:{opt cluster(varname)}}{it:Large-N only.} Specifies the clustering level for ATT(g,t) standard errors and multiplier-bootstrap inference. By default, clustering is at the unit level.{p_end}
 
 {synopt:{opt ydot}}{it:Large-N only.}  Saves the cohort-specific residualized outcome variables used to construct the ATT(g,t) estimates. By default, these variables are not saved to avoid conflicts with existing user variables.{p_end}
 
-{synopt:{opt save(filename)}}Saves estimation results as a .dta file. In large-N mode, specifying {cmd:attgt} additionally saves a companion {cmd:_attgt.dta} file containing cell-level results. Small-N saving follows its existing period-by-period output behavior; {cmd:e(attgt)} is available after estimation without {cmd:save()}.{p_end}
+{synopt:{opt save(filename)}}Saves estimation results as a .dta file. In large-N mode, specifying {cmd:attgt} additionally saves a companion {cmd:_attgt.dta} file containing cell-level results. In small-N staggered mode, {cmd:save()} saves all estimable cohort-time results even when {cmd:attgt} is omitted; {cmd:e(attgt)} is always stored.{p_end}
 
 {synopt:{opt graph}}Displays graphical results.{break}
 Large-N: plots weighted ATT estimates by relative time with pointwise confidence intervals by default. {break}
-Small-N: plots treated and control means of residualized outcomes over time.{p_end}
+Small-N: plots average residualized outcomes of treated and control units over time.{p_end}
 
 {synopt:{opt cb}}{it:Large-N only.} Uses simultaneous confidence bands over all estimated relative times r (pre- and post-treatment) in both the event-study table and graph.{p_end}
 
@@ -86,7 +86,7 @@ Small-N: plots treated and control means of residualized outcomes over time.{p_e
 
 {synopt:{opt gid(id)}}Select treated unit to plot (default: treated-group average).{p_end}
 
-{synopt:{opt vce(vartype)}}{it:Small-N only.} Variance estimator for regression (e.g., {bf:robust}, {bf:hc3}).{p_end}
+{synopt:{opt vce(vartype)}} Small-N only. Specifies the variance estimator (e.g., robust or hc3). HC3 requires sufficient observations and may be unavailable with only one treated unit.{p_end}
 
 {synopt:{opt cellif}}{it:Large-N only.} Holds the cohort-size weights fixed in the influence functions, reproducing the inference reported in Lee and Wooldridge (2026a). Point estimates are unchanged.{p_end}
 
@@ -96,11 +96,11 @@ Small-N: plots treated and control means of residualized outcomes over time.{p_e
 
 {synopt:{opt level(#)}}Confidence level, in percent (default = 95).{p_end}
 
-{synopt:{opt ri}}{it:Small-N only.} Perform randomization inference (RI).{p_end}
+{synopt:{opt ri}}{it:Small-N common timing only.} Built-in randomization inference (RI). For staggered adoption, see the external {cmd:ritest} example below.{p_end}
 
-{synopt:{opt rireps(#)}}{it:Small-N only.} Number of RI repetitions (default = 999).{p_end}
+{synopt:{opt rireps(#)}}{it:Small-N common timing only.} Number of RI repetitions (default = 999).{p_end}
 
-{synopt:{opt riseed(#)}}{it:Small-N only.} Seed for RI reproducibility (default =12345).{p_end}
+{synopt:{opt riseed(#)}}{it:Small-N common timing only.} Seed for RI reproducibility (default =12345).{p_end}
 
 {synoptline}
 
@@ -133,7 +133,6 @@ The following saved results apply to large-N estimation; type {cmd:ereturn list}
 {synopt:{cmd:e(b)}}{cmd:Pre_avg}, {cmd:Post_avg}, and event-study WATT(r), named {cmd:Rm}{it:#} (r < 0) and {cmd:Rp}{it:#} (r >= 0){p_end}
 {synopt:{cmd:e(V)}}bootstrap variance-covariance matrix of {cmd:e(b)}{p_end}
 {synopt:{cmd:e(watt)}}event-study results: {cmd:ryear watt se N_cohorts N_unique_tr N_unique_unt}{p_end}
-
 {synopt:{cmd:e(attgt)}}cell-level results (small-N staggered: post-treatment only): {cmd:cohort time ryear att se N_tr N_unt N_total}{p_end}
 {synopt:{cmd:e(attgt_dropped)}}excluded cells, if any: {cmd:cohort time ryear reason}{p_end}
 
@@ -174,6 +173,7 @@ names can be listed with, {cmd:. ereturn display, coeflegend}, and any coefficie
 {synopt:{cmd:e(N_tr)}}distinct treated units in the overall regression{p_end}
 {synopt:{cmd:e(N_unt)}}distinct untreated comparison units in the overall regression{p_end}
 {synopt:{cmd:e(N_total)}}{cmd:N_tr} + {cmd:N_unt}{p_end}
+{synopt:{cmd:e(cohort_att)}}cohort-specific average ATT results in staggered small-N designs{p_end}
 {synopt:{cmd:e(attgt)}}period-specific (common timing) or cohort-time (staggered) estimates: {cmd:cohort time ryear att se N_tr N_unt N_total}{p_end}
 {synopt:{cmd:e(p_ri)}}randomization-inference p-value, if {cmd:ri} is specified{p_end}
 
@@ -183,11 +183,11 @@ single-effect regression. The estimates in {cmd:e(attgt)} are supplementary:
 with common timing, they are period-specific regressions; with staggered
 adoption, they are separate regressions for each cohort and post-treatment
 period ({cmd:ryear >= 0}), using never-treated units as controls. All use
-conventional t-based inference.
+t-based inference with the specified {cmd:vce()} (classical OLS by default).
 
 {pstd}
-With {cmd:attgt}, at most 20 rows are displayed; use {cmd:matrix list e(attgt)}
-or {cmd:save()} for the full results.
+For small-N staggered designs, {cmd:attgt} displays all estimable cohort-time cells.
+Without {cmd:attgt}, they remain in {cmd:e(attgt)} and can be saved with {cmd:save()}.
 
 {marker description}{...}
 {title:Description}
@@ -239,7 +239,7 @@ automatically detects whether the design involves a single treatment cohort
 appropriate estimation procedure. 
 
 {pstd}
-Details of the implementation are given in Hur, Lee and Wooldridge (2026c); 
+Details of the implementation are given in Hur, Lee and Wooldridge (2026); 
 see also the {browse "https://github.com/Soo-econ/lwdid":lwdid GitHub repository}
 for additional examples and documentation.
 
@@ -306,11 +306,19 @@ date variable created by {cmd:ym()}, and {cmd:gvar()} should be on the same
 scale.
 
 
+{bf:Example 6:} Small-N staggered adoption: permutation test with {cmd:ritest}
+
+{space 4}{cmd:. ssc install ritest}
+{space 4}{cmd:. ritest first_treat _b[Post_avg], cluster(id) reps(999) seed(12345) nodots: ///}
+{space 8}{cmd:lwdid y x, small ivar(id) tvar(year) gvar(first_treat) rolling(demean)}
+
 {pstd}
-With multiple treated cohorts, {cmd:attgt} reports the additional cohort-time
-single-regression estimates using never-treated controls. The overall
-weighted single-effect estimate in {cmd:e(b)} and its covariance matrix
-{cmd:e(V)} retain their original interpretation.
+The built-in {cmd:ri} option is available only with common timing. With
+staggered adoption, {cmd:ritest} (Heß 2017) can permute cohort assignments
+across units ({cmd:cluster(id)}) and re-estimate {cmd:_b[Post_avg]}. This is
+valid only if such permutations are justified by the assignment mechanism;
+parallel trends alone is not sufficient. Do not specify {cmd:ri}, {cmd:graph},
+{cmd:attgt}, or {cmd:save()} inside {cmd:ritest}.
 
 {marker citation}{...}
 {title:Citation}
@@ -326,15 +334,21 @@ Lee, S. J., and Wooldridge, J. M. (2026b),
 Working Paper, Available at {browse "https://dx.doi.org/10.2139/ssrn.5325686":SSRN 5325686}
 
 {pstd}
+Hur, E. K., Lee, S. J., and Wooldridge, J. M. (2026), 
+"Rolling Difference-in-Differences Estimation for Small and Large Panels,"  
+Working Paper, Available at {browse "https://dx.doi.org/10.2139/ssrn.6502558":SSRN 6502558}
+
+{marker references}{...}
+{title:References}
+
+{pstd}
 Callaway, B., and Sant'Anna, P. H. C. (2021),
 "Difference-in-Differences with Multiple Time Periods,"
 {it:Journal of Econometrics} 225(2), 200-230.
 
 {pstd}
-Hur, E. K., Lee, S. J., and Wooldridge, J. M. (2026c), 
-"Rolling Difference-in-Differences Estimation for Small and Large Panels,"  
-Working Paper, Available at {browse "https://dx.doi.org/10.2139/ssrn.6502558":SSRN 6502558}
-
+Heß, S. (2017), "Randomization Inference with Stata: A Guide and Software,"
+{it:Stata Journal} 17(3), 630-651.
 
 
 {marker author}{...}

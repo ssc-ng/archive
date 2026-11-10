@@ -1,11 +1,9 @@
 *
-*! version 3.5.0: 31 October 2026 
+*! version 3.6: 8 November 2026
 *! lwdid - Lee & Wooldridge rolling DID estimator (unified: small-N and large-N panels)
 *! authors: Soo Jeong Lee, Jeffrey M. Wooldridge
 *! contact: soojeong.lee@siu.edu, wooldri1@msu.edu
 *! lwdid GitHub repository: https://github.com/Soo-econ/lwdid
-
-set more off
 
 
 **# [1] MAIN PROGRAM: lwdid 
@@ -134,7 +132,13 @@ program define lwdid, eclass sortpreserve
 
 	*-- DISPATCH (small option)
 		if "`small'" != "" {
-			
+
+                * Small-N uses additive OLS; method() is a large-N selector.
+                if "`method'" != "" {
+                    di as err "Please omit the method() option when using small; small-N uses additive OLS."
+                    exit 198
+                }
+
 			    * cellif is a large-N inference option
 				if "`cellif'" != "" {
 					di as err "cellif is available only in large-N mode."
@@ -166,6 +170,8 @@ program define lwdid, eclass sortpreserve
 				*with staggered adoption
 				else {
 					lwdid_small_staggered `__dispatch_call'
+                    * Preserve original, user-specified control notation.
+                    ereturn local controls "`xlist'"
 					exit
 				}
 			}
@@ -427,50 +433,36 @@ program define lwdid_small_single, eclass
 			}
 		}
 
-		* --- build centered X and interactions ONCE (time-invariant X) ---
+		* --- additive covariates only (no D x X interactions; time-invariant X) ---
 		local RHS
-		local INTERACTS
 
 		local K1 0
 		if "`xlist'" != "" {
 			local K1 : word count `xlist'
 		}
-		local nk = `K1' + 1
 
 		quietly count if `tindex'==1 & d_==1
 		local nt = r(N)
 		quietly count if `tindex'==1 & d_==0
 		local nc = r(N)
 
-		* only if controls specified AND hold the condition.
+		* HC-type VCE requires both groups to contain more than one unit.
+		* In a two-group regression a singleton group has leverage one.
+		if "`vce'" != "" & (`nt' < 2 | `nc' < 2) {
+			di as err "vce(`vce') requires at least 2 treated and 2 control units (treated N=`nt', control N=`nc')."
+			exit 2001
+		}
+
+		* Parameters: constant + d_ + K controls = K+2. Need N_tr + N_unt > K+2.
 		if "`xlist'" != "" {
-
-			if `nt' > `nk' & `nc' > `nk' {
-
-				foreach x of varlist `xlist' {
-
-					tempvar xc 
-
-					* center X using treated mean
-				   quietly summarize `x' if d_==1, meanonly
-					quietly gen double `xc' = `x' - r(mean)
-
-					qui capture drop D_`x'
-					gen double D_`x' = d_ * `xc'
-					label var D_`x' "d_ × centered(`x')"
-
-					local INTERACTS `INTERACTS' D_`x'
-				}
-
-				local RHS "`xlist' `INTERACTS'"
+			if (`nt' + `nc') > (`K1' + 2) & `nt' >= 1 & `nc' >= 1 {
+				local RHS "`xlist'"
 			}
-
 			else {
 				di as err "Too many controls for small-N estimation: K=`K1', treated N=`nt', controls N=`nc'."
-				di as err "Need N_tr > K+1 and N_unt > K+1 (treated and untreated units). Reduce covariates."
+				di as err "Need N_tr + N_unt > K+2. Reduce covariates."
 				exit 2001
 			}
-
 		}
 		else {
 			local RHS ""
@@ -490,8 +482,34 @@ program define lwdid_small_single, eclass
 					regress ydot_postavg d_ `RHS' if firstpost
 				}
 
-                * Actual distinct units in the overall single-effect regression.
+                * Warn only if otherwise eligible common-timing units have missing X.
+                if "`xlist'" != "" {
+                    tempvar __xeligible_ct
+                    quietly gen byte `__xeligible_ct' = firstpost & !missing(ydot_postavg)
+                    quietly count if `__xeligible_ct'
+                    local __prex_ct = r(N)
+                    quietly markout `__xeligible_ct' `xlist'
+                    quietly count if `__xeligible_ct'
+                    local __dropx_ct = `__prex_ct' - r(N)
+                    if `__dropx_ct' > 0 {
+                        di as txt "Warning: `__dropx_ct' unit(s) excluded from the common-timing" ///
+                            " small-N regression due to missing covariates."
+                        di as txt "         Estimates may differ because the regression sample changed."
+                    }
+                }
+
+                * Save the exact OLS estimation sample, N and residual df
+                * before period-specific regressions overwrite e().
                 tempvar __overall_es __overall_tag
+                local __overall_df_r = e(df_r)
+                local __overall_N_reg = e(N)
+                * Pre-check counts units before missing X are dropped; confirm the
+                * actual regression still has residual degrees of freedom.
+                if "`xlist'" != "" & (missing(real("`__overall_df_r'")) | real("`__overall_df_r'") < 1) {
+                    di as err "No residual degrees of freedom in the small-N regression (N=`__overall_N_reg')."
+                    di as err "Covariates with missing values reduced the sample; reduce covariates."
+                    exit 2001
+                }
                 quietly generate byte `__overall_es' = e(sample)
                 quietly egen byte `__overall_tag' = tag(`id') if `__overall_es'
                 quietly count if `__overall_tag' == 1 & d_ == 1
@@ -499,6 +517,10 @@ program define lwdid_small_single, eclass
                 quietly count if `__overall_tag' == 1 & d_ == 0
                 local __overall_nc = r(N)
                 local __overall_n = `__overall_nt' + `__overall_nc'
+                if "`vce'" != "" & (`__overall_nt' < 2 | `__overall_nc' < 2) {
+                    di as err "vce(`vce') needs at least 2 treated and 2 control units in the actual regression sample."
+                    exit 2001
+                }
 
 				* keep these for e()
 				matrix `b' = e(b)
@@ -532,8 +554,10 @@ program define lwdid_small_single, eclass
 					local reps = `rireps'
 
 					scalar __b0 = __att_overall
+					* Permute exactly the units used by the original OLS.
+					* RHS contains materialized numeric covariates from fvrevar.
 					mata: st_numscalar("__p_ri", ///
-						lwdid_ri_inline(`reps', st_numscalar("__b0"), "`RHS'"))
+						lwdid_ri_inline(`reps', st_numscalar("__b0"), "`RHS'", "`__overall_es'"))
 
 					di as txt "    RI p-value: " as res %9.3f __p_ri
 				}
@@ -598,6 +622,12 @@ program define lwdid_small_single, eclass
                 local __ncontrol = r(N)
                 local __ntotal = `__ntreated' + `__ncontrol'
                 drop `__sampletag'
+                if "`vce'" != "" & (`__ntreated' < 2 | `__ncontrol' < 2) {
+                    * Keep the point estimate; its HC-type standard error is not trustworthy.
+                    local se1 = .
+                    local t = .
+                    local p = .
+                }
 				post `__pph' (`tt') ("`lab'") (`coef') (`se1') (`t') (`p') (`__Nreg') ///
                     (`__ntreated') (`__ncontrol') (`__ntotal')
 			}
@@ -658,12 +688,14 @@ program define lwdid_small_single, eclass
 			qui gen double ci_up = beta + cr*se
 			order period tindex beta se ci_lw ci_up tstat pval N
 			
-            * Show the period-by-period table only when attgt is requested.
-            if "`attgt'" != "" {
+            * Default: show up to 10 rows; attgt: show all rows.
+            {
                 di as txt _n "[2] Period-by-period ATTs"
-                local __maxrows = 20
+                * First row is the "average" row; show it plus up to 10 post periods.
+                local __maxrows = 11
                 quietly count
                 local __nrows = r(N)
+                if "`attgt'" != "" local __maxrows = `__nrows'
 
                 format beta se ci_lw ci_up %9.0g
                 format tstat %7.2f
@@ -690,8 +722,9 @@ program define lwdid_small_single, eclass
                 di as txt "{hline 72}"
                 di as txt "Note: Confidence intervals, t statistics, and p-values are pointwise t-based."
                 if `__nrows' > `__maxrows' {
-                    di as error "Note: Only the first `__maxrows' of `__nrows' rows are displayed."
-                    di as txt "For the full results, use matrix list e(attgt) or specify save("results.dta")."
+                    local __nper = `__nrows' - 1
+                    di as error "Note: Only the first 10 of `__nper' post-treatment periods are displayed."
+                    di as txt "Use attgt to display all rows, or matrix list e(attgt) for the full post-period matrix."
                 }
             }
 
@@ -986,7 +1019,7 @@ program define lwdid_small_single, eclass
         matrix colnames `__small_b' = Post_avg
         matrix colnames `__small_V' = Post_avg
         matrix rownames `__small_V' = Post_avg
-        ereturn post `__small_b' `__small_V', esample(firstpost)
+        ereturn post `__small_b' `__small_V', esample(`__overall_es') obs(`__overall_N_reg') dof(`__overall_df_r') depname(`y')
         ereturn scalar N_tr = `__overall_nt'
         ereturn scalar N_unt = `__overall_nc'
         ereturn scalar N_total = `__overall_n'
@@ -1069,12 +1102,17 @@ program define lwdid_small_staggered, eclass
 		local xlist : list varlist - y
 		local rolling = lower("`rolling'")
 
-		*-- controls not yet supported
-		if "`xlist'" != "" {
-			di as err "Controls are not yet supported for staggered treatment timing."
-			di as err "Please run lwdid without additional regressors."
+        * Apply the same VCE to all small-N staggered OLS regressions.
+        local __small_vceopt ""
+        if "`vce'" != "" local __small_vceopt ", vce(`vce')"
+
+		* Built-in RI supports common timing only; see help for staggered ritest.
+		if "`ri'" != "" {
+			di as err "ri is available only for small-N common timing; for staggered adoption, see the ritest example in help lwdid."
 			exit 198
 		}
+
+		*-- controls enter additively (time-invariant X; no D x X interactions)
 
 
 		*-- validate variables
@@ -1113,6 +1151,45 @@ program define lwdid_small_staggered, eclass
 		quietly egen `cohorttag' = tag(`gvar') if `gvar' > 0 & `touse'
 		quietly count if `cohorttag'
 		local n_cohort = r(N)
+
+		*-- additive controls: need N_treat + N_never > K+2 in the single-effect regression
+		if "`xlist'" != "" {
+			local K1 : word count `xlist'
+			tempvar __xidtag
+			quietly egen byte `__xidtag' = tag(`id') if `touse'
+			quietly count if `__xidtag' & `gvar' > 0 & !missing(`gvar')
+			local __xnt = r(N)
+			quietly count if `__xidtag' & `gvar' == 0
+			local __xnc = r(N)
+			drop `__xidtag'
+			if (`__xnt' + `__xnc') <= (`K1' + 2) | `__xnt' < 1 | `__xnc' < 1 {
+				di as err "Too many controls for small-N estimation: K=`K1', treated N=`__xnt', never-treated N=`__xnc'."
+				di as err "Need N_tr + N_unt > K+2. Reduce covariates."
+				exit 2001
+			}
+		}
+        * vce(): a single-unit group has leverage 1, so HC-type SEs are undefined.
+        local __vskip 0
+        if "`vce'" != "" {
+            tempvar __vidtag
+            quietly egen byte `__vidtag' = tag(`id') if `touse'
+            quietly count if `__vidtag' & `gvar' == 0
+            local __vnc = r(N)
+            if `__vnc' < 2 {
+                di as err "vce(`vce') requires at least 2 never-treated units."
+                exit 2001
+            }
+            quietly levelsof `gvar' if `gvar' > 0 & `touse', local(__vG)
+            foreach __vg of local __vG {
+                quietly count if `__vidtag' & `gvar' == `__vg'
+            if r(N) < 2 {
+                    di as err "vce(`vce') requires at least 2 units in each cohort (cohort `__vg' has 1); omit vce()."
+                    exit 2001
+                }
+            }
+            drop `__vidtag'
+        }
+
 		di as txt "------------------------------------------------------------"
 		di as txt "gvar(): `n_cohort' cohorts detected -> Staggered adoption"
 		di as txt "lwdid [small-N mode] rolling=`rolling'"
@@ -1121,9 +1198,10 @@ program define lwdid_small_staggered, eclass
 
 		*-- graph support for small-N staggered designs
 		*-- The single-effect estimator and regression table below are unchanged.
-		tempfile __graph_cells __cell_results
-		tempname __gpost __cellpost __cellmatrix
-        quietly postfile `__cellpost' double cohort time ryear att se N_tr N_unt N_total using "`__cell_results'", replace
+		tempfile __graph_cells __cell_results __cohort_results
+        tempname __gpost __cellpost __cellmatrix __cohortpost __cohortmatrix
+        quietly postfile `__cellpost' double cohort time ryear att se N_tr N_unt N_total df_r using "`__cell_results'", replace
+        quietly postfile `__cohortpost' double cohort att se N_tr N_unt N_total df_r using "`__cohort_results'", replace
 
   quietly {
         preserve
@@ -1152,20 +1230,16 @@ program define lwdid_small_staggered, eclass
             *-- cohort list
             levelsof `gvar' if `gvar' > 0, local(Glist)
 
-            *-- Open a temporary cohort-by-exposure-time dataset only when graph is requested.
-            *-- These calculations are descriptive and do not alter ydot_bar or equation (7.18).
+            *-- Graph cells are constructed AFTER the overall single-effect OLS,
+            *-- using its actual estimation units and its common additive slope.
+            *-- The graph remains based on never-treated controls only.
             levelsof `timevar', local(Tlist)
-            if "`graph'" != "" {
-                quietly postfile `__gpost' double cohort ryear tr_mean co_mean ///
-                    long Ng N_tr N_co using "`__graph_cells'", replace
-            }
+            local __graph_ydots
 
-            *-- cohort weights
-            tempvar gtemp
-            gen `gtemp' = `gvar'
-            replace `gtemp' = . if `gtemp' == 0
-            tab `gtemp', matcell(freqs)
-            matrix w = freqs / r(N)
+            *-- cohort weights: computed after the loop from treated UNITS in the
+            *-- final (7.18) estimation sample, so w_g = N_g / N_treat holds exactly
+            *-- in unbalanced panels (see below).
+            local __colist
 
             *-- build ydot_bar (equation 7.18) without cohort-named variables
             *-- Avoid cohort-specific local names that require nested macro expansion.
@@ -1176,7 +1250,6 @@ program define lwdid_small_staggered, eclass
             local i = 0
             foreach g of local Glist {
                 local ++i
-                scalar w_g = w[`i',1]
 
                 tempvar yhat ydotg ybar_tr ybar_co
                 gen double `yhat' = .
@@ -1236,15 +1309,15 @@ program define lwdid_small_staggered, eclass
 
                 *-- Small-N staggered cell-specific regression, never-treated units only.
                 *-- Uses the cohort-g pre-treatment transformation for BOTH groups.
-                *-- Each cell regression has its own classical t-based standard error.
+                *-- Each cell regression uses the requested VCE (default: classical OLS).
                 tempvar __cell_tr
                 gen byte `__cell_tr' = (`gvar' == `g')
                 foreach tt of local Tlist {
                     local rr = `tt' - `g'
                     * ATT(g,t) is reported only for post-treatment periods (t >= g).
                     if `rr' < 0 continue
-                    capture quietly regress `ydotg' `__cell_tr' if ///
-                        `timevar' == `tt' & inlist(`gvar', 0, `g')
+                    capture quietly regress `ydotg' `__cell_tr' `xlist' if ///
+                        `timevar' == `tt' & inlist(`gvar', 0, `g') `__small_vceopt'
                     if !_rc {
                         local __reg_n = e(N)
                         local __reg_df = e(df_r)
@@ -1254,40 +1327,22 @@ program define lwdid_small_staggered, eclass
                         local __ntr = r(N)
                         quietly count if e(sample) & `__cell_tr' == 0
                         local __nco = r(N)
-                        if `__ntr' > 0 & `__nco' > 0 & `__reg_df' > 0 & ///
+                        if "`vce'" != "" & (`__ntr' < 2 | `__nco' < 2) {
+                            local ++__vskip
+                        }
+                        else if `__ntr' > 0 & `__nco' > 0 & `__reg_df' > 0 & ///
                             !missing(`__b', `__se') {
                             post `__cellpost' (`g') (`tt') (`rr') (`__b') ///
-                                (`__se') (`__ntr') (`__nco') (`__reg_n')
+                                (`__se') (`__ntr') (`__nco') (`__reg_n') (`__reg_df')
                         }
                     }
                 }
                 drop `__cell_tr'
 
-                *-- Graph cells: align each cohort at exposure time r=t-g.
-                *-- The comparison group is never-treated, matching the single-effect estimator.
+                *-- Retain this cohort's transformed outcome only when a
+                *-- post-estimation event-time graph has been requested.
                 if "`graph'" != "" {
-                    tempvar __gtag
-                    egen byte `__gtag' = tag(`id') if `gvar' == `g'
-                    quietly count if `__gtag' == 1
-                    local Ng = r(N)
-                    drop `__gtag'
-
-                    foreach tt of local Tlist {
-                        local rr = `tt' - `g'
-
-                        quietly summarize `ydotg' if `timevar' == `tt' & `gvar' == `g', meanonly
-                        local trm = r(mean)
-                        local ntr = r(N)
-
-                        quietly summarize `ydotg' if `timevar' == `tt' & `gvar' == 0, meanonly
-                        local com = r(mean)
-                        local nco = r(N)
-
-                        if (`ntr' > 0 & `nco' > 0 & !missing(`trm') & !missing(`com')) {
-                            post `__gpost' (`g') (`rr') (`trm') (`com') ///
-                                (`Ng') (`ntr') (`nco')
-                        }
-                    }
+                    local __graph_ydots `__graph_ydots' `ydotg'
                 }
 
                 *-- treated post average for cohort g
@@ -1295,36 +1350,119 @@ program define lwdid_small_staggered, eclass
                     mean(cond(`timevar' >= `g' & d_==1, `ydotg', .))
                 replace `ydot_bar' = `ybar_tr' if `gvar' == `g'
 
-                *-- control weighted average for cohort g
-                bysort `id': egen double `ybar_co' = ///
-                    mean(cond(`timevar' >= `g' & d_==0, w_g*`ydotg', .))
-                replace `contsum' = `contsum' + `ybar_co'
+                *-- control post average for cohort g (unweighted here;
+                *-- cohort weights are applied after the loop)
+                tempvar __cog
+                bysort `id': egen double `__cog' = ///
+                    mean(cond(`timevar' >= `g' & d_==0, `ydotg', .))
+                local __colist `__colist' `__cog'
 
-                drop `yhat' `ydotg' `ybar_tr' `ybar_co'
+                * Cohort-specific post-average ATT: cohort g vs never-treated,
+                * using the same g-specific pre-period transformation for both.
+                * One observation per unit; additive X coefficients estimated
+                * separately for each cohort. This does NOT alter equation (7.18).
+                tempvar __group_post __group_tr __group_row
+                gen double `__group_post' = `ybar_tr' if `gvar' == `g'
+                replace `__group_post' = `__cog' if `gvar' == 0
+                gen byte `__group_tr' = (`gvar' == `g')
+                bysort `id' (`timevar'): gen byte `__group_row' = (_n == 1)
+                capture quietly regress `__group_post' `__group_tr' `xlist' if ///
+                    `__group_row' & inlist(`gvar',0,`g') `__small_vceopt'
+                if !_rc {
+                    local __gdf = e(df_r)
+                    local __gN = e(N)
+                    capture local __gb = _b[`__group_tr']
+                    if !_rc {
+                        capture local __gse = _se[`__group_tr']
+                        if !_rc & `__gdf' > 0 & !missing(`__gb', `__gse') & `__gse' > 0 {
+                            quietly count if e(sample) & `__group_tr' == 1
+                            local __gnt = r(N)
+                            quietly count if e(sample) & `__group_tr' == 0
+                            local __gnc = r(N)
+                            local __gmin = cond("`vce'" != "", 2, 1)
+                            if `__gnt' >= `__gmin' & `__gnc' >= `__gmin' {
+                                post `__cohortpost' (`g') (`__gb') (`__gse') ///
+                                    (`__gnt') (`__gnc') (`__gN') (`__gdf')
+                            }
+                        }
+                    }
+                }
+                drop `__group_post' `__group_tr' `__group_row'
+
+                drop `yhat' `ybar_tr'
+                if "`graph'" == "" drop `ydotg'
             }
 
-            if "`graph'" != "" {
-                postclose `__gpost'
-            }
             postclose `__cellpost'
+            postclose `__cohortpost'
+
+            *-- Unit-level estimation sample for (7.18): one row per unit with
+            *-- nonmissing ydot_bar (and nonmissing controls, if any).
+            tempvar __u1 __esamp
+            sort `id' `timevar'
+            by `id': gen byte `__u1' = (_n == 1)
+            gen byte `__esamp' = `__u1' & d_==1 & !missing(`ydot_bar')
+            if "`xlist'" != "" markout `__esamp' `xlist'
+
+            *-- Cohort weights w_g = N_g / N_treat, counting each treated unit
+            *-- once and only if it enters the final regression.
+            quietly count if `__esamp'
+            local __ntreat_w = r(N)
+            if `__ntreat_w' == 0 {
+                noisily di as err "No treated unit has a nonmissing transformed outcome" ///
+                    " (and covariates) for the aggregated single-effect regression."
+                exit 2001
+            }
+            local __ng : word count `Glist'
+            matrix w = J(`__ng', 1, 0)
+            local i = 0
+            foreach g of local Glist {
+                local ++i
+                quietly count if `__esamp' & `gvar' == `g'
+                scalar w_g = r(N) / `__ntreat_w'
+                matrix w[`i',1] = scalar(w_g)
+                local __cog : word `i' of `__colist'
+                if scalar(w_g) > 0 {
+                    replace `contsum' = `contsum' + scalar(w_g) * `__cog'
+                }
+            }
 
             qui replace `ydot_bar' = `contsum' if d_==0
-            drop `contsum'
+            drop `contsum' `__colist'
 
-            *-- first treated cohort
-            summarize `gvar' if `gvar'>0, meanonly
-			local gmin = r(min)
+            replace `__esamp' = 1 if `__u1' & d_==0 & !missing(`ydot_bar')
+            if "`xlist'" != "" markout `__esamp' `xlist'
 
-			* first observed post-treatment period
-			summarize `timevar' if `timevar'>=`gmin', meanonly
-			local tpost1 = r(min)
-
-			qui regress `ydot_bar' d_ if `timevar'==`tpost1'
+            *-- Warn only when nonmissing transformed outcomes were dropped
+            *-- from the single-effect regression because of missing X.
+            if "`xlist'" != "" {
+                tempvar __xeligible
+                gen byte `__xeligible' = `__u1' & !missing(`ydot_bar')
+                quietly count if `__xeligible'
+                local __prex = r(N)
+                markout `__xeligible' `xlist'
+                quietly count if `__xeligible'
+                local __xdropped = `__prex' - r(N)
+                if `__xdropped' > 0 {
+                    noisily di as txt "Warning: `__xdropped' unit(s) excluded from the aggregated" ///
+                        " small-N regression due to missing covariates."
+                    noisily di as txt "         Cohort weights use eligible treated units;" ///
+                        " estimates can differ due to the changed sample."
+                }
+            }
     }
 
-		di as txt _n "{bf: Aggregated Single treatment effect (Lee & Wooldridge: equation 7.18)}"
+		di as txt _n "{bf:[1] Aggregated single treatment effect (Lee & Wooldridge: equation 7.18)}"
 
-		regress `ydot_bar' d_ if `timevar' == `gmin'
+		regress `ydot_bar' d_ `xlist' if `__esamp' `__small_vceopt'
+
+		* Pre-check counts units before missing X are dropped; confirm the
+		* actual regression still has residual degrees of freedom.
+		if "`xlist'" != "" & (missing(e(df_r)) | e(df_r) < 1) {
+			di as err "No residual degrees of freedom in the small-N regression (N=`e(N)')."
+			di as err "Covariates with missing values reduced the sample; reduce covariates."
+			exit 2001
+		}
 
         * Count distinct treated and never-treated units in the actual
         * original overall regression sample (not summed cell counts).
@@ -1336,6 +1474,70 @@ program define lwdid_small_staggered, eclass
         quietly count if `__overall_tag' == 1 & d_ == 0
         local __overall_nc = r(N)
         local __overall_n = `__overall_nt' + `__overall_nc'
+        if "`vce'" != "" & (`__overall_nt' < 2 | `__overall_nc' < 2) {
+            di as err "vce(`vce') requires at least 2 treated and 2 never-treated units in the actual regression sample."
+            exit 2001
+        }
+
+        *-- Event-time paths from the actual single-effect estimation units.
+        *-- Adjust the cohort-specific transformed outcomes using the COMMON
+        *-- additive X coefficients from the pooled aggregated regression.
+        *-- The adjustment uses no treatment-by-covariate interaction.
+        if "`graph'" != "" {
+            tempvar __graph_unit __graph_adj __graph_xb_unit __graph_xb_all __graph_xpart
+            bysort `id': egen byte `__graph_unit' = max(`__overall_es')
+
+            * Factor-variable-safe additive adjustment. Predict the fitted value
+            * ONLY on the unit-level estimation row, then carry it to all time
+            * observations of the same unit (X is assumed time-invariant).
+            * The intercept and D contribution are removed, leaving X'bhat.
+            * predict, xb handles i.var, c.var#c.var and other fv notation.
+            if "`xlist'" != "" {
+                quietly predict double `__graph_xb_unit' if `__overall_es', xb
+                bysort `id': egen double `__graph_xb_all' = max(`__graph_xb_unit')
+                quietly gen double `__graph_xpart' = `__graph_xb_all' - ///
+                    _b[_cons] - _b[d_] * d_ if `__graph_unit'
+            }
+
+            quietly postfile `__gpost' double cohort ryear tr_mean co_mean ///
+                long Ng N_tr N_co using "`__graph_cells'", replace
+
+            local __gidx = 0
+            foreach g of local Glist {
+                local ++__gidx
+                local __ydotg : word `__gidx' of `__graph_ydots'
+
+                quietly gen double `__graph_adj' = `__ydotg' if `__graph_unit'
+                if "`xlist'" != "" {
+                    quietly replace `__graph_adj' = `__graph_adj' - ///
+                        `__graph_xpart' if `__graph_unit' & !missing(`__graph_adj')
+                }
+
+                * Cohort sizes reflect the actual treated units in (7.18).
+                quietly count if `__overall_es' & `gvar' == `g'
+                local Ng = r(N)
+                if `Ng' > 0 {
+                    foreach tt of local Tlist {
+                        local rr = `tt' - `g'
+                        quietly summarize `__graph_adj' if `__graph_unit' & ///
+                            `timevar' == `tt' & `gvar' == `g', meanonly
+                        local trm = r(mean)
+                        local ntr = r(N)
+                        quietly summarize `__graph_adj' if `__graph_unit' & ///
+                            `timevar' == `tt' & `gvar' == 0, meanonly
+                        local com = r(mean)
+                        local nco = r(N)
+                        if (`ntr' > 0 & `nco' > 0 & ///
+                            !missing(`trm', `com')) {
+                            post `__gpost' (`g') (`rr') (`trm') (`com') ///
+                                (`Ng') (`ntr') (`nco')
+                        }
+                    }
+                }
+                drop `__graph_adj'
+            }
+            postclose `__gpost'
+        }
 
 		* Preserve regression results before ereturn post clears e().
 		matrix b = e(b)
@@ -1360,14 +1562,132 @@ program define lwdid_small_staggered, eclass
 		ereturn local depvar  "`y'"
 		ereturn local rolling "`rolling'"
 
-        * With attgt, defer the overall summary until after the cell table.
-        if "`attgt'" == "" {
-		di as res _n "*--- lwdid (rolling: `rolling'): Aggregated single effect = " ///
-    %6.3f _b[Post_avg] ///
-    " (SE = " %5.3f _se[Post_avg] ")"
+        * Always show the original pooled overall ATT before the cohort table.
+        di as res _n "*--- lwdid (rolling: `rolling'): Aggregated single effect = " ///
+            %6.3f _b[Post_avg] " (SE = " %5.3f _se[Post_avg] ")"
+
+
+
+    restore
+
+    * Store cohort-specific post-average ATTs, preserving overall e(b)/e(V).
+    preserve
+        quietly use "`__cohort_results'", clear
+        quietly count
+        local __ncohortrows = r(N)
+        if `__ncohortrows' > 0 {
+            quietly sort cohort
+            quietly mkmat cohort att se N_tr N_unt N_total, matrix(`__cohortmatrix')
+        }
+    restore
+    if `__ncohortrows' > 0 {
+        matrix colnames `__cohortmatrix' = cohort att se N_tr N_unt N_total
+        ereturn matrix cohort_att = `__cohortmatrix'
+    }
+
+    di as txt _n "[2] Cohort-specific single effects (post-treatment average)"
+    if `__ncohortrows' == 0 {
+        di as txt "No estimable cohort-specific single effects."
+    }
+    else {
+        preserve
+        quietly use "`__cohort_results'", clear
+        quietly sort cohort
+        quietly gen double tstat = att/se if se>0 & !missing(se)
+        quietly gen double pval = 2*ttail(df_r,abs(tstat)) if df_r>0 & !missing(tstat)
+        quietly gen double __crit = invttail(df_r,(100-`level')/200) if df_r>0
+        quietly gen double ci_lw = att - __crit*se if !missing(__crit,se)
+        quietly gen double ci_up = att + __crit*se if !missing(__crit,se)
+        di as txt "{hline 89}"
+        di as txt _col(3) "cohort" _col(12) "ATT(avg)" _col(25) "Std. err." ///
+            _col(39) "t" _col(48) "P>|t|" _col(62) "[`level'% conf. int.]"
+        di as txt "{hline 89}"
+        forvalues __j = 1/`__ncohortrows' {
+            di as txt _col(2) %8.0g cohort[`__j'] ///
+                as res _col(11) %9.0g att[`__j'] ///
+                _col(24) %9.0g se[`__j'] ///
+                _col(37) %7.2f tstat[`__j'] ///
+                _col(47) %6.3f pval[`__j'] ///
+                _col(61) %9.0g ci_lw[`__j'] ///
+                _col(74) %9.0g ci_up[`__j']
+        }
+        di as txt "{hline 89}"
+        di as txt "Note: Each cohort vs. never-treated (separate additive OLS)."
+        restore
+    }
+
+    * Store cohort-time estimates in one e(attgt) matrix. Do not alter e(b)/e(V).
+    preserve
+        quietly use "`__cell_results'", clear
+        quietly count
+        local __ncells = r(N)
+        if `__ncells' > 0 {
+            quietly sort cohort time
+            quietly mkmat cohort time ryear att se N_tr N_unt N_total, matrix(`__cellmatrix')
+        }
+    restore
+    if `__ncells' > 0 {
+        matrix colnames `__cellmatrix' = cohort time ryear att se N_tr N_unt N_total
+        ereturn matrix attgt = `__cellmatrix'
+    }
+    * [3] ATT(g,t) table: displayed only when attgt is specified.
+    * e(attgt) always stores all cells; save() works with or without attgt.
+    if "`attgt'" != "" {
+        di as txt _n "[3] Cohort-by-period ATT(g,t) estimates"
+        if `__ncells' == 0 {
+            di as txt "No estimable post-treatment cohort-time cells."
+        }
+    }
+
+    if `__ncells' > 0 & ("`attgt'" != "" | "`save'" != "") {
+        * Display and optional export only: do not change the overall e(b)/e(V).
+        preserve
+        quietly use "`__cell_results'", clear
+        quietly sort cohort time
+        quietly gen double tstat = att/se if se>0 & !missing(se)
+        quietly gen double df = df_r
+        quietly gen double pval = 2*ttail(df,abs(tstat)) if df>0 & !missing(tstat)
+        quietly gen double __crit = invttail(df,(100-`level')/200) if df>0
+        quietly gen double ci_lw = att - __crit*se if !missing(__crit,se)
+        quietly gen double ci_up = att + __crit*se if !missing(__crit,se)
+        quietly drop __crit
+
+        if "`attgt'" != "" {
+            di as txt "{hline 89}"
+            di as txt _col(3) "cohort" _col(12) "period" _col(21) "ATT" ///
+                _col(34) "Std. err." _col(47) "t" _col(56) "P>|t|" ///
+                _col(66) "[`level'% conf. int.]"
+            di as txt "{hline 89}"
+            forvalues __j = 1/`__ncells' {
+                di as txt _col(2) %8.0g cohort[`__j'] ///
+                   _col(11) %8.0g time[`__j'] ///
+                   as res _col(20) %9.0g att[`__j'] ///
+                   _col(33) %9.0g se[`__j'] ///
+                   _col(46) %7.2f tstat[`__j'] ///
+                   _col(55) %6.3f pval[`__j'] ///
+                   _col(65) %9.0g ci_lw[`__j'] ///
+                   _col(77) %9.0g ci_up[`__j']
+            }
+            di as txt "{hline 89}"
+            di as txt "Note: Pointwise cell-specific t-based inference; never-treated controls only."
+            if `__vskip' > 0 di as txt "Warning: `__vskip' cohort-time cell(s) omitted under vce(`vce') due to singleton groups."
         }
 
+        if "`save'" != "" {
+            quietly keep cohort time ryear att se tstat pval ci_lw ci_up N_tr N_unt N_total
+            quietly order cohort time ryear att se tstat pval ci_lw ci_up N_tr N_unt N_total
+            quietly save "`save'", replace
+            di as txt "Cohort-time results saved to " as res "`save'"
+        }
+        restore
+    }
+    if `__vskip' > 0 & "`attgt'" == "" {
+        di as txt "Warning: `__vskip' ATT(g,t) cell(s) dropped under vce(`vce') (only 1 treated or control unit)."
+    }
 
+    * Exposure-time graph: drawn after the [1]-[3] tables so they are not interrupted.
+    if "`graph'" != "" {
+        preserve
 		* Exposure-time graph: cohort-size-weighted residualized paths
 		* Runs after the original equation (7.18) regression table.
 		* No confidence intervals or pre-trends test are reported.
@@ -1380,9 +1700,15 @@ program define lwdid_small_staggered, eclass
 				exit 2000
 			}
 
-        gen double __tr_num = Ng * tr_mean
-        gen double __co_num = Ng * co_mean
-        collapse (sum) __tr_num __co_num weight_sum=Ng ///
+        * In an unbalanced panel, the number of treated observations actually
+        * contributing at (g,r) can be below the overall cohort size Ng.
+        * Weight each available cohort-period mean by its observed treated
+        * count, rather than giving missing treated observations weight.
+        * These event-time weights need not equal the fixed cohort weights
+        * used in the aggregated single-effect regression (7.18).
+        gen double __tr_num = N_tr * tr_mean
+        gen double __co_num = N_tr * co_mean
+        collapse (sum) __tr_num __co_num weight_sum=N_tr ///
             (count) N_cohorts=cohort, by(ryear)
 
         gen double y_dot_tr   = __tr_num / weight_sum
@@ -1391,9 +1717,16 @@ program define lwdid_small_staggered, eclass
         sort ryear
 
         label var ryear      "Exposure time"
-        label var y_dot_tr   "Cohort-size-weighted treated residualized outcome"
-        label var y_dot_cont "Cohort-size-weighted never-treated residualized outcome"
-        label var gap        "Weighted treated-minus-control residualized gap"
+        if "`xlist'" == "" {
+            label var y_dot_tr   "Observed-treated-count-weighted treated residualized outcome"
+            label var y_dot_cont "Observed-treated-count-weighted never-treated residualized outcome"
+            label var gap        "Weighted treated-minus-control residualized gap"
+        }
+        else {
+            label var y_dot_tr   "Covariate-adjusted treated residualized outcome"
+            label var y_dot_cont "Covariate-adjusted never-treated residualized outcome"
+            label var gap        "Covariate-adjusted weighted treated-minus-control gap"
+        }
         label var N_cohorts  "Number of contributing treated cohorts"
 
         quietly summarize ryear, meanonly
@@ -1423,6 +1756,9 @@ program define lwdid_small_staggered, eclass
             if "`scheme'" != "" local gsch "scheme(`scheme')"
         }
 
+        local __graph_ytitle "Residualized outcome"
+        if "`xlist'" != "" local __graph_ytitle "Covariate-adjusted residualized outcome"
+
         twoway ///
             (connected y_dot_tr ryear, msymbol(O) msize(small) ///
                 lpattern(`pat_tr') lcolor(`col_tr') mcolor(`col_tr') lwidth(medthick)) ///
@@ -1433,91 +1769,15 @@ program define lwdid_small_staggered, eclass
             xlabel(`xmin'(`xstep')`xmax', nogrid) ///
             ylabel(, nogrid) ///
             xtitle("Exposure time") ///
-            ytitle("Residualized outcome") ///
+            ytitle("`__graph_ytitle'") ///
             legend(order(1 "Eventually treated cohorts (weighted)" 2 "Never-treated units (weighted)") ///
                 pos(6) ring(1) col(2) size(small) ///
                 region(fcolor(none) lcolor(none))) ///
             graphregion(color(white)) plotregion(color(white)) ///
             `gsch' `gopts'
 
-        if "`attgt'" == "" di as txt "Note: The graph shows cohort-size-weighted residualized paths by exposure time."
     }
-
-    restore
-
-    * Store cohort-time estimates in one e(attgt) matrix. Do not alter e(b)/e(V).
-    preserve
-        quietly use "`__cell_results'", clear
-        quietly count
-        local __ncells = r(N)
-        if `__ncells' > 0 {
-            quietly sort cohort time
-            quietly mkmat cohort time ryear att se N_tr N_unt N_total, matrix(`__cellmatrix')
-        }
-    restore
-    if `__ncells' > 0 {
-        matrix colnames `__cellmatrix' = cohort time ryear att se N_tr N_unt N_total
-        ereturn matrix attgt = `__cellmatrix'
-    }
-    if "`attgt'" != "" {
-        di as txt _n "[2] Cohort-by-period ATT(g,t) estimates"
-        if `__ncells' == 0 {
-            di as txt "No estimable post-treatment cohort-time cells."
-        }
-        else {
-            * Display and optional export only: do not change the overall e(b)/e(V).
-            preserve
-            quietly use "`__cell_results'", clear
-            quietly sort cohort time
-            quietly gen double tstat = att/se if se>0 & !missing(se)
-            quietly gen double df = N_total-2
-            quietly gen double pval = 2*ttail(df,abs(tstat)) if df>0 & !missing(tstat)
-            quietly gen double __crit = invttail(df,(100-`level')/200) if df>0
-            quietly gen double ci_lw = att - __crit*se if !missing(__crit,se)
-            quietly gen double ci_up = att + __crit*se if !missing(__crit,se)
-            quietly drop __crit
-            local __maxrows = 20
-            local __shown = min(`__ncells', `__maxrows')
-            di as txt "{hline 89}"
-            di as txt _col(3) "cohort" _col(12) "period" _col(21) "ATT" ///
-                _col(34) "Std. err." _col(47) "t" _col(56) "P>|t|" ///
-                _col(66) "[`level'% conf. int.]"
-            di as txt "{hline 89}"
-            forvalues __j = 1/`__shown' {
-                di as txt _col(2) %8.0g cohort[`__j'] ///
-                   _col(11) %8.0g time[`__j'] ///
-                   as res _col(20) %9.0g att[`__j'] ///
-                   _col(33) %9.0g se[`__j'] ///
-                   _col(46) %7.2f tstat[`__j'] ///
-                   _col(55) %6.3f pval[`__j'] ///
-                   _col(65) %9.0g ci_lw[`__j'] ///
-                   _col(77) %9.0g ci_up[`__j']
-            }
-            di as txt "{hline 89}"
-            di as txt "Note: Pointwise, cell-specific OLS t-based inference; never-treated units only."
-            if `__ncells' > `__maxrows' {
-                di as error "Note: Only the first `__maxrows' of `__ncells' cohort-time cells are displayed."
-                di as txt "For the full results, use matrix list e(attgt) or specify save("results.dta")."
-            }
-            if "`save'" != "" {
-                quietly keep cohort time ryear att se tstat pval ci_lw ci_up N_tr N_unt N_total
-                quietly order cohort time ryear att se tstat pval ci_lw ci_up N_tr N_unt N_total
-                quietly save "`save'", replace
-                di as txt "Cohort-time results saved to " as res "`save'"
-            }
-            restore
-        }
-    }
-
-    * For attgt, place the existing Aggregated single treatment effect summary and graph note
-    * below the cohort-by-period output. This is display-only.
-    if "`attgt'" != "" {
-        di as res _n "*--- lwdid (rolling: `rolling'): Aggregated single effect = " ///
-    %6.3f _b[Post_avg] ///
-    " (SE = " %5.3f _se[Post_avg] ")"
-        if "`graph'" != "" {
-            di as txt "Note: The graph shows cohort-size-weighted residualized paths by exposure time."
-        }
+        restore
     }
 
 end
@@ -3438,7 +3698,8 @@ program define lwdid_large, eclass
 		real scalar lwdid_ri_inline(
 			real scalar reps,
 			real scalar b0,
-			string scalar rhs
+			string scalar rhs,
+			string scalar sample_var
 		)
 		{
 			real colvector fp, Y, D, Dp, res
@@ -3446,7 +3707,9 @@ program define lwdid_large, eclass
 			real scalar n_fp, r, i, j, tmp
 			string rowvector xvars
 
-			fp   = selectindex(st_data(., "firstpost") :== 1)
+			// The permutation set must match the main OLS e(sample),
+			// including exclusions from missing additive controls.
+			fp   = selectindex(st_data(., sample_var) :== 1)
 			n_fp = rows(fp)
 
 			Y = st_data(fp, "ydot_postavg")

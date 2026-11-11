@@ -13,6 +13,7 @@ p icio module for Economic Analysis with Inter-Country Input-Output tables
 p icomp module to calculate model selection information criteria
 p icw_index module to aggregate the variables included in the varlist into an index
 p idonepsu module for dealing with strata that have singleton PSUs
+p idxnl module to provide nonlinear and interactive modelling with index covariates
 p ie_rate module to conduct age, period, and cohort (APC) analysis of tabular rate data using the intrinsic estimator 
 p iefieldkit module providing Stata commands for primary data collection and cleaning
 p ietoolkit module providing commands specially developed for Impact Evaluations

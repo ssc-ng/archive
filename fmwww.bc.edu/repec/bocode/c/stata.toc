@@ -311,6 +311,7 @@ p crtest module to perform Cramer-Ridder Test for pooling states in a Multinomia
 p crtrees module to compute Classification and Regression Trees algorithms
 p cruceandino module to compute one-step multiway crosstabulation of an outcome by one to three categorical variables
 p csdid module for the estimation of Difference-in-Difference models with multiple time periods
+p csdlp module to compute causal state-dependent local projections:
 p csestudy module to provide Efficient Inference for Cross-Sectional Event Studies
 p csipolate module to perform cubic spline interpolation
 p csjl module to extend cs command for exposures with more than two categories

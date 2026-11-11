@@ -1,0 +1,34 @@
+d 'PIRNEX': module implementing Pairwise Integral Regression and Neural Effects
+d
+d   pirnex provides experimental panel-data pair-difference neural
+d estimation and explanatory ML benchmarks. Research prototype; no
+d established	 causal interpretation or validated neural-network
+d Wald inference. 
+d
+d KW: panel data
+d KW: neural estimation
+d
+d Requires: Stata version 16, Python modules numpy, torch, scikit-learn, xgboost, interpret
+d
+d Distribution-Date: 20261110
+d
+d Author:  Zehra Yalnız,  Kocaeli University
+d Support: email zehrayalnizz41@@gmail.com
+d
+d Author: Figen Büyükakın, Kocaeli University
+d Support: email NA
+d
+d Author:  Sinan Bedir , Kocaeli University
+d Support: email NA
+d
+f pirnex.ado
+f pirnex.sthlp
+f pirnex_all_v20.do
+f pirnex_engine_v17.py
+f pirnex_est_engine_v21.py
+f pirnex_est_report_v21.do
+f pirnex_example_nlswork.do
+f pirnex_ig_engine_v19.py
+f pirnex_ml_engine_v18.py
+f pirnex_ml_report_v213.do
+f pirnex_shap_engine_v20.py

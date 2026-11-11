@@ -18,9 +18,9 @@ d KW: average treatment effect
 d KW: ATE
 d KW: ATENT
 d
-d Requires: Stata version 11
+d Requires: Stata version 13
 d
-d Distribution-Date: 20171025
+d Distribution-Date: 20261110
 d
 d Author: Giovanni Cerulli, Ceris-CNR
 d Support: email g.cerulli@@ceris.cnr.it
@@ -30,4 +30,4 @@ f ctreatreg.sthlp
 f ../b/boot_drf.ado
 f ../b/boot_drf.sthlp
 f ctreatreg_example_dataset.dta
-f ../w/wp_05_2014_cerulli.pdf
+f cerulli.pdf

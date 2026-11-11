@@ -167,6 +167,7 @@ p tslist module to list time series data
 p tslstarmod module to estimate a Logistic Smooth Transition Autoregressive Regression (LSTAR) Model for Time Series Data
 p tsmktim module to generate time-series calendar variable
 p tsplot module to produce a time series plot
+p tsrobdiag module to compute Normality and parameter-stability tests for serially correlated time series
 p tsspell module for identification of spells or runs in time series
 p tstf module to compute intervention time-series models
 p tsti module to immediately apply the three-sided testing (TST) framework in Stata

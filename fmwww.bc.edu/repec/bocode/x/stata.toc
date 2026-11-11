@@ -65,6 +65,7 @@ p xtcointreg module for panel data generalization of cointegration regression us
 p xtcombreak module to estimate the common break date with a confidence interval (Bai 2010) and test whether the break really is common across units (Jiang and Kurozumi 2026)
 p xtcsb module to compute Multifactor cross-sectionally augmented panel unit root tests of CIPS* and CSB (Pesaran, Smith & Yamagata 2013)
 p xtcsd module to test for cross-sectional dependence in panel data models
+p xtcsddiag module to compute residual diagnostics for heterogeneous panels with cross-sectional dependence: serial correlation, heteroskedasticity, normality and parameter stability
 p xtcsdq module to implement Tests of no cross-sectional error dependence in panel quantile regressions
 p xtcse2 module to estimate the exponent of cross-sectional dependence in large panels
 p xtcsi module to investigate Residual Cross-Section Independence 

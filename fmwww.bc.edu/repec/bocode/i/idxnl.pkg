@@ -1,0 +1,41 @@
+d 'IDXNL': module to provide nonlinear and interactive modelling with index covariates
+d
+d   idxnl provides tools for specifying, comparing and interpreting
+d nonlinear and interactive regression models in which a covariate
+d is a composite index (for example, governance, ICT development or
+d institutional quality indicators). Such indices are bounded,
+d arbitrarily scaled and often thin in the tails, so a significant
+d squared term is frequently read as a turning point that the data
+d cannot support 
+d
+d KW: index variables
+d KW: turning point
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261110
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+d Author: Francis Baidoo, Koforidua Technical University
+d Support: email ytoyinyusuf@@gmail.com
+d
+f idxnl.sthlp
+f idxdescribe.ado
+f idxdescribe.sthlp
+f idxint.ado
+f idxint.sthlp
+f idxnl_cert.do
+f idxnl_example.dta
+f idxnl_examples.do
+f idxspec.ado
+f idxspec.sthlp
+f idxtp.ado
+f idxtp.sthlp
+f ../_/_idxnl_cd.ado
+f ../_/_idxnl_dkrepost.ado
+f ../_/_idxspec_iv.ado
+f ../_/_idxspec_simex.ado
+f ../_/_idxtp_core.ado
+f ../r/run_idxnl_certification.do

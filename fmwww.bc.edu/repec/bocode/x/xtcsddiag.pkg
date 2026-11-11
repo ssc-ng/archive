@@ -1,0 +1,39 @@
+d 'XTCSDDIAG': module to compute residual diagnostics for heterogeneous panels with cross-sectional dependence: serial correlation, heteroskedasticity, normality and parameter stability
+d
+d    The residual tests in common use for panels (for example
+d xtserial, xttest3, xtqptest) are built for fixed-effects models
+d with	  homogeneous slopes and assume that the units are
+d independent. With common factors in the errors, as in most macro
+d panels, they	  over-reject, and they cannot be applied to the
+d unit regressions of mean-group or common correlated effects (CCE)
+d estimators.	 xtcsddiag fits the model unit by unit, tests the
+d residuals of each unit, and combines the unit results. 
+d
+d KW: panel data
+d KW: residuals
+d KW: common factors
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261110
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f xtcsddiag.ado
+f xtcsddiag.sthlp
+f xtcdmax.ado
+f xtcdmax.sthlp
+f xtcollin.ado
+f xtcollin.sthlp
+f xtcsddiag_apec.dta
+f xtcsddiag_example.do
+f ../_/_xtcdmax_display.ado
+f ../_/_xtcdmax_load.ado
+f ../_/_xtcdmax_mata.ado
+f ../_/_xtcollin_display.ado
+f ../_/_xtcollin_load.ado
+f ../_/_xtcollin_mata.ado
+f ../_/_xtcsddiag_display.ado
+f ../_/_xtcsddiag_load.ado
+f ../_/_xtcsddiag_mata.ado

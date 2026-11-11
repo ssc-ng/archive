@@ -1,9 +1,9 @@
-*! ctreatreg v4 GCerulli 25/10/2017
+*! ctreatreg v5 GCerulli 10/11/2026
 program ctreatreg, eclass
 version 13
 #delimit ;     
-syntax varlist [if] [in] [fweight pweight iweight] [,
-hetero(varlist numeric)
+syntax varlist(min=2 numeric fv ts) [if] [in] [fweight pweight iweight] [,
+hetero(varlist numeric fv ts)
 estype(string)
 ct(varlist numeric)
 s(numlist max=1)

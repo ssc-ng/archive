@@ -1,0 +1,38 @@
+d 'CSDLP': module to compute causal state-dependent local projections:
+d
+d      csdlp implements the causal state-dependent local
+d projections of David, Giacomini, Jiao and Wang (2026). For each
+d horizon h it	  estimates	   Y_{i,t+h} = g_h(Z_{i,t-1}) X_t +
+d W'_{i,t-1} gamma_h + u_{i,t+h}    where g_h(.) is an unknown
+d function of a predetermined micro state. Under causal shock
+d exogeneity (Assumption 1), a	  predetermined state (Assumption
+d 2) and the conditional-mean condition that the outcome is linear
+d in the shock with a	 state-dependent coefficient (Assumption
+d 3), g_h(z) is the total causal impulse response per unit shock
+d for units with state z.    The state may be endogenous (it may
+d depend on past shocks). 
+d
+d KW: local projections
+d KW: state-dependency
+d KW: causal shock
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261110
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f csdlp.ado
+f csdlp.sthlp
+f csdlp_agg.ado
+f csdlp_diff.ado
+f csdlp_example.do
+f csdlp_graph.ado
+f csdlp_graph.sthlp
+f csdlp_mc.do
+f csdlp_methods.sthlp
+f csdlp_postestimation.sthlp
+f csdlp_realdata.do
+f csdlp_states_build.do
+f csdlp_states.dta

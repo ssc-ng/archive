@@ -87,6 +87,7 @@ p pidid module to estimate Path-Integrated Difference-in-Differences
 p pieplot module to plot pie charts of categorical frequencies  
 p pindex module to compute targeted price indices
 p pinocchio module that randomly generates false econometric statementsp pipe module to perform a curve-free dual-agent dose-escalation design
+p pirnex module implementing Pairwise Integral Regression and Neural Effects
 p pisareg module to perform linear regression with PISA data and plausible values
 p pisatools module to facilitate analysis of the data from the PISA OECD study
 p pkgtransfer module to rebuild an installed package setup on another machine, online or offline

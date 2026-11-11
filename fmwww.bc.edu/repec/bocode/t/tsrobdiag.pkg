@@ -1,0 +1,39 @@
+d 'TSROBDIAG': module to compute Normality and parameter-stability tests for serially correlated time series
+d
+d   tsnormal performs normality tests for a series or for
+d regression residuals that remain valid under serial correlation:
+d Bai and Ng	    (2005) skewness, kurtosis and joint tests with
+d HAC variances, the Lobato and Velasco (2004) test, and
+d Anderson-Darling and	      Jarque-Bera tests with an AR-sieve
+d bootstrap under the Gaussian null; the classical Jarque-Bera test
+d is shown for	      comparison.    hansenstab performs Nyblom
+d (1989) and Hansen (1992) tests of parameter stability in a linear
+d regression, for each coefficient, the        coefficients jointly
+d and all parameters including the error variance, with iid or HAC
+d (Bartlett, quadratic-spectral)	variances, exact asymptotic
+d p-values for any number of parameters, and wild or dependent wild
+d bootstrap p-values. 
+d
+d KW: normality test
+d KW: parameter stability test
+d KW: serial correlation
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261110
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f tsrobdiag.sthlp
+f tsnormal.ado
+f tsnormal.sthlp
+f ../h/hansenstab.ado
+f ../h/hansenstab.sthlp
+f tsrobdiag_example.do
+f ../_/_hansenstab_display.ado
+f ../_/_hansenstab_load.ado
+f ../_/_hansenstab_mata.ado
+f ../_/_tsnormal_display.ado
+f ../_/_tsnormal_load.ado
+f ../_/_tsnormal_mata.ado

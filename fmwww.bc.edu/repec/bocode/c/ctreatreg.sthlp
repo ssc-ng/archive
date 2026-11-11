@@ -1,5 +1,6 @@
 {smcl}
-{* 30aug2012}{...}
+{* 10nov2026}{...}
+{* Updated 10nov2026: FV/TS and robust/cluster VCE support.}{...}
 {cmd:help ctreatreg}
 {hline}
 
@@ -31,7 +32,7 @@
 {cmd:graphate}
 {cmd:graphdrf}
 {cmd:conf}{cmd:(}{it:number}{cmd:)}
-{cmd:vce(robust)}
+{cmd:vce(}{it:vcetype}{cmd:)}
 {cmd:heckvce}{cmd:(}{it:vcetype}{cmd:)}
 {cmd:const(noconstant)}
 {cmd:head(noheader)}]
@@ -40,13 +41,37 @@
 {pstd}{cmd:fweight}s, {cmd:iweight}s, and {cmd:pweight}s are allowed;
 see {help weight}.
 
+{pstd}
+{it:varlist} accepts Stata factor-variable notation for numeric categorical
+variables, such as {cmd:i.category}, and continuous-variable notation such as
+{cmd:c.x}. Interactions may be specified with {cmd:#} and {cmd:##}, for example
+{cmd:i.category#c.x} or {cmd:i.category##c.x}. See {help fvvarlist}.
+String categorical variables must first be converted to numeric categories,
+for example using {help encode}.
+
+{pstd}
+Time-series operators are allowed in {it:varlist}, {it:outcome}, {it:treatment},
+and {cmd:ct()}, including {cmd:L.x} (lag), {cmd:F.x} (lead), and {cmd:D.x}
+(first difference). Declare the time structure with {cmd:tsset}, or the panel
+and time variables with {cmd:xtset}, before using these operators;
+see {help tsvarlist}, {help tsset}, and {help xtset}.
+The outcome and binary treatment each represent one numeric variable or
+time-series expression; categorical factor notation applies to the covariates,
+not to these two arguments. The treatment expression must still be coded 0/1.
+
+{pstd}
+Factor-variable notation and time-series operators are also allowed in
+{cmd:hetero()}, {cmd:iv_t()}, and {cmd:iv_w()}. These expressions are expanded
+internally into equivalent numeric variables when needed.
+
+
 
 
 {title:Description}
 
 {pstd} {cmd:ctreatreg} estimates the Dose-Response-Function (DRF) of a given treatment on a specific
-target variable, within a model where units are treated with different levels. The DRF is defined as the “average treatment effect, given the level of the treatment {it:t}” (i.e. ATE({it:t})). 
-The routine also estimates other “causal” parameters of interest, such as the average treatment effect (ATE), the average treatment effect on treated (ATET), 
+target variable, within a model where units are treated with different levels. The DRF is defined as the average treatment effect, given the level of the treatment {it:t} (i.e. ATE({it:t})). 
+The routine also estimates other causal parameters of interest, such as the average treatment effect (ATE), the average treatment effect on treated (ATET), 
 the average treatment effect on non-treated (ATENT), and the same effects 
 conditional on {it:t} and on the vector of covariates {it:x}.The DRF is approximated by a third degree polynomial function. 
 Both OLS and IV estimation are available, 
@@ -67,7 +92,8 @@ it is always required to specify one model.
 
 {phang} {cmd:ct}{cmd:(}{it:treat_level}{cmd:)} specifies the treatment level (or dose).
 This variable takes values in the [0;100] interval, where 0 is the treatment level
-of non-treated units. The maximun dose is thus 100.
+of non-treated units. The maximun dose is thus 100. A time-series expression such as
+{cmd:ct(L.dose)} may be used to specify a lagged dose.
 
 {phang} {cmd:m}{cmd:(}{it:number}{cmd:)} sets the polynomial degree equal to the number specified in parenthesis.
 
@@ -79,7 +105,10 @@ which to calculate the idyosincratic Average Treatment Effect ATE(x), ATET(x) an
 where x={it:varlist_h}. It is optional for all models. When this option is not specified, the command
 estimates the specified model without heterogeneous average effect. Observe that
 {it:varlist_h} should be the same set or a subset of the variables specified in {it:varlist}.
-Observe however that only numerical variables may be considered.
+The underlying variables must be numeric. Factor variables for numeric
+categories, interactions, and time-series expressions are supported; for
+example, {cmd:hetero(i.category L.x)}. Base and omitted factor terms do not
+create additional heterogeneity regressors.
 
 {phang} {cmd:estype}{cmd:(}{it:model}{cmd:)} specifies which type of estimation method has to be used for estimating the type-2 tobit model in the endogenous treatment case. Two choices are available: "twostep" implements a 
 Heckman two-step procedure; "ml" implements a maximum-likelihood estimation. This option is required only for "ct-iv".   
@@ -102,7 +131,22 @@ only if variables into {cmd:hetero()} are specified.
 Response Function (DRF) and of its derivative. It plots also the 95% confidence interval
 of the DRF over the dose levels. 
 
-{phang} {cmd:vce(robust)} allows for robust regression standard errors. It is optional for all models.
+{phang} {cmd:vce(}{it:vcetype}{cmd:)} selects the variance-covariance
+estimator for the outcome regression. The following specifications are
+available for {cmd:model(ct-ols)}, {cmd:model(ct-fe)}, and {cmd:model(ct-iv)}:
+
+{pmore}{cmd:vce(robust)} requests standard errors robust to heteroskedasticity.
+For the fixed-effects estimator, Stata treats {cmd:vce(robust)} as clustering
+on the panel identifier declared with {cmd:xtset}.
+
+{pmore}{cmd:vce(cluster} {it:clustvar}{cmd:)} requests standard errors allowing
+arbitrary within-cluster dependence, where {it:clustvar} identifies the clusters.
+For example, {cmd:vce(cluster region)} clusters by region. Specify one cluster
+variable; inference assumes independence across clusters.
+
+{pmore}If {cmd:vce()} is omitted, the outcome estimator's default VCE is used.
+In {cmd:model(ct-iv)}, this option applies to the final IV outcome regression;
+{cmd:heckvce()} continues to control the first-stage Heckman VCE separately.
 
 {phang} {cmd:heckvce({it:vcetype})} allows to choose the type of variance-covariance matrix estimation
 in the first step Heckit model of the IV model. {it:vcetype} may be "conventional", "bootstrap", or "jackknife".
@@ -222,37 +266,54 @@ this program to make sure you have an up-to-date version of Stata installed.
 
 {title:Examples}
 
-{cmd:To begin with, use the sample dataset: "ctreatreg_example_dataset.dta".}
+{pstd}
+The following examples assume that the named outcome, treatment, dose,
+covariates, instruments, numeric categorical variable {cmd:category},
+panel identifier {cmd:region}, and time variable {cmd:year} are available
+in the data. The binary treatment and dose must refer to the intended
+contemporaneous or lagged treatment. No {cmd:xi:} prefix is required.
+
+{pstd}{cmd:*** 1. CT-OLS: categorical covariates, heterogeneity, robust VCE ***}
+
+{p 8 12 2}
+{cmd:ctreatreg outcome treatment x1 x2 i.category,}
+{cmd:model(ct-ols) ct(dose) m(3) s(10) delta(10) ci(5)}
+{cmd:hetero(x1 i.category) vce(robust) graphate graphdrf}
+
+{pstd}{cmd:*** 2. CT-FE: lagged variables, time indicators, clustered VCE ***}
+
+{p 8 12 2}{cmd:xtset region year}
+
+{p 8 12 2}
+{cmd:ctreatreg outcome L.treatment L.x1 L.x2 i.year,}
+{cmd:model(ct-fe) ct(L.dose) m(3) s(10) delta(10) ci(5)}
+{cmd:vce(cluster region) graphdrf}
+
+{pstd}{cmd:*** 3. CT-IV: categorical covariates and clustered VCE ***}
+
+{p 8 12 2}
+{cmd:ctreatreg outcome treatment x1 x2 i.category,}
+{cmd:model(ct-iv) ct(dose) m(3) s(10) delta(10) ci(5)}
+{cmd:hetero(x1) estype(twostep) iv_t(z1) iv_w(z2)}
+{cmd:vce(cluster region) graphate graphdrf}
+
+{pstd}
+Factor-variable interactions can be specified, for example, by replacing
+{cmd:x1 i.category} with {cmd:c.x1##i.category} in the covariate list.
+Use {cmd:L.}, {cmd:F.}, or {cmd:D.} with numeric variables after declaring
+the time structure; do not type these operators as part of a variable name.
 
 
-{pstd} {cmd:*** 1. EXAMPLE WITH CT-OLS ***}
-
-   {inp:. #delimit ;}
-   {inp:. set more off} 
-   {inp:. xi: ctreatreg outcome treatment x1 x2 , graphate graphrf}   
-   {inp:. delta(10) hetero(x1 x2) model(ct-ols) ct(dose)} 
-   {inp:. ;}
-
-
-{pstd} {cmd:*** 2. EXAMPLE WITH CT-IV ***}
-
-   {inp:. #delimit ;}
-   {inp:. set more off}
-   {inp:. xi: ctreatreg outcome treatment x1 x2 , graphate graphrf}  
-   {inp:. delta(10) hetero(x1 x2) model(ct-iv) ct(dose) estype(twostep) iv_t(z1) iv_w(z2)}
-   {inp:. ;}
-
-   
 {title:References}
 
 {phang}
-Bia, M., and Mattei, A. (2008). A Stata package for the estimation of the dose–response function through adjustment for the generalized propensity score, {it:The Stata Journal}, 8, 3, 354–373.
+Bia, M., and Mattei, A. (2008). A Stata package for the estimation of the dose–response function through adjustment for the generalized propensity score, {it:The Stata Journal}, 8, 3, 354-373.
 {p_end}
 
 {phang}
 Cerulli, G. (2012). ivtreatreg: a new STATA routine for estimating binary treatment models with heterogeneous 
 response to treatment under observable and unobservable selection, 
-{it:Working Paper Cnr-Ceris}, N° 03/2012.
+{it:Working Paper Cnr-Ceris}, N. 03/2012.
 {p_end}
 
 {phang}

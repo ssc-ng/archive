@@ -24,6 +24,7 @@ p hcaccprox module to compute a hierchical cluster analysis with conditional mea
 p hcavar module to perform Hierarchical Clusters Analysis of variables
 p hcnbreg module to estimate Heterogeneous Canonical Negative Binomial Regression
 p hdfe module to partial out variables with respect to a set of fixed effects
+p hdhettest module to compute heteroskedasticity tests with exact Monte Carlo p-values for linear regressions with many regressors
 p hdquantile module for Harrell-Davis estimator of quantiles
 p heabs module to calculate the ICER and Net Benefit for up to two datasets
 p head module to print the head observations (first observations in data set)

@@ -1,0 +1,27 @@
+d 'HDHETTEST': module to compute heteroskedasticity tests with exact Monte Carlo p-values for linear regressions with many regressors
+d
+d    The Breusch-Pagan and White tests rely on asymptotics with a
+d fixed number of regressors p. When p is a sizeable fraction of n,
+d    as with many indicator variables or fixed effects, they lose
+d their nominal size (the Koenker version of the Breusch-Pagan test
+d    becomes very conservative) and the White test cannot be
+d computed. 
+d
+d KW: heteroskedasticity
+d KW: tests
+d KW: Bruesch-Pagan
+d KW: White
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261110
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+f hdhettest.ado
+f hdhettest.sthlp
+f hdhettest_example.do
+f ../_/_hdhettest_display.ado
+f ../_/_hdhettest_load.ado
+f ../_/_hdhettest_mata.ado

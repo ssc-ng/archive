@@ -1,7 +1,7 @@
 
 {smcl}
-{* *! version 1.7, 17 Jan 2026}{...}
-{cmd:help xtgls2}		Version 1.7, 17 Jan 2026, Manh Hoang-Ba (hbmanh9492@gmail.com)
+{* *! version 2.0, 09 Nov 2026}{...}
+help for {helpb xtgls2}{right:Manh Hoang-Ba (hbmanh9492@gmail, {browse "https://www.youtube.com/@manhb.econometrics":Youtube}, {browse "https://www.facebook.com/ManhHB94/":Facebook}, {browse "https://manhb94econometrics.wordpress.com":Website})}
 {hline}
 
 {title:Title}
@@ -28,19 +28,18 @@
 
 {pstd}To update the {cmd:xtgls2} package to the latest version, run either of the following commands{p_end}
 {phang2}. {stata `"ssc install xtgls2, replace"'}{p_end}
+{phang2}. {stata `"ado update xtgls2, update"'}{p_end}
 {phang2}. {stata `"net install xtgls2, from("https://raw.githubusercontent.com/ManhHB94/xtgls2/main/") replace"'}{p_end}
 
 {synoptset 25 tabbed}{...}
 {synopthdr}
 {synoptline}
 {syntab:Model}
-{synopt :{opt nocons:tant}}suppress constant term, required when {opt fe} or {opt fd} option is specified.{p_end}
-{synopt :{opt ols}}use feasible pooled GLS estimator, default.{p_end}
-{synopt :{opt fe}}use feasible fixed-effects GLS estimator, {opt nocons:tant} is required.{p_end}
-{synopt :{opt fd}}use feasible first-difference GLS estimator, {opt nocons:tant} is required.{p_end}
-{synopt :{opt re}}use feasible random-effects GLS estimator, {cmdab:c:ov(c)} is required.{p_end}
-{p2coldent:* {cmdab:c:ov(c)}}use heteroskedastic and correlated error structure within panels.{p_end}
-{p2coldent:* {cmdab:c:ov(h)}}use heteroskedastic error structure within panels, this cannot be specified together with {opt fe} or {opt fd} option.{p_end}
+{synopt :{opt nocons:tant}}suppress constant term, default when {opt fe} or {opt fd} option is specified.{p_end}
+{synopt :{opt pgls}}use feasible pooled GLS estimator, default.{p_end}
+{synopt :{opt fe}}use feasible fixed-effects GLS estimator.{p_end}
+{synopt :{opt fd}}use feasible first-difference GLS estimator.{p_end}
+{synopt :{opt re}}use feasible random-effects GLS estimator.{p_end}
 {synopt :{cmd:igls}}use iterated GLS estimator instead of two-step GLS estimator.{p_end}
 
 {syntab:SE}
@@ -52,19 +51,21 @@
 {synopt :{opt l:evel(#)}}set confidence level; default is {cmd:level(95)}.{p_end}
 
 {syntab:Optimization}
-{synopt :{opt iter:ate(#)}}specifies the maximum number of iterations; default is {cmd:iterate(50)}.{p_end}
+{synopt :{opt iter:ate(#)}}specifies the maximum number of iterations; default is {cmd:iterate(300)}.{p_end}
 {synopt :{opt tol:erance(#)}}specifies the tolerance for the coefficient vector; default is {cmd:tolerance(1e-7)}.{p_end}
+{synopt :{opt nolo:g}}suppress iteration log in iterated GLS estimator.{p_end}
 
 {synoptline}
 {p2colreset}{...}
-{p 4 8 2}* You must specify either {cmd:cov(c)} or {cmd:cov(h)}.{p_end}
 
 
 {title:Citation}
+
 {p 4 8 2}{cmd:xtgls2} is not an official Stata command.
 It is a free contribution to the research community.
 Please cite it as such: {p_end}
-{p 8 8 2}Manh Hoang-Ba, 2025. "XTGLS2: Stata module to estimate GLS estimator for large N, small T panel data models," Statistical Software Components S459497, Boston College Department of Economics.{p_end}
+
+{p 8 8 2}Manh Hoang-Ba, 2025. XTGLS2: Stata module to estimate GLS estimator for large N, small T panel data models.{browse "https://ideas.repec.org/c/boc/bocode/s459498.html":https://ideas.repec.org/c/boc/bocode/s459498.html}{p_end}
 
 
 {title:Postestimation}
@@ -94,15 +95,15 @@ Please cite it as such: {p_end}
 
 {phang2} {stata . keep if year > 1977 & year < 1983}{p_end}
 
-{phang2} {stata `". xtgls2 n w k ys i.ind i.year , cov(c)"'}{p_end}
+{phang2} {stata `". xtgls2 n w k ys i.ind i.year"'}{p_end}
 
-{phang2} {stata `". xtgls2 n w k ys i.year, c(c) fe nocons"'}{p_end}
+{phang2} {stata `". xtgls2 n w k ys i.year, fe"'}{p_end}
 
-{phang2} {stata `". xtgls2 n w k ys i.year, c(c) fe nocons cl(id)"'}{p_end}
+{phang2} {stata `". xtgls2 n w k ys i.year, fe cl(id)"'}{p_end}
 
-{phang2} {stata `". xtgls2 n l(0/2).w k ys i.year, c(c) fd nocons"'}{p_end}
+{phang2} {stata `". xtgls2 n l(0/2).w k ys i.year, fd"'}{p_end}
 
-{phang2} {stata `". xtgls2 n l(0/2).w k ys i.year, c(c) fd nocons cl(id)"'}{p_end}
+{phang2} {stata `". xtgls2 n l(0/2).w k ys i.year, fd cl(id) igls"'}{p_end}
 
 
 {marker results}{...}
@@ -130,11 +131,15 @@ Please cite it as such: {p_end}
 {synopt:{cmd:e(r2_b)}}R-squared between{p_end}
 {synopt:{cmd:e(rc)}}return code{p_end}
 {synopt:{cmd:e(N_clust)}}number of clusters{p_end}
+{synopt:{cmd:e(tgap)}}number of gaps{p_end}
+{synopt:{cmd:e(iterations)}}number of iterations in iterated GLS{p_end}
 
 {p2col 5 23 26 2: Macros}{p_end}
 {synopt:{cmd:e(clustvar)}}name of cluster variable{p_end}
 {synopt:{cmd:e(vcetype)}}title used to label Std. err.{p_end}
 {synopt:{cmd:e(model)}}name of model{p_end}
+{synopt:{cmd:e(igls)}}iterated GLS esimator{p_end}
+{synopt:{cmd:e(predict)}}{cmd:xtgls2_p}{p_end}
 {synopt:{cmd:e(tvar)}}variable denoting time within groups{p_end}
 {synopt:{cmd:e(ivar)}}variable denoting groups{p_end}
 {synopt:{cmd:e(depvar)}}name of dependent variable{p_end}
@@ -152,21 +157,15 @@ Please cite it as such: {p_end}
 {p2colreset}{...}
 
 
-{title:Acknowledgements}
-
-{pstd} I would like to thank Gueorgui I. Kolev, who wrote the {cmd:xtglsr} command, I benefited a lot from his command when calculating clustered standard errors.
-
 {title:References}
 
-{pstd} Arellano, M. (1987). Computing robust standard errors for within-groups estimators. Oxford Bulletin of Economics & Statistics, 49(4).
+{pstd} Arellano, M. (1987). Computing robust standard errors for within-groups estimators. {it:Oxford Bulletin of Economics & Statistics, 49}(4).
 
-{pstd} Kiefer, N. M. (1980). Estimation of fixed effect models for time series of cross-sections with arbitrary intertemporal covariance. Journal of econometrics, 14(2), 195-202.
+{pstd} Kiefer, N. M. (1980). Estimation of fixed effect models for time series of cross-sections with arbitrary intertemporal covariance. {it:Journal of econometrics, 14}(2), 195-202.
 
-{pstd} Kolev, G. I. (2021). XTGLSR: Stata module to calculate robust, or cluster-robust variance after xtgls (Statistical Software Components No. S458935). Boston College Department of Economics.
+{pstd} Wooldridge, J. M. (2002). {it:Econometric analysis of cross section and panel data}. The MIT Press.
 
-{pstd} Wooldridge, J. M. (2002). Econometric analysis of cross section and panel data MIT press. Cambridge, ma, 108(2), 245-254.
-
-{pstd} Wooldridge, J. M. (2010). Econometric analysis of cross section and panel data. MIT press.
+{pstd} Wooldridge, J. M. (2010). {it:Econometric analysis of cross section and panel data} (2nd ed.). MIT press.
 
 {title:Authors}
 
@@ -175,6 +174,6 @@ Please cite it as such: {p_end}
 
 {title:Also see}
 
-{pstd}Online: help for {help xtgls}, {help xttest4} (if installed).
+{pstd}Online: help for {helpb xtgls}, {helpb xttest4} (if installed).
 
 

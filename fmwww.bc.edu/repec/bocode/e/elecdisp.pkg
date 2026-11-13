@@ -1,0 +1,22 @@
+d 'ELECDISP': module to calculate election disproportionality indices
+d
+d   elecdisp calculates six disproportionality indices for one or
+d more elections: the Rae index, Adjusted Rae index,
+d Loosemore–Hanby index, Adjusted Loosemore–Hanby index,
+d Two-Major-Parties index, and Gallagher index. The command accepts
+d vote and seat shares expressed as percentages or proportions and
+d supports numeric and string election identifiers. 
+d
+d KW: electionss
+d KW: disproportionality
+d
+d Requires: Stata version 19.5
+d
+d Distribution-Date: 20261112
+d
+d Author: Oscar Martínez Coello,  University of Mannheim
+d Support: email oscar.martinez.coello@@uni-mannheim.de
+d
+f elecdisp.ado
+f elecdisp.sthlp
+f elecdisp_example.do

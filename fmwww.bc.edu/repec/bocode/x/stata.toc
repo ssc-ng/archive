@@ -224,6 +224,7 @@ p xttest4 module to calculate heterokedasticity tests for fixed-T panel data mod
 p xttestpanel module to perform post-estimation diagnostic test suite for linear panel-data models
 p xttrans2 module to compute tables of transition probabilities 
 p xttvpivmg module to perform time-varying parameter IV mean-group estimation of heterogeneous panels
+p xturcoint module to perform panel unit-root, cross-sectional dependence and panel cointegration tests 
 p xtusreg module to estimate dynamic panel models under irregular time spacing
 p xtutest module to test for an inverse U-shaped (or U-shaped) relationship and estimate its turning point in heterogeneous panels with cross-sectional dependence
 p xtvar module to compute panel vector autoregression 

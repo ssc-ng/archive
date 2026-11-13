@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.1.0  03 July 2026}{...}
+{* *! version 1.2.0  12 November 2026}{...}
 {vieweralsosee "[TS] dfuller" "help dfuller"}{...}
 {vieweralsosee "[TS] pperron" "help pperron"}{...}
 {vieweralsosee "[TS] dfgls" "help dfgls"}{...}
@@ -187,19 +187,36 @@ reference GAUSS code (tspdlib):
 {phang2}{cmd:tstat} (the default, as in the GAUSS source) uses the
 general-to-specific t-statistic rule: starts at the maximum lag and reduces
 until the last lag coefficient has |t| > 1.645.{p_end}
-{phang2}{cmd:aic} uses the Akaike Information Criterion with the tspdlib
-penalty ln(SSR/n) + 2(k+2)/n.{p_end}
-{phang2}{cmd:bic} (synonym {cmd:sic}) uses the Schwarz criterion with the
-penalty ln(SSR/n) + (k+2)ln(n)/n.{p_end}
+{phang2}{cmd:aic} uses the Akaike Information Criterion of the tspdlib 3
+ADF procedure, (2k - 2LL)/n, where LL = -(n/2)[1 + ln(2{it:pi}) + ln(SSR/n)]
+is the Gaussian log-likelihood and k the number of regressors.{p_end}
+{phang2}{cmd:bic} (synonym {cmd:sic}) uses the Schwarz criterion
+(k ln(n) - 2LL)/n.{p_end}
+{pmore}For lag p the ADF regression uses observations p+2,...,T, as in
+GAUSS.{p_end}
 
 {phang}
 {it:Version note.} Up to version 1.0.0 the default was {cmd:aic} with the
 standard 2k/n penalty, the t-stat rule used the 1.96 threshold, the quantile
 regressions were solved by an iteratively reweighted least-squares
 approximation, and delta-squared was clamped to [0.01, 0.99]. Since version
-1.1.0 all four points follow the reference GAUSS code {cmd:qr_adf.src}
-exactly, and the quantile regressions are solved exactly by {helpb qreg}.
-Results can therefore differ slightly from version 1.0.0.{p_end}
+1.1.0 all four points follow the reference GAUSS code {cmd:qr_adf.src}.{p_end}
+
+{phang}
+{it:Solver (version 1.2.0).} The quantile regressions at tau and tau +/- h are
+solved by a Mata port of the GAUSS {cmd:quantileFit} solver used by tspdlib: a
+Frisch-Newton interior-point linear program with tolerance 1e-4, at most 50
+iterations, step factor 0.9999995 and the constant as the first regressor.
+{helpb qreg}, used in version 1.1.0, returns the exact simplex vertex, which is
+not the point at which GAUSS stops; the residual signs, and hence t_n(tau),
+delta-squared and the interpolated critical values, then differed from GAUSS
+(t_n by up to about 1), and {helpb qreg} could fail for small tau - h. In
+addition, the {cmd:aic}/{cmd:bic} lag rules now use the tspdlib 3 criteria and
+estimation sample, which can select a different lag than version 1.1.0. With
+these changes {cmd:qadf} reproduces GAUSS tspdlib {cmd:qr_ADF} /
+{cmd:quantileADF}: on the tspdlib example data the statistic, rho(tau),
+delta-squared, the critical values and the selected lag agree with GAUSS 26
+(tspdlib 3.0.0) to better than 1e-10.{p_end}
 
 {dlgtab:Bootstrap}
 

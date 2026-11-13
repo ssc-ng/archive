@@ -46,6 +46,7 @@ p inccat module to concatenate one or more input files to an output file inserti
 p inclusion_economics_scheme module to provide a graphic scheme for Inclusion Economics branded data
 p indeplist module to returns lists of independent variables from the active estimation command
 p index Module to Estimate Price, Quantity, and Value Index Numbers
+p indsat module to evaluate indicator saturation for outliers and structural breaks 
 p ineq module to calculate measures of inequality
 p ineqdec0 module to calculate inequality indices with decomposition by subgroup
 p ineqdecgini module to estimate Gini coefficient with optional decomposition by subgroups

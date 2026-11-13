@@ -1,5 +1,5 @@
 *! qadf - Quantile ADF Unit Root Test
-*! Version 1.1.0, 03 July 2026
+*! Version 1.2.0, 12 November 2026
 *! Author: Dr. Merwan Roudane
 *! Email: merwanroudane920@gmail.com
 *!
@@ -13,11 +13,14 @@
 *!   Hansen, B. (1995). Rethinking the Univariate Approach to Unit Root Tests.
 *!   Econometric Theory, 11, 1148-1171.
 *!
+*! Version 1.2.0: the quantile regressions are solved by a Mata port of the
+*! GAUSS quantileFit interior-point solver (replacing qreg), and the AIC/SIC
+*! lag rule uses the tspdlib 3 ADF criteria and estimation sample, so every
+*! reported number reproduces GAUSS tspdlib qr_ADF / quantileADF.
 *! Version 1.1.0: exact compatibility with the GAUSS source qr_adf.src
-*! (tspdlib, S. Nazlioglu). Quantile regressions are now solved exactly by
-*! qreg; lag selection uses the tspdlib penalties and the 1.645 t-stat rule
-*! (now the default criterion, as in the source); delta-squared is reported
-*! unclamped; contiguity of the sample is enforced.
+*! (tspdlib, S. Nazlioglu); the 1.645 t-stat rule is the default criterion,
+*! as in the source; delta-squared is reported unclamped; contiguity of the
+*! sample is enforced.
 
 program define qadf, rclass sortpreserve
     version 14.0
@@ -105,12 +108,12 @@ program define qadf, rclass sortpreserve
         exit 498
     }
 
-    * Protect any e() results in memory (qreg is run internally)
+    * Protect any e() results in memory
     tempname ehold
     capture _estimates hold `ehold', restore nullok
 
     *--------------------------------------------------------------------------
-    * Compute the QADF test (lag selection + exact qreg, source-compatible)
+    * Compute the QADF test (lag selection + GAUSS quantileFit solver)
     *--------------------------------------------------------------------------
     qadf_core `varlist' if `touse', tau(`tau') model(`model') ///
         pmax(`maxlags') icn(`icn')

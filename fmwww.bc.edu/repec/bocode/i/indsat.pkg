@@ -1,0 +1,58 @@
+d 'INDSAT': module to evaluate indicator saturation for outliers and structural breaks 
+d
+d   indsat is a library of indicator-saturation tools under one
+d central command. It detects outliers, location shifts, trend
+d breaks and coefficient breaks by general-to-specific selection
+d over saturating sets of impulse (IIS), step (SIS), broken-trend
+d (TIS, quadratic, cubic), differenced and pairwise impulse,
+d multiplicative (MIS), designed (volcanic, transitory-change,
+d ramp, user shape) and user-specified indicators, including super
+d and ultra saturation and common break dates. The default search
+d is a port of R gets::isat (Pretis, Reade and Sucarrat 2018) and
+d reproduces its results numerically; the split-half estimators of
+d Johansen and Nielsen (2009) and Nielsen and Qian (2025) and the
+d m-step Huber-skip estimator (Johansen and Nielsen 2016) are also
+d provided. Typed without variables after regress, newey or ardl,
+d indsat saturates the model in memory and reports the breaks,
+d outliers, dashboard graphs and a comparison of original and
+d robust estimates (tables and coefficient graph). Subcommands
+d cover ARDL / error-correction models with saturation and the
+d Pesaran-Shin-Smith bounds test, results over a grid of target
+d sizes with the Jiao-Pretis scaling tests, gauge theory, Monte
+d Carlo gauge/potency, and postestimation (break dates and regimes,
+d coefficient paths, isattest, outlier and distortion tests, bias
+d correction, forecasting, diagnostics, dashboards). 
+d
+d KW: indicator saturation
+d KW: outliers
+d KW: structural breaks
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261112
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f indsat.ado
+f indsat.sthlp
+f indsat_ardl.ado
+f indsat_ardl.sthlp
+f indsat_cmp.ado
+f indsat_dhsy.dta
+f indsat_estat.ado
+f indsat_example.do
+f indsat_gauge.ado
+f indsat_gauge.sthlp
+f indsat_loop.ado
+f indsat_loop.sthlp
+f indsat_methods.sthlp
+f indsat_nile.dta
+f indsat_p.ado
+f indsat_postestimation.sthlp
+f indsat_seatbelts.dta
+f indsat_sim.ado
+f indsat_sim.sthlp
+f indsat_types.sthlp
+f indsat_validate.do
+f indsat_validate.R

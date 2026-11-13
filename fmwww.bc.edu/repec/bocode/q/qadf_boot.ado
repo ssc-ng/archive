@@ -1,5 +1,5 @@
 *! qadf_boot - Quantile ADF Unit Root Test: Bootstrap Inference
-*! Version 1.1.0, 03 July 2026
+*! Version 1.2.0, 12 November 2026
 *! Author: Dr. Merwan Roudane
 *! Email: merwanroudane920@gmail.com
 *!
@@ -13,10 +13,12 @@
 *!   Step 2: Draw iid {u*_t} from centered residuals
 *!   Step 3: Generate y*_t under null (unit root): y*_t = y*_{t-1} + w*_t
 *!   Step 4: Re-run the FULL QADF procedure (including lag re-selection)
-*!           on the bootstrap sample via qadf_core (exact qreg solutions)
+*!           on the bootstrap sample via qadf_core (GAUSS quantileFit solver)
 *!
-*! Version 1.1.0: every bootstrap replication now recomputes the statistic
-*! with the exact qreg solver and the source-compatible lag selection.
+*! Version 1.2.0: every replication uses the Mata port of the GAUSS
+*! quantileFit interior-point solver (as qadf itself).
+*! Version 1.1.0: every bootstrap replication recomputes the statistic
+*! with the source-compatible lag selection.
 
 program define qadf_boot, rclass sortpreserve
     version 14.0

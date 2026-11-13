@@ -1,0 +1,25 @@
+d 'EV': module to mimic EViews-style expressions in estimation commands
+d
+d  The ev command enables Stata users to write intuitive,
+d EViews-style	algebraic and lag expressions directly inside
+d standard Stata estimation  commands. This ease the learning
+d curve,  minimizes the need for manual variable generation, and
+d makes it easier for  researchers to replicate models across
+d software platforms. 
+d
+d KW: EViews
+d KW: data transformations
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261112
+d
+d Author:   Matthew Yeung,   Hong Kong Metropolitan University
+d Support: email  myeung@@hkmu.edu.hk
+d
+d Author:  Aaron Tao,   Hong Kong Metropolitan University
+d Support: email NA
+d
+f ev.ado
+f ev.sthlp
+f ev_examples.do

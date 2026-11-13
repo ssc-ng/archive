@@ -1,0 +1,39 @@
+d 'XTURCOINT': module to perform panel unit-root, cross-sectional dependence and panel cointegration tests 
+d
+d      xturcoint collects, under one command, the panel unit-root
+d and panel cointegration tests of the GAUSS libraries tspdlib
+d 3.0.0    (Saban Nazlioglu), carrionlib 1.0.2 (Josep Lluis
+d Carrion-i-Silvestre) and westerlundlib (Joakim Westerlund) that
+d were not yet	  available in Stata. Every subcommand is a
+d line-by-line port of the corresponding GAUSS procedure, written
+d in Mata, and	  reproduces the GAUSS results to at least 8
+d decimals 
+d
+d KW: panel data
+d KW: cointegration
+d KW: cross-sectional dependence
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261112
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f xturcoint.ado
+f xturcoint.sthlp
+f xturcoint_adfmin.sthlp
+f xturcoint_cd.sthlp
+f xturcoint_cusum.sthlp
+f xturcoint_example.do
+f xturcoint_fixedt.sthlp
+f xturcoint_lm.sthlp
+f xturcoint_mp.sthlp
+f xturcoint_panic.sthlp
+f ../_/_xturcoint_adfmin.ado
+f ../_/_xturcoint_cd.ado
+f ../_/_xturcoint_cusum.ado
+f ../_/_xturcoint_fixedt.ado
+f ../_/_xturcoint_lm.ado
+f ../_/_xturcoint_mp.ado
+f ../_/_xturcoint_panic.ado

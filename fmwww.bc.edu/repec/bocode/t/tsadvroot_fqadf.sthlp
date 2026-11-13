@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0  03jul2026}{...}
+{* *! version 1.3.0  12nov2026}{...}
 {viewerjumpto "Syntax" "tsadvroot_fqadf##syntax"}{...}
 {viewerjumpto "Description" "tsadvroot_fqadf##description"}{...}
 {viewerjumpto "Options" "tsadvroot_fqadf##options"}{...}
@@ -142,6 +142,19 @@ observation), and each bootstrap statistic is computed by the full test
 routine on it;{p_end}
 {phang2}- the GAUSS 0.99/0.95/0.90 order statistics are reported unchanged
 in {cmd:r(boot)} columns 4-6.{p_end}
+
+{pstd}
+Quantile regressions at tau and tau +/- h are computed with the Mata port of the GAUSS {cmd:quantileFit} solver used by tspdlib (a
+Frisch-Newton interior-point linear program: tolerance 1e-4, at most 50
+iterations, step factor 0.9999995, constant as the first regressor), so the
+results are identical to GAUSS. Up to version 1.2.0 {helpb qreg} was used; it
+returns the exact simplex vertex, which is not the point at which GAUSS stops,
+so residual signs, t_n(tau), delta-squared and the critical values differed
+from GAUSS (t_n by up to about 1), and {helpb qreg} could fail for small
+tau - h.
+On the tspdlib example data the F-QADF statistic, rho(tau) and delta-squared
+agree with GAUSS 26 (tspdlib 3.0.0) {cmd:QR_Fourier_ADF} to better than 1e-9
+(models c and ct, lags 0, 4, 8, frequencies 1 and 3).
 
 
 {marker results}{...}

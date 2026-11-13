@@ -34,6 +34,7 @@ p eitc module to compute U.S. Earned Income Tax Credit receipts
 p elabel module to extend the label commands
 p elapse module to calculate elapsed time in procedure 
 p elasticregress module to perform elastic net regression, lasso regression, ridge regression
+p elecdisp module to calculate election disproportionality indices
 p electool module containing toolkit to analyze electoral data
 p elife module to model annual increments of life expectancy
 p elix22 module to compute Elixhauser comorbidity measures (version 2022.1)
@@ -105,6 +106,7 @@ p euromod module to connect to EUROMOD (Windows only)
 p eurostatdata module for fetching Eurostat data
 p eurostatuse module to import data from Eurostat repository into Stata
 p eurouse module to import data from Eurostat
+p ev module to mimic EViews-style expressions in estimation commands
 p evalue module for conducting sensitivity analyses for unmeasured confounding in observational studies
 p evalue_estat module for conducting postestimation sensitivity analyses of unmeasured confounding in observational studies
 p evalues module to calculate E-values

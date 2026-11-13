@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0  03jul2026}{...}
+{* *! version 1.3.0  12nov2026}{...}
 {viewerjumpto "Syntax" "tsadvroot_qadf##syntax"}{...}
 {viewerjumpto "Description" "tsadvroot_qadf##description"}{...}
 {viewerjumpto "Options" "tsadvroot_qadf##options"}{...}
@@ -92,8 +92,10 @@ Koenker and Xiao 2004); {cmd:ct} adds a linear trend. Numeric codes
 {phang}
 {opt pmax(#)} and {opt ic()}: the lag order p is selected {it:once} from a
 standard OLS ADF regression with constant (GAUSS: {cmd:ADF(y, 1, pmax, ic)})
-and then used at every quantile, exactly as in the source. {cmd:aic} and
-{cmd:sic} use the tspdlib penalty 2(k+2)/n and (k+2)ln(n)/n; {cmd:tstat}
+and then used at every quantile, exactly as in the source. For lag p the
+regression uses observations p+2,...,T. {cmd:aic} and {cmd:sic} are the
+tspdlib 3 criteria (2k - 2LL)/n and (k ln(n) - 2LL)/n, with LL the Gaussian
+log-likelihood -(n/2)[1 + ln(2{it:pi}) + ln(SSR/n)]; {cmd:tstat}
 scans from {it:pmax} down and keeps the first lag whose last-lag |t| exceeds
 1.645.
 
@@ -126,8 +128,18 @@ computed from psi_tau(residuals) and D.y; the Hansen (1995) critical values
 are linearly interpolated in delta-squared over the grid 0.1, 0.2, ..., 1.
 
 {pstd}
-Quantile regressions are computed with Stata's exact {helpb qreg} solver
-(same check-function objective as GAUSS {cmd:quantileFit}).
+Quantile regressions at tau and tau +/- h are computed with the Mata port of the GAUSS {cmd:quantileFit} solver used by tspdlib (a
+Frisch-Newton interior-point linear program: tolerance 1e-4, at most 50
+iterations, step factor 0.9999995, constant as the first regressor), so the
+results are identical to GAUSS. Up to version 1.2.0 {helpb qreg} was used; it
+returns the exact simplex vertex, which is not the point at which GAUSS stops,
+so residual signs, t_n(tau), delta-squared and the critical values differed
+from GAUSS (t_n by up to about 1), and {helpb qreg} could fail for small
+tau - h.
+On the tspdlib example data, t_n(tau), rho(tau), delta-squared, the critical
+values and the selected lag agree with GAUSS 26 (tspdlib 3.0.0)
+{cmd:qr_ADF} to better than 1e-10. Version 1.3.0 also aligned the {cmd:aic} and
+{cmd:sic} lag rules with tspdlib 3, which can change the selected lag.
 
 
 {marker compat}{...}
@@ -148,10 +160,10 @@ trimming);{p_end}
 
 {pstd}
 {it:Note for users of the SSC} {cmd:qadf} {it:package}: this implementation
-differs from {cmd:ssc install qadf} (same author) in using the exact
-{helpb qreg} solution rather than an IRLS approximation, the tspdlib lag
-penalties 2(k+2)/n, the 1.645 threshold in the t-stat rule, the
-{cmd:tstat} default criterion, and in reporting delta-squared unclamped.
+gives the same results as {cmd:qadf} version 1.2.0 or later (same author,
+same GAUSS solver and lag rules); versions of {cmd:qadf} before 1.1.0 used
+an IRLS approximation, other lag penalties, the 1.96 t-stat threshold and a
+clamped delta-squared.
 
 
 {marker results}{...}

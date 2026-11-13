@@ -1,5 +1,5 @@
 *! qadf_core - internal computational engine for the QADF package
-*! Version 1.1.0, 03 July 2026
+*! Version 1.2.0, 12 November 2026
 *! Author: Dr. Merwan Roudane (merwanroudane920@gmail.com)
 *! Called by qadf, qadf_boot and qadf_process; not for direct end-user use.
 
@@ -10,7 +10,8 @@
 *      unless a fixed p() is supplied
 *   2. estimation sample drops the first p+1 observations
 *   3. quantile regressions of y_t (levels) on [y_{t-1}, D.y lags, (trend)]
-*      at tau and tau +/- h solved exactly by qreg
+*      at tau and tau +/- h solved by qadfm_rq(), the Mata port of the GAUSS
+*      quantileFit interior-point solver (results identical to GAUSS)
 *   4. t_n(tau) via the difference-quotient sparsity estimate and the
 *      projection off [1, dyl]; Hansen (1995) critical values on delta2
 * Assumes a tsset, contiguous series.
@@ -60,37 +61,11 @@ program define qadf_core, rclass
     qui count if `esamp'
     local neff = r(N)
 
-    * ---- bandwidth and the three exact quantile regressions -----------------
-    mata: st_local("h", strofreal(qadfm_h(`tau', `neff'), "%18.0g"))
-    local t1 = `tau' + `h'
-    if `t1' >= 1 local t1 = .9999
-    local t2 = `tau' - `h'
-    if `t2' <= 0 local t2 = .0001
-
-    tempname b0 b1 b2
-    capture qui qreg `yv' `xvars' if `esamp', quantile(`tau')
-    if _rc {
-        di as err "qreg failed at tau = `tau' (rc = " _rc ")"
-        exit _rc
-    }
-    matrix `b0' = e(b)
-    capture qui qreg `yv' `xvars' if `esamp', quantile(`t1')
-    if _rc {
-        di as err "qreg failed at tau+h = `t1' (rc = " _rc ")"
-        exit _rc
-    }
-    matrix `b1' = e(b)
-    capture qui qreg `yv' `xvars' if `esamp', quantile(`t2')
-    if _rc {
-        di as err "qreg failed at tau-h = `t2' (rc = " _rc ")"
-        exit _rc
-    }
-    matrix `b2' = e(b)
-
+    * ---- bandwidth h and the three quantile regressions (GAUSS quantileFit) 
     local mnum 1
     if "`model'" == "ct" local mnum 2
-    mata: qadfm_finish("`yv'", "`xvars'", "`esamp'", `tau', `h', ///
-        "`b0'", "`b1'", "`b2'", `plag', `mnum')
+    mata: qadfm_finish("`yv'", "`xvars'", "`esamp'", `tau', ///
+        `plag', `mnum')
 
     local rho = r(rho_tau)
     local alpha = r(alpha_tau)

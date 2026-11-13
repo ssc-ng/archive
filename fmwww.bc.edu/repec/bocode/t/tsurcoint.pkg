@@ -1,0 +1,38 @@
+d 'TSURCOINT': module to perform Time-series unit-root and cointegration tests  
+d
+d	tsurcoint collects, under one command, the time-series
+d tests of the GAUSS libraries tspdlib 3.0.0 (Saban Nazlioglu) and 
+d   carrionlib 1.0.2 (Josep Lluis Carrion-i-Silvestre) that were
+d not yet available in Stata, plus the GLS break models that were  
+d  only partly available. Every subcommand is a line-by-line port
+d of the GAUSS procedure, written in Mata, including the GAUSS	 
+d interior-point quantile-regression solver, and reproduces the
+d GAUSS results to 10 decimals. 
+d
+d KW:  cointegration
+d KW: unit root tests
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261112
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f tsurcoint.ado
+f tsurcoint.sthlp
+f tsurcoint_cissanso.sthlp
+f tsurcoint_example.do
+f tsurcoint_fkss.sthlp
+f tsurcoint_fwadf.sthlp
+f tsurcoint_fwkss.sthlp
+f tsurcoint_glsbreak.sthlp
+f tsurcoint_qfkss.sthlp
+f tsurcoint_qks.sthlp
+f tsurcoint_qkss.sthlp
+f tsurcoint_shin.sthlp
+f tsurcoint_wkss.sthlp
+f ../_/_tsurcoint_glsbreak.ado
+f ../_/_tsurcoint_kpssc.ado
+f ../_/_tsurcoint_kss.ado
+f ../_/_tsurcoint_qkss.ado

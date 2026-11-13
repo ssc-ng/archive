@@ -1,4 +1,4 @@
-*! tsadvroot 1.2.0  08jul2026
+*! tsadvroot 1.3.0  12nov2026
 *! Advanced time-series unit-root tests:
 *!   qadf  - quantile ADF (Koenker & Xiao 2004)
 *!   fqadf - Fourier quantile ADF (Li & Zheng 2018) with residual bootstrap
@@ -8,6 +8,9 @@
 *!           (Carrion-i-Silvestre, Kim & Perron 2009)
 *! Exact Stata translation of the GAUSS routines by Saban Nazlioglu (tspdlib)
 *! and Josep Lluis Carrion-i-Silvestre (based on Ng & Perron 2001 code).
+*! 1.3.0: qadf/fqadf quantile regressions solved by _tsav_rq(), a Mata port of
+*!        the GAUSS quantileFit interior-point solver (replaces qreg), and the
+*!        qadf AIC/SIC lag rule follows tspdlib 3; results identical to GAUSS.
 *! Author: Merwan Roudane, merwanroudane920@gmail.com
 *! https://github.com/merwanroudane
 
@@ -114,10 +117,6 @@ program define tsadvroot_qadf, rclass
         exit 2001
     }
 
-    * protect the user's e() results (we run qreg internally)
-    tempname ehold
-    capture _estimates hold `ehold', restore nullok
-
     * ---- lag selection: GAUSS { ADFt, p, cv } = ADF(y, 1, pmax, ic) --------
     mata: _tsav_adfsel_st("`yv'", "`touse'", `pmax', `icn')
     local p = r(adflag)
@@ -144,37 +143,15 @@ program define tsadvroot_qadf, rclass
 
     * ---- per-quantile computation ------------------------------------------
     local ntau : word count `tau'
-    tempname R b0 b1 b2
+    tempname R
     matrix `R' = J(`ntau', 8, .)
     local row 0
     foreach t of local tau {
         local ++row
-        * bandwidth h (GAUSS __get_qr_adf_h)
-        mata: st_local("h", strofreal(_tsav_h(`t', `neff'), "%18.0g"))
-        local t1 = `t' + `h'
-        if `t1' >= 1 local t1 = .9999
-        local t2 = `t' - `h'
-        if `t2' <= 0 local t2 = .0001
-        capture qui qreg `yv' `xvars' if `esamp', quantile(`t')
-        if _rc {
-            di as err "qreg failed at tau = `t' (rc = " _rc ")"
-            exit _rc
-        }
-        matrix `b0' = e(b)
-        capture qui qreg `yv' `xvars' if `esamp', quantile(`t1')
-        if _rc {
-            di as err "qreg failed at tau+h = `t1' (rc = " _rc ")"
-            exit _rc
-        }
-        matrix `b1' = e(b)
-        capture qui qreg `yv' `xvars' if `esamp', quantile(`t2')
-        if _rc {
-            di as err "qreg failed at tau-h = `t2' (rc = " _rc ")"
-            exit _rc
-        }
-        matrix `b2' = e(b)
+        * bandwidth h (GAUSS __get_qr_adf_h) and the quantile regressions at
+        * tau, tau+h, tau-h (GAUSS quantileFit) are computed in Mata
         mata: _tsav_qadf_one("`R'", `row', "`yv'", "`xvars'", "`esamp'", ///
-            `t', `h', "`b0'", "`b1'", "`b2'", `p', 0, `mnum')
+            `t', `p', 0, `mnum')
     }
     matrix colnames `R' = tau rho_tau rho_ols delta2 tn cv1 cv5 cv10
 
@@ -326,9 +303,6 @@ program define tsadvroot_fqadf, rclass
         di as err "insufficient observations (T=`T') for lags(`p')"
         exit 2001
     }
-
-    tempname ehold
-    capture _estimates hold `ehold', restore nullok
 
     * ---- observed statistics (exact QR_Fourier_ADF) --------------------------
     local ntau : word count `tau'
@@ -544,35 +518,11 @@ program define tsadvroot_fqadf_core, rclass
         local xvars "`xvars' `trnd'"
     }
 
-    tempname b0 b1 b2
     local row 0
     foreach t of local taulist {
         local ++row
-        mata: st_local("h", strofreal(_tsav_h(`t', `neff'), "%18.0g"))
-        local t1 = `t' + `h'
-        if `t1' >= 1 local t1 = .9999
-        local t2 = `t' - `h'
-        if `t2' <= 0 local t2 = .0001
-        capture qui qreg `yv' `xvars' if `esamp', quantile(`t')
-        if _rc {
-            di as err "qreg failed at tau = `t' (rc = " _rc ")"
-            exit _rc
-        }
-        matrix `b0' = e(b)
-        capture qui qreg `yv' `xvars' if `esamp', quantile(`t1')
-        if _rc {
-            di as err "qreg failed at tau+h = `t1' (rc = " _rc ")"
-            exit _rc
-        }
-        matrix `b1' = e(b)
-        capture qui qreg `yv' `xvars' if `esamp', quantile(`t2')
-        if _rc {
-            di as err "qreg failed at tau-h = `t2' (rc = " _rc ")"
-            exit _rc
-        }
-        matrix `b2' = e(b)
         mata: _tsav_qadf_one("`rmat'", `row', "`yv'", "`xvars'", "`esamp'", ///
-            `t', `h', "`b0'", "`b1'", "`b2'", `p', 1, `model')
+            `t', `p', 1, `model')
     }
     return scalar neff = `neff'
 end
@@ -1080,8 +1030,9 @@ real scalar _tsav_getlagidx(real scalar ic, real colvector aicp,
 
 // ---------------------------------------------------------------------------
 // tspdlib ADF(y, 1, pmax, ic) lag selection (constant model)
-// dep sample: dy trimmed twice (once for diff, once for p+1), regressors
-// x = [y_{t-1}, const, dy lags]; aic/sic use the (k+2) penalty of the source
+// dep sample: dy[p+1..T-1] = levels p+2..T (GAUSS trimr(dy, p+1)), regressors
+// x = [y_{t-1}, const, dy lags]; AIC = (2k-2LL)/n, SIC = (k ln n - 2LL)/n
+// with the Gaussian log-likelihood LL (tspdlib 3 _runFourierOLS)
 // Returns the selected LAG COUNT via r(adflag)
 // ---------------------------------------------------------------------------
 void _tsav_adfsel_st(string scalar yname, string scalar touse,
@@ -1097,7 +1048,7 @@ void _tsav_adfsel_st(string scalar yname, string scalar touse,
 
 real scalar _tsav_adfsel(real colvector y, real scalar pmax, real scalar ic)
 {
-    real scalar T, p, lo, n1, kx, pidx, j
+    real scalar T, p, lo, n1, kx, pidx, j, LL
     real colvector dy, y1, dep, bb, ee, sevec, taup, aicp, sicp, tstatp
     real matrix lmat, X, XX
 
@@ -1115,7 +1066,7 @@ real scalar _tsav_adfsel(real colvector y, real scalar pmax, real scalar ic)
     sicp = J(pmax+1, 1, .)
     tstatp = J(pmax+1, 1, .)
     for (p = 0; p <= pmax; p++) {
-        lo = p + 2
+        lo = p + 1
         dep = dy[lo::(T-1)]
         X = y1[lo::(T-1)], J(rows(dep), 1, 1)
         if (p > 0) {
@@ -1128,8 +1079,10 @@ real scalar _tsav_adfsel(real colvector y, real scalar pmax, real scalar ic)
         ee = dep - X*bb
         sevec = sqrt(diagonal(XX)*(cross(ee, ee)/(n1-kx)))
         taup[p+1] = bb[1]/sevec[1]
-        aicp[p+1] = ln(cross(ee, ee)/n1) + 2*(kx+2)/n1
-        sicp[p+1] = ln(cross(ee, ee)/n1) + (kx+2)*ln(n1)/n1
+        // tspdlib 3 _runFourierOLS (non-Fourier branch): Gaussian log-likelihood
+        LL = -n1/2*(1 + ln(2*pi()) + ln(cross(ee, ee)/n1))
+        aicp[p+1] = (2*kx - 2*LL)/n1
+        sicp[p+1] = (kx*ln(n1) - 2*LL)/n1
         tstatp[p+1] = abs(bb[kx]/sevec[kx])
     }
     pidx = _tsav_getlagidx(ic, aicp, sicp, tstatp)
@@ -1250,8 +1203,99 @@ real rowvector _tsav_qadfcv(real scalar r2, real scalar model)
 }
 
 // ---------------------------------------------------------------------------
-// per-quantile QADF computation (GAUSS QRADF tail / __get_qr_adf_stat /
-// __get_qr_adf_delta2), given the three qreg coefficient vectors.
+// GAUSS quantileFit (quantilefit.src, __quant_level_reg + __Qreg_solveLP1):
+// Frisch-Newton interior-point LP, eps = 1e-4, max 50 iterations,
+// sigma = 0.9999995; a constant is added as the first regressor.
+// Returns the coefficients in GAUSS order: constant first, then X0.
+// ---------------------------------------------------------------------------
+real scalar _tsav_tfm(real colvector d, real colvector x)
+{
+    real scalar m, i
+
+    m = 1e20
+    for (i = 1; i <= rows(d); i++) {
+        if (d[i] < 0) {
+            if (-x[i]/d[i] < m) {
+                m = -x[i]/d[i]
+            }
+        }
+    }
+    return(m)
+}
+
+real scalar _tsav_fdelta(real colvector d1, real colvector x1,
+    real colvector d2, real colvector x2, real scalar sigma)
+{
+    return(min((sigma*_tsav_tfm(d1, x1), sigma*_tsav_tfm(d2, x2), 1)))
+}
+
+real colvector _tsav_rq(real colvector yv, real matrix X0, real scalar tau)
+{
+    real matrix X, A, AqA
+    real colvector sv, c, b, u, yd, r, z, w, x, s, q, Aqr, dy, dx, ds, dz
+    real colvector dw, dxdz, dsdw, xinv, sinv, xi
+    real scalar N, gap, it, dp, dd, mu, g, sigma
+
+    X = J(rows(X0), 1, 1), X0
+    N = rows(X)
+    sigma = 0.9999995
+    sv = (1 - tau)*J(N, 1, 1)
+    c = -yv
+    A = X'
+    b = X'*sv
+    u = J(N, 1, 1)
+    yd = luinv(X'*X)*(X'*(-yv))
+    r = -yv - X*yd
+    z = r:*(r:>0)
+    w = z - r
+    x = sv
+    s = u - x
+    gap = c'*x - b'*yd + u'*w
+    it = 1
+    while ((it <= 50) & (gap > 0.0001)) {
+        q = 1:/(z:/x + w:/s)
+        r = z - w
+        Aqr = A*(q:*r)
+        AqA = A*(q:*A')
+        dy = lusolve(AqA, Aqr)
+        dx = q:*(A'*dy - r)
+        ds = -dx
+        dz = (-z:*dx):/x - z
+        dw = (-w:*ds):/s - w
+        dp = _tsav_fdelta(dx, x, ds, s, sigma)
+        dd = _tsav_fdelta(dz, z, dw, w, sigma)
+        if (min((dp, dd)) < 1) {
+            mu = x'*z + s'*w
+            g = (x + dp*dx)'*(z + dd*dz) + (s + dp*ds)'*(w + dd*dw)
+            mu = (g^3)*(mu^(-2))/2/N
+            dxdz = dx:*dz
+            dsdw = ds:*dw
+            xinv = 1:/x
+            sinv = 1:/s
+            xi = mu*(xinv - sinv)
+            dy = lusolve(AqA, Aqr + (A:*q')*(dxdz - dsdw - xi))
+            dx = q:*(A'*dy + xi - r - (dxdz - dsdw))
+            ds = -dx
+            dz = mu*xinv - z - xinv:*z:*dx - dxdz
+            dw = mu*sinv - w - sinv:*w:*ds - dsdw
+            dp = _tsav_fdelta(dx, x, ds, s, sigma)
+            dd = _tsav_fdelta(dz, z, dw, w, sigma)
+        }
+        x = x + dp*dx
+        s = s + dp*ds
+        yd = yd + dd*dy
+        z = z + dd*dz
+        w = w + dd*dw
+        gap = c'*x - b'*yd + u'*w
+        it++
+    }
+    return(-yd)
+}
+
+// ---------------------------------------------------------------------------
+// per-quantile QADF computation (GAUSS QRADF tail: __get_qr_adf_beta,
+// __get_qr_adf_stat, __get_qr_adf_delta2). The quantile regressions at tau,
+// tau+h and tau-h are solved by _tsav_rq (port of GAUSS quantileFit).
 // usef = 0 : plain QADF  (w = dy, xx = [1, dyl], Hansen cvs)
 // usef = 1 : Fourier QADF (w = residuals, xx = [1, all x but y1], no cvs)
 // Fills row `row' of matrix `rmatname':
@@ -1259,29 +1303,34 @@ real rowvector _tsav_qadfcv(real scalar r2, real scalar model)
 // ---------------------------------------------------------------------------
 void _tsav_qadf_one(string scalar rmatname, real scalar row,
     string scalar yname, string scalar xvars, string scalar esamp,
-    real scalar tau, real scalar h,
-    string scalar b0name, string scalar b1name, string scalar b2name,
-    real scalar p, real scalar usef, real scalar model)
+    real scalar tau, real scalar p, real scalar usef, real scalar model)
 {
     real colvector Y, y1, bg0, bg1, bg2, res, ind, phi, w, bols, tvec
     real matrix X, Xc, xx, ixx, Rm
-    real rowvector b0, b1, b2, z1m, cv
-    real scalar n, k, rho_tau, rho_ols, q1, q2, dq, fz, y1p, stat
-    real scalar mw, mphi, covv, sdw, delta2
+    real rowvector z1m, cv
+    real scalar n, rho_tau, rho_ols, q1, q2, dq, fz, y1p, stat
+    real scalar mw, mphi, covv, sdw, delta2, h, t1, t2
 
     Y = st_data(., yname, esamp)
     X = st_data(., tokens(xvars), esamp)
     n = rows(Y)
     Xc = J(n, 1, 1), X
 
-    // reorder e(b): Stata puts _cons last, GAUSS puts it first
-    b0 = st_matrix(b0name)
-    k = cols(b0)
-    bg0 = b0[k] \ b0[1::(k-1)]'
-    b1 = st_matrix(b1name)
-    bg1 = b1[k] \ b1[1::(k-1)]'
-    b2 = st_matrix(b2name)
-    bg2 = b2[k] \ b2[1::(k-1)]'
+    // bandwidth (GAUSS __get_qr_adf_h, n = effective sample)
+    h = _tsav_h(tau, n)
+
+    // GAUSS quantileFit at tau, tau+h (1 if > 1) and tau-h (0 if < 0)
+    t1 = tau + h
+    if (t1 > 1) {
+        t1 = 1
+    }
+    t2 = tau - h
+    if (t2 < 0) {
+        t2 = 0
+    }
+    bg0 = _tsav_rq(Y, X, tau)
+    bg1 = _tsav_rq(Y, X, t1)
+    bg2 = _tsav_rq(Y, X, t2)
 
     rho_tau = bg0[2]
 

@@ -219,7 +219,7 @@ if _rc {
 }
 else {
     matrix CV = r(cv)
-    assert rowsof(CV) == 4 & colsof(CV) == 3
+    assert rowsof(CV) == 4 & colsof(CV) == 4
     di as result "OK  (1 break at t = " el(r(breakpos),1,1) ///
         ", cbar = " %7.3f r(cbar) ")"
 }

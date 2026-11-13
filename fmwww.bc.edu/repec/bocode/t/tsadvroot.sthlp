@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0  03jul2026}{...}
+{* *! version 1.3.0  12nov2026}{...}
 {viewerjumpto "Syntax" "tsadvroot##syntax"}{...}
 {viewerjumpto "Description" "tsadvroot##description"}{...}
 {viewerjumpto "Subcommands" "tsadvroot##subcommands"}{...}
@@ -111,10 +111,15 @@ and {cmd:__sbur_multiple_gls_brute} with the response surfaces
 {pstd}
 Every numeric convention of the sources is reproduced, including their
 idiosyncrasies (documented in the "Source compatibility" section of each
-subcommand's help page). Quantile regressions are computed with Stata's
-exact {helpb qreg} solver, which minimizes the same check-function objective
-as the GAUSS {cmd:quantileFit} routine; remaining differences are of
-numerical-convergence order only.
+subcommand's help page). Quantile regressions ({cmd:qadf}, {cmd:fqadf}) are
+computed with the Mata port of the GAUSS {cmd:quantileFit} solver used by tspdlib (a
+Frisch-Newton interior-point linear program: tolerance 1e-4, at most 50
+iterations, step factor 0.9999995, constant as the first regressor), so the
+results are identical to GAUSS. Up to version 1.2.0 {helpb qreg} was used; it
+returns the exact simplex vertex, which is not the point at which GAUSS stops,
+so residual signs, t_n(tau), delta-squared and the critical values differed
+from GAUSS (t_n by up to about 1), and {helpb qreg} could fail for small
+tau - h.
 
 
 {marker examples}{...}

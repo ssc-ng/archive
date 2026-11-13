@@ -1,4 +1,5 @@
 {smcl}
+{* *! version 1.1.0  08Nov2026}{...}
 {* *! version 1.0.0  05Nov2026}{...}
 
 {title:Title}
@@ -573,7 +574,7 @@ health care interventions. {it:Journal of Evaluation in Clinical Practice} 20: 1
 
 {phang}
 Linden, A. 2026. Ratio-of-mediator-probability weighting for causal mediation analysis: 
-estimation, extensions, and practical guidance. Preprint {it:arXiv}.
+estimation, extensions, and practical guidance. Preprint {it:arXiv}. arXiv:2611.13206
 
 {phang}
 Tchetgen Tchetgen, E. J. 2013. Inverse odds ratio-weighted estimation for causal mediation analysis.
@@ -597,7 +598,7 @@ to the research community, like a paper. Please cite it as such: {p_end}
 {p 4 8 2}
 Linden, Ariel. 2026. 
 MMWSMED: Stata module for conducting causal mediation analysis using ratio-of-mediator-probability weighting with parametric or nonparametric weights. 
-Statistical Software Components SXXXXXX, Boston College Department of Economics{p_end}
+Statistical Software Components S460014, Boston College Department of Economics{p_end}
 
 
 

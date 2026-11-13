@@ -1,3 +1,4 @@
+*! 1.1.0 Ariel Linden 08Nov2026	// fixed factor-variable (i.) covariates: lowest non-base level was omitted
 *! 1.0.0 Ariel Linden 05Nov2026
 
 program mmwsmed, eclass
@@ -2596,7 +2597,14 @@ program _mmwsmed_plain, rclass
 	local terms
 	foreach t in `r(varlist)' {
 		if regexm("`t'", "[0-9]+b\.") | regexm("`t'", "o\.") continue
-		local terms `terms' `t'
+		local tt
+		local parts : subinstr local t "#" " ", all
+		foreach p of local parts {
+			if regexm("`p'", "^([0-9]+)\.(.+)$") local p = regexs(1) + "bn." + regexs(2)
+			if "`tt'" == "" local tt `p'
+			else local tt `tt'#`p'
+		}
+		local terms `terms' `tt'
 	}
 	return local terms `terms'
 end

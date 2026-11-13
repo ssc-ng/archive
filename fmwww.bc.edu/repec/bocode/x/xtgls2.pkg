@@ -22,10 +22,11 @@ d KW: heteroskedasticity
 d
 d Requires: Stata version 11
 d
-d Distribution-Date: 20260117
+d Distribution-Date: 20261112
 d
 d Author: Manh Hoang-Ba, Eureka Uni Team, Vietnam
 d Support: email hbmanh9492@@gmail.com
 d
 f xtgls2.ado
 f xtgls2.sthlp
+f xtgls2_p.ado

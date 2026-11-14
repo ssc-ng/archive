@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 0.1.3  2026-07-04}{...}
+{* *! version 0.1.7  2026-11-12}{...}
 {vieweralsosee "[G] graph" "help graph"}{...}
 {vieweralsosee "sparkta2" "help sparkta2"}{...}
 {viewerjumpto "Syntax" "googlechart##syntax"}{...}
@@ -54,9 +54,13 @@ choropleth, or you want bivariate / hexbin maps.
 
 {pstd}
 Colors come from {cmd:scheme()}, which selects among the built-in palettes
-({bf:blues}, {bf:reds}, {bf:viridis}, and others).  One further option,
-{cmd:tx2036style}, applies a fixed house style (Montserrat plus the Texas 2036
-palette) for teams that publish under it; see the option list below.
+({bf:default}, {bf:blues}, {bf:reds}, {bf:viridis}, and others).  If you omit
+it, {cmd:googlechart} uses {bf:default}, Google Charts' standard series colors;
+{cmd:type(geo)} uses {bf:blues} and {cmd:type(divbar)} uses {bf:rdbu}.  The
+{cmd:tx2036style} option and the {bf:tx2036} palette are an {it:internal} house
+style used in the authors' own workflows.  They are off unless you ask for
+them, and you do not need them; see
+{help googlechart##technical:Technical notes}.
 
 
 {marker types}{...}
@@ -91,9 +95,9 @@ palette) for teams that publish under it; see the option list below.
 {synopt :{cmd:over(}{it:varname}{cmd:)}}series / group / color dimension{p_end}
 {synopt :{cmd:level(}{it:varname}{cmd:)}}response level (Likert) for {cmd:divbar}{p_end}
 {synopt :{cmd:levelorder(}{it:string}{cmd:)}}pipe-separated explicit level order{p_end}
-{synopt :{cmd:centerlevel(}{it:string}{cmd:)}}centering level for {cmd:divbar} (e.g. Neutral){p_end}
-{synopt :{cmd:startvar(}{it:varname}{cmd:)}}timeline start date or year{p_end}
-{synopt :{cmd:endvar(}{it:varname}{cmd:)}}timeline end date or year{p_end}
+{synopt :{cmd:centerlevel(}{it:string}{cmd:)}}centering level for {cmd:divbar} (e.g. Neutral); must be one of the {cmd:levelorder()} entries or, without {cmd:levelorder()}, a value of {cmd:level()} in the data, or {cmd:googlechart} stops with an error{p_end}
+{synopt :{cmd:startvar(}{it:varname}{cmd:)}}timeline start: a date ({cmd:%td}, {cmd:%tw}, {cmd:%tm}, {cmd:%tq}, {cmd:%th}), a date-time ({cmd:%tc}, {cmd:%tC}), or a four-digit year{p_end}
+{synopt :{cmd:endvar(}{it:varname}{cmd:)}}timeline end, in the same forms as {cmd:startvar()}{p_end}
 {synopt :{cmd:sizevar(}{it:varname}{cmd:)}}bubble size{p_end}
 {synopt :{cmd:tooltipvars(}{it:varlist}{cmd:)}}extra fields shown in the data table{p_end}
 
@@ -102,8 +106,8 @@ palette) for teams that publish under it; see the option list below.
 {synopt :{cmd:stacked}}stacked instead of grouped{p_end}
 {synopt :{cmd:normalize}}stacked + 100% normalised{p_end}
 {synopt :{cmd:directlabels}}values on bars (column/bar, via annotation role); switches pie/donut slice text from value to percentage{p_end}
-{synopt :{cmd:innerradius(}{it:#}{cmd:)}}donut hole fraction (default 0.45){p_end}
-{synopt :{cmd:legendpos(}{it:string}{cmd:)}}{bf:top} | {bf:right} | {bf:bottom} | {bf:left} -- pie/donut default to {bf:bottom}{p_end}
+{synopt :{cmd:innerradius(}{it:#}{cmd:)}}donut hole fraction, greater than 0 and less than 1 (default 0.45){p_end}
+{synopt :{cmd:legendpos(}{it:string}{cmd:)}}legend placement for {cmd:pie} and {cmd:donut}: {bf:top} | {bf:right} | {bf:bottom} | {bf:left} | {bf:none}; default {bf:bottom}.  Other chart types place their legend themselves.{p_end}
 {synopt :{cmd:bucketsize(}{it:#}{cmd:)}}explicit histogram bucket width (default auto){p_end}
 {synopt :{cmd:labelwrap(}{it:#}|{bf:none}{cmd:)}}divbar row-label wrap width (default 50 chars; {bf:none} disables){p_end}
 {synopt :{cmd:tablesearch}}free-text Search box above {cmd:type(table)} -- substring match across all columns{p_end}
@@ -115,15 +119,14 @@ palette) for teams that publish under it; see the option list below.
 {synopt :{cmd:combodflt(}{it:string}{cmd:)}}default chart type per series for {cmd:combo}{p_end}
 
 {syntab :Brand + interactivity}
-{synopt :{cmd:tx2036style}}Texas 2036 brand + Montserrat font{p_end}
-{synopt :{cmd:scheme(}{it:string}{cmd:)}}color palette: {bf:tx2036} | {bf:blues} | {bf:reds} | {bf:viridis} | etc.{p_end}
+{synopt :{cmd:tx2036style}}{it:internal}: the authors' house style (Montserrat font, house colors); off by default{p_end}
+{synopt :{cmd:scheme(}{it:string}{cmd:)}}color palette: {bf:default} | {bf:blues} | {bf:reds} | {bf:greens} | {bf:oranges} | {bf:purples} | {bf:rdbu} | {bf:rdylgn} | {bf:viridis}; default {bf:default}{p_end}
 {synopt :{cmd:download}}include the Export menu (PNG/SVG){p_end}
 {synopt :{cmd:datatable}}add CSV download + "View data table" toggle{p_end}
 {synopt :{cmd:animate}}IntersectionObserver-gated draw (chart appears + animates when scrolled into view){p_end}
 {synopt :{cmd:downloadpos(}{it:string}{cmd:)}}{bf:side} (default) | {bf:below} | {bf:none}{p_end}
 {marker filters}{...}
-{synopt :{cmd:filters(}{it:varlist}{cmd:)}}build a Google Dashboard with CategoryFilter (categorical) / NumberRangeFilter (numeric) per variable;{p_end}
-{synopt :}takes effect for {cmd:type(column)}, {cmd:type(bar)}, {cmd:type(line)}, {cmd:type(area)}, and {cmd:type(table)} only{p_end}
+{synopt :{cmd:filters(}{it:varlist}{cmd:)}}one filter control per variable in the sidebar: a dropdown for a string or value-labeled variable, a low/high range slider for any other numeric variable; works with every {cmd:type()}; see {help googlechart##filtersdetail:Filters}{p_end}
 
 {syntab :Text + layout}
 {synopt :{cmd:title(}{it:string}{cmd:)}}{p_end}
@@ -142,12 +145,66 @@ palette) for teams that publish under it; see the option list below.
 {synoptline}
 
 
+{marker filtersdetail}{...}
+{title:Filters}
+
+{pstd}
+{cmd:filters(}{it:varlist}{cmd:)} adds one control per variable to the
+sidebar, under {bf:Filters}.  A string variable, or a numeric variable with a
+value label, gets a dropdown: {bf:All} plus each value (strings in sorted
+order; labeled values in the order of their codes).  Any other numeric
+variable gets two sliders, low and high, that step through the values present.
+To get a dropdown for a numeric variable such as {it:year}, give it a value
+label or make a string copy.
+
+{pstd}
+{bf:Every chart type.}  {cmd:filters()} works with all fourteen types.  The
+page keeps the rows {cmd:googlechart} wrote; when a control changes, it keeps
+the rows that pass every control and builds the chart again from those rows.
+So {cmd:over()} series, {cmd:divbar} levels, histogram buckets and pie slices
+are all computed from the filtered rows.  A filter variable does not have to
+be one of the plotted variables.  On {cmd:type(table)} it is not shown as a
+column unless you also list it in {cmd:tooltipvars()}.
+
+{pstd}
+{bf:How controls combine.}  A row must pass every control.  A row whose
+filter value is missing is shown only while that control is at {bf:All} (or
+the full range).  With more than one control, a {bf:Reset filters} button
+returns them all to {bf:All}.  If no row passes, the chart area says so.
+
+{pstd}
+{bf:One value per category.}  Bar, column, line, area and combo charts
+draw one value per category (and per {cmd:over()} series).  If several rows
+share a category, the chart shows the last of them, so choose filters that
+narrow each category to one row.  For example, for data with one row per
+region, sector and year, use {cmd:name(region) over(sector) filters(year)}
+and set the year range to a single year.  {cmd:googlechart} prints a note when
+the plotted rows repeat a {cmd:name()}/{cmd:over()} combination.
+
+{pstd}
+{bf:What else follows the filters.}  The row count under the sidebar reads
+{it:n} {bf:of} {it:N} {bf:rows}.  {bf:Download CSV} and {bf:View data table}
+hold the data behind the chart as it is currently filtered, not all rows; for
+{cmd:type(table)} they hold the rows on screen after the filters and the
+Search box.  PNG and SVG export the chart as drawn.  Series and slice colors
+stay tied to the unfiltered series, so a series keeps its color when others
+are filtered out.  {cmd:animate} applies to the first draw.
+
+{pstd}
+{bf:With tablesearch and time().}  On {cmd:type(table)}, {cmd:filters()} and
+{cmd:tablesearch} work together: the filters narrow the rows, then the Search
+box narrows them further, and the search text is kept when a filter changes.
+On {cmd:type(bubble)} with {cmd:time()}, the Play slider stays above the chart
+and plays through the filtered rows.
+
+
 {marker network}{...}
 {title:Network requirement}
 
 {pstd}
 {bf:Important:} the output HTML requires network access at view time.  The
-file is small (~10-20 KB) because the Google Charts library is fetched from
+file holds the data and the package's own drawing code (about 75 KB before
+the data), but not the Google Charts library itself: that is fetched from
 the CDN at https://www.gstatic.com/charts/loader.js at view time, and the
 per-chart-type packages (corechart, controls, geochart, timeline, ...) are
 fetched lazily after that.  This is a hard requirement of Google's Terms of
@@ -203,9 +260,10 @@ controls panel and renders only the chart card.{p_end}
 {marker examples}{...}
 {title:Examples}
 
-{phang}A runnable do-file exercising every chart type sits at
-{bf:examples/test_googlechart.do} in the package.  Each example below
-expects an open {bf:cwd}; HTML files are written there.{p_end}
+{phang}A runnable do-file exercising every chart type, {bf:test_googlechart.do},
+is in the package's GitHub repository (https://github.com/ericabooth/googlechart-stata-public);
+{cmd:net install} does not copy it.  Each example below writes its HTML file
+to the current working directory.{p_end}
 
 
 {dlgtab:1. Column chart -- mean poverty by region}
@@ -253,7 +311,9 @@ the older layout.{p_end}
 
 {dlgtab:5. Bubble chart -- 3+ variable comparison}
 
-{phang}{cmd}googlechart life_expect poverty_rate, name(county)             ///{p_end}
+{phang}The first variable is drawn on the x axis and the second on the y axis.{p_end}
+
+{phang}{cmd}googlechart poverty_rate life_expect, name(county)             ///{p_end}
 {phang}{cmd}    over(region_name) sizevar(pop_thou)                        ///{p_end}
 {phang}{cmd}    type(bubble) download datatable animate                    ///{p_end}
 {phang}{cmd}    title("Life expectancy vs poverty rate; bubble = pop")     ///{p_end}
@@ -305,10 +365,10 @@ visible while you scroll a long table; that is the default for every
 {phang}{cmd}    title("Texas regions: searchable data table")            ///{p_end}
 {phang}{cmd}    export("09_table.html"){p_end}
 
-{phang}For a dropdown-filtered (Dashboard + CategoryFilter) variant, add
-{cmd:filters(group year)}.  Note that the two do not combine: when
-{cmd:filters()} is given, the table is rendered inside a dashboard and the
-{cmd:tablesearch} box is not built.  Choose dropdowns or the search box.{p_end}
+{phang}To add sidebar filters, add for example {cmd:filters(region_n urban)}.
+They combine with {cmd:tablesearch}: the filters narrow the rows first, and
+the Search box searches within what they keep.  See
+{help googlechart##filtersdetail:Filters}.{p_end}
 
 
 {dlgtab:10. Diverging stacked bar (Pew-style Likert)}
@@ -349,6 +409,48 @@ visible while you scroll a long table; that is the default for every
 {synopt :{cmd:r(export)}}path of the HTML file written{p_end}
 {synopt :{cmd:r(type)}}chart type rendered{p_end}
 {p2colreset}{...}
+
+
+{marker technical}{...}
+{title:Technical notes}
+
+{pstd}
+{bf:House style.}  {cmd:tx2036style} and {cmd:scheme(tx2036)} apply the house
+style the authors use at Texas 2036.  They are internal conveniences, off
+unless you ask for them.  With {cmd:tx2036style}, the page asks Google Fonts for
+the Montserrat font when it opens; if that font cannot load (offline or
+blocked), the browser uses a system font and the chart still draws.  No style
+files are needed on your computer, and nothing about the house style can stop
+a chart that does not ask for it.
+
+{pstd}
+{bf:Mata function.}  To copy the chart data and the drawing code into the page
+without running an operating-system command, {cmd:googlechart} defines one
+Mata function, {cmd:_googlechart_appendbytes()}, in the file
+{cmd:googlechart_appendfile.ado}.  Stata keeps a function defined in an
+ado-file private to that file, so it does not replace, and is not replaced by,
+a Mata function of the same name from another package or from your own
+session, and {cmd:mata clear} does not remove it.  The only name that matters
+is the file name: if another package shipped its own
+{cmd:googlechart_appendfile.ado} earlier on your {help adopath}, Stata would run
+that file instead.  {cmd:which googlechart_appendfile} shows which copy Stata
+uses.
+
+{pstd}
+{bf:Numbers and text in the page.}  Numbers are written at full precision: a
+{cmd:float} variable at the precision a float holds (so 14.2 is written as
+14.2), and other numeric types so the value reads back exactly (for example,
+an ID of 123456790 or a total of 2.4e12 is written in full).  The page always
+uses a "." decimal point, whatever {cmd:set dp} says.  String values, value
+labels and variable labels are written as they are: {bf:$} and {bf:`} in the data are
+not treated as macros, and quotes, line breaks, tabs and {bf:</} are escaped
+so the page still draws.  In {cmd:title()}, {bf:<} and {bf:>} are shown as
+text; {cmd:subtitle()} and {cmd:note()} may contain HTML markup.
+
+{pstd}
+{bf:Paths.}  Give {cmd:export()} a full path.  {cmd:googlechart} expands a
+leading {bf:~} itself, but operating systems and Stata versions treat {bf:~}
+differently, so a full path is the safe choice.
 
 
 {title:Author and acknowledgements}

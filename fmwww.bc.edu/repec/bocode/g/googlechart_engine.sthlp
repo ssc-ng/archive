@@ -1,6 +1,7 @@
 /* googlechart_engine.js -- Google Charts (Visualization API) renderer for the
    `googlechart` Stata package.  Loads the Google Charts CDN, applies a
-   Texas 2036 brand theme, and dispatches per type() to a small per-chart
+   neutral theme (the authors' house style only when tx2036style is set),
+   and dispatches per type() to a small per-chart
    renderer.
 
    Designed as a SIBLING (not a replacement) for sparkta2.  Trade-off
@@ -8,8 +9,8 @@
      - sparkta2 ships d3 + topojson inline; works offline.
      - googlechart uses Google Charts loader.js + per-package fetches
        from gstatic.com; CDN-only by Google ToS, requires network at view.
-       In return: native filter controls (CategoryFilter, ChartRangeFilter,
-       NumberRangeFilter), 14 chart types, polished default tooltips.
+       In return: 14 chart types, polished default tooltips, filter
+       controls on every type.
 
    The engine reads `window.__GOOGLECHART__` (emitted by
    googlechart_writehtml.ado) and renders into #chart.
@@ -27,16 +28,23 @@
                        container scrolls into view (deferred-draw pattern,
                        not d3-transition pattern)
      - downloadpos:    side (default) | below | none
-     - filters():      builds a google.visualization.Dashboard with
-                       CategoryFilter / NumberRangeFilter per filter var
+     - filters():      one control per filter variable (a dropdown for
+                       string / value-labeled variables, a two-thumb range
+                       slider for other numeric variables), built from the
+                       raw rows.  On change the engine filters the RAW rows
+                       and re-runs the chart type's own renderer, so any
+                       pivoting (over(), divbar levels, ...) happens after
+                       filtering.  Works for every type().
 */
 (function () {
   "use strict";
 
   // ---- Brand palettes ------------------------------------------------------
-  // tx2036 = Texas 2036 brand cycle.  Sequential / diverging palettes
-  // mirror sparkta2's scheme names so existing users find them familiar.
+  // default = Google Charts' standard series colors (used when scheme() is
+  // omitted or unknown).  tx2036 = the authors' house palette, opt-in only.
+  // Sequential / diverging palettes mirror sparkta2's scheme names.
   var PALETTES = {
+    "default": ["#3366cc","#dc3912","#ff9900","#109618","#990099","#0099c6","#dd4477","#66aa00","#b82e2e","#316395"],
     tx2036:   ["#1B2D55","#D44500","#2B6CB0","#6C7A8D","#7A9D54","#A67B36","#9C5BA5","#3F8A8C","#C0392B","#F1A208"],
     blues:    ["#deebf7","#9ecae1","#3182bd","#08519c","#08306b","#2171b5","#4292c6","#6baed6","#9ecae1","#c6dbef"],
     reds:     ["#fee5d9","#fcbba1","#fc9272","#fb6a4a","#ef3b2c","#cb181d","#a50f15","#67000d"],
@@ -71,25 +79,30 @@
   }
   function paletteFor(meta) {
     var name = (meta.scheme || (meta.tx2036style ? "tx2036" : "blues")).toLowerCase();
-    return PALETTES[name] || PALETTES.tx2036;
+    return PALETTES[name] || PALETTES["default"];
   }
+  // Text colors: neutral by default; the house navy/slate only with
+  // tx2036style.
+  function inkColor(meta)   { return meta && meta.tx2036style ? "#1B2D55" : "#202124"; }
+  function mutedColor(meta) { return meta && meta.tx2036style ? "#6C7A8D" : "#5f6368"; }
+
   function brandOptions(meta) {
     // Common chart options used as the base; per-type renderers spread their
     // own overrides on top.
-    var fontName = meta.tx2036style ? "Montserrat" : "Roboto, Arial, sans-serif";
+    var fontName = meta.tx2036style ? "Montserrat, Roboto, Arial, sans-serif" : "Roboto, Arial, sans-serif";
     return {
       colors: paletteFor(meta),
       fontName: fontName,
       backgroundColor: "transparent",
-      titleTextStyle: { color: "#1B2D55", bold: true, fontName: fontName, fontSize: 16 },
+      titleTextStyle: { color: inkColor(meta), bold: true, fontName: fontName, fontSize: 16 },
       legend: { position: "bottom", alignment: "center",
-                textStyle: { color: "#6C7A8D", fontName: fontName, fontSize: 11 } },
+                textStyle: { color: mutedColor(meta), fontName: fontName, fontSize: 11 } },
       tooltip: { textStyle: { fontName: fontName, fontSize: 12 } },
-      hAxis: { textStyle: { color: "#6C7A8D", fontName: fontName, fontSize: 11 },
-               titleTextStyle: { color: "#1B2D55", fontName: fontName, fontSize: 12, italic: false },
+      hAxis: { textStyle: { color: mutedColor(meta), fontName: fontName, fontSize: 11 },
+               titleTextStyle: { color: inkColor(meta), fontName: fontName, fontSize: 12, italic: false },
                gridlines: { color: "#E4E7EB", count: -1 } },
-      vAxis: { textStyle: { color: "#6C7A8D", fontName: fontName, fontSize: 11 },
-               titleTextStyle: { color: "#1B2D55", fontName: fontName, fontSize: 12, italic: false },
+      vAxis: { textStyle: { color: mutedColor(meta), fontName: fontName, fontSize: 11 },
+               titleTextStyle: { color: inkColor(meta), fontName: fontName, fontSize: 12, italic: false },
                gridlines: { color: "#E4E7EB", count: -1 } },
       chartArea: { left: 80, top: 50, width: "75%", height: "70%" }
     };
@@ -136,10 +149,26 @@
     return { xs: xs, series: series, rows: out };
   }
 
+  // Series colors keyed to the UNFILTERED series order, so a series keeps
+  // its color when a filter removes other series.  Returns a Google
+  // `series'/`slices' option object ({0:{color},1:{color},...}).
+  function stableColors(meta, allKeys, keys, colors) {
+    var pal = colors || paletteFor(meta);
+    var allStr = allKeys.map(function (k) { return String(k); });
+    var out = {};
+    keys.forEach(function (k, i) {
+      var j = allStr.indexOf(String(k));
+      out[i] = { color: pal[(j < 0 ? i : j) % pal.length] };
+    });
+    return out;
+  }
+
   // ---- Module load ---------------------------------------------------------
   function packagesNeeded(type, hasFilters, hasTime) {
     var base = ["corechart"];
-    if (type === "table")     return hasFilters ? ["table","controls"] : ["table"];
+    // filters() no longer uses Google's controls package (the engine draws
+    // its own controls), so only bubble + time() needs it.
+    if (type === "table")     return ["table"];
     if (type === "geo")       return ["geochart"];
     if (type === "timeline")  base = ["timeline"];
     if (type === "sankey")    base = ["sankey"];
@@ -148,7 +177,7 @@
     if (type === "gauge")     base = ["gauge"];
     // Bubble with a time dimension also drives a Dashboard + ControlWrapper
     // for the Play button, so it needs controls too.
-    if (hasFilters || (type === "bubble" && hasTime)) base.push("controls");
+    if (type === "bubble" && hasTime) base.push("controls");
     return base;
   }
 
@@ -173,39 +202,86 @@
     var filterDefs = cfg.filters || [];
     var tipvars = cfg.tooltipvars || [];
 
+    // `state' holds everything a filter change needs: the raw rows, the
+    // filter definitions + current selections, and the live chart context.
+    // Exposed read-only-by-convention as window.__GOOGLECHART_STATE__ so
+    // tests can check what was drawn.
+    var state = { meta: meta, allData: data, filterDefs: filterDefs,
+                  tipvars: tipvars, sel: [], ctx: null, rows: data };
+    window.__GOOGLECHART_STATE__ = state;
+
     // Build controls panel (Export + Filters), regardless of chart type.
     buildControlsPanel(meta, data, tipvars, filterDefs);
+    if (filterDefs.length) buildFilterControls(state);
 
     // The actual chart instance + DataTable are constructed inside the
     // type-specific renderer.  Each renderer returns { chart, dataTable,
-    // dashboard?, redraw } so the export menu can call back into them.
-    var ctx = renderByType(meta, data, filterDefs);
-    if (!ctx) return;
+    // dashboard?, draw } so the export menu can call back into them.
+    state.ctx = renderRows(state);
+    if (!state.ctx) return;
 
-    // Hook the export-menu actions up to the just-built chart.
-    wireExportMenu(meta, ctx, data, tipvars);
+    // Hook the export-menu actions up to whatever chart is current (a
+    // filter change replaces state.ctx).
+    wireExportMenu(meta, state, tipvars);
 
     // IntersectionObserver-gated initial draw.  Sparkta2 fades in elements
     // that already exist; Google Charts has to defer the .draw() itself.
-    setupAnimateOnView(meta, ctx);
+    setupAnimateOnView(meta, { draw: function () { if (state.ctx) state.ctx.draw(); } });
+  }
+
+  // Apply the current filter selections to the raw rows, then build the
+  // chart type's DataTable from the surviving rows through its own
+  // renderer.  Returns the renderer's context (not yet drawn).
+  function renderRows(state) {
+    var meta = state.meta;
+    var rows = applyFilters(state);
+    state.rows = rows;
+    var prev = state.ctx;
+    if (prev) {
+      if (prev.chart && typeof prev.chart.clearChart === "function") {
+        try { prev.chart.clearChart(); } catch (e) {}
+      }
+      var old = document.getElementById("chart");
+      if (old) old.innerHTML = "";
+    }
+    var mb = document.getElementById("metabox");
+    if (mb) {
+      mb.textContent = (rows.length === state.allData.length)
+        ? rows.length + " rows"
+        : rows.length + " of " + state.allData.length + " rows";
+    }
+    if (!rows.length) {
+      var el = document.getElementById("chart");
+      var dt0 = new google.visualization.DataTable();
+      return { type: "empty", className: "none", dataTable: dt0, opts: {},
+               draw: function () {
+                 if (el) el.innerHTML = "<div class='gc-empty' style='padding:24px;color:"
+                   + mutedColor(meta) + ";font:14px sans-serif'>No rows match the current filters.</div>";
+               } };
+    }
+    return renderByType(meta, rows, state.allData);
   }
 
   // ---- Dispatch by chart type ---------------------------------------------
-  function renderByType(meta, data, filterDefs) {
+  // `allData' is the unfiltered row set: renderers use it only for things
+  // that must not change when a filter narrows the rows (series colors,
+  // table columns).
+  function renderByType(meta, data, allData) {
     var type = (meta.type || "column").toLowerCase();
+    allData = allData || data;
     switch (type) {
-      case "column":     return renderXYChart(meta, data, "ColumnChart", filterDefs);
-      case "bar":        return renderXYChart(meta, data, "BarChart",    filterDefs);
-      case "line":       return renderXYChart(meta, data, "LineChart",   filterDefs);
-      case "area":       return renderXYChart(meta, data, "AreaChart",   filterDefs);
-      case "combo":      return renderCombo(meta, data, filterDefs);
-      case "scatter":    return renderScatter(meta, data);
-      case "pie":        return renderPie(meta, data, false);
-      case "donut":      return renderPie(meta, data, true);
+      case "column":     return renderXYChart(meta, data, "ColumnChart", allData);
+      case "bar":        return renderXYChart(meta, data, "BarChart",    allData);
+      case "line":       return renderXYChart(meta, data, "LineChart",   allData);
+      case "area":       return renderXYChart(meta, data, "AreaChart",   allData);
+      case "combo":      return renderCombo(meta, data, allData);
+      case "scatter":    return renderScatter(meta, data, allData);
+      case "pie":        return renderPie(meta, data, false, allData);
+      case "donut":      return renderPie(meta, data, true, allData);
       case "bubble":     return renderBubble(meta, data);
       case "geo":        return renderGeo(meta, data);
       case "timeline":   return renderTimeline(meta, data);
-      case "table":      return renderTable(meta, data, filterDefs);
+      case "table":      return renderTable(meta, data, allData);
       case "histogram":  return renderHistogram(meta, data);
       case "divbar":     return renderDivbar(meta, data);
       default:
@@ -225,7 +301,7 @@
   //   column / bar / line / area / scatter share enough plumbing
   //   that one function handles all five with class-name swap.
   // ============================================================
-  function renderXYChart(meta, data, className, filterDefs) {
+  function renderXYChart(meta, data, className, allData) {
     var W = +meta.width  || 980;
     var H = +meta.height || 560;
     var xKey  = "name";      // category / time
@@ -278,6 +354,9 @@
         baseline: 0
       },
       legend: { position: sKey ? "bottom" : "none" },
+      series: sKey
+        ? stableColors(meta, uniqueOrdered((allData || data).map(function (r) { return r.g; })), wide.series)
+        : {},
       isStacked: meta.stacked ? (meta.normalize ? "percent" : true) : false,
       animation: { startup: !!meta.animate, duration: 900, easing: "out" },
       // Make line and area charts readable -- thicker stroke + visible point markers
@@ -295,8 +374,8 @@
         // stays offset from the bar end.
         alwaysOutside: true,
         textStyle: {
-          fontName: meta.tx2036style ? "Montserrat" : undefined,
-          fontSize: 14, bold: true, color: "#1B2D55", auraColor: "none"
+          fontName: meta.tx2036style ? "Montserrat, Roboto, Arial, sans-serif" : undefined,
+          fontSize: 14, bold: true, color: inkColor(meta), auraColor: "none"
         },
         stem: { color: "transparent", length: 12 },
         highContrast: false,
@@ -309,22 +388,21 @@
       opts.hAxis.title = meta.ylabel || opts.hAxis.title;
       opts.vAxis.title = meta.xlabel || opts.vAxis.title;
     }
+    // Bars, columns and areas show a value by their length or height, so
+    // the value axis has to include zero: Google's automatic scaling
+    // otherwise starts the axis near the smallest value, and a bar for 18.8
+    // is drawn many times as long as a bar for 10.5.  minValue and maxValue
+    // only extend the automatic range, so data on both sides of zero are
+    // unaffected.  Lines and scatters keep the automatic range.
+    if (className === "BarChart" || className === "ColumnChart" || className === "AreaChart") {
+      var valueAxis = (className === "BarChart") ? opts.hAxis : opts.vAxis;
+      valueAxis.minValue = 0;
+      valueAxis.maxValue = 0;
+      valueAxis.baseline = 0;
+    }
 
     var container = document.getElementById("chart");
     var chart = new google.visualization[className](container);
-
-    // If filters are requested, wire a Dashboard so the chart redraws
-    // whenever filter state changes.
-    var dashboard = null, chartWrapper = null;
-    if (filterDefs && filterDefs.length) {
-      dashboard = buildDashboardWithFilters(meta, dt, filterDefs, className, opts);
-      // dashboard.draw is the entry point in dashboard mode; the chart
-      // instance is owned by the wrapper.
-      return {
-        type: "dashboard", className: className, dashboard: dashboard, dataTable: dt, opts: opts,
-        draw: function () { dashboard.draw(dt); }
-      };
-    }
     return {
       type: "chart", className: className, chart: chart, dataTable: dt, opts: opts,
       draw: function () { chart.draw(drawSource, opts); }
@@ -336,7 +414,7 @@
   //   Same as XY but with per-series chartType overrides via
   //   meta.combo_types ("line|bars|area").
   // ============================================================
-  function renderCombo(meta, data, filterDefs) {
+  function renderCombo(meta, data, allData) {
     var W = +meta.width  || 980;
     var H = +meta.height || 560;
     var wide = longToWide(data, "name", "value", meta.over ? "g" : null);
@@ -349,12 +427,16 @@
     var defaultType = (meta.combo_default || "bars").toLowerCase();
     var perSeries = (meta.combo_types || "").split("|").filter(Boolean);
     var seriesOpts = {};
+    var comboColors = meta.over
+      ? stableColors(meta, uniqueOrdered((allData || data).map(function (r) { return r.g; })), wide.series)
+      : {};
     wide.series.forEach(function (s, i) {
       var t = perSeries[i] || defaultType;
       // For line-type combo series, default to thicker stroke + visible
       // point markers so the line stands apart from the bars and isn't
       // lost against the chart background.
       var sOpt = { type: t };
+      if (comboColors[i]) sOpt.color = comboColors[i].color;
       if (t === "line" || t === "area") {
         sOpt.lineWidth = 3;
         sOpt.pointSize = 6;
@@ -383,7 +465,7 @@
   // ============================================================
   //                       PIE / DONUT
   // ============================================================
-  function renderPie(meta, data, isDonut) {
+  function renderPie(meta, data, isDonut, allData) {
     var dt = new google.visualization.DataTable();
     dt.addColumn("string", meta.namelabel || meta.name || "slice");
     dt.addColumn("number", meta.valuelabel || "value");
@@ -412,7 +494,10 @@
                    width: "88%", height: legendPos === "bottom" ? "70%" : "78%" },
       pieSliceText: meta.directlabels ? "percentage" : "value",
       pieSliceTextStyle: { fontSize: 12, color: "#FFFFFF" },
-      sliceVisibilityThreshold: 0.005
+      sliceVisibilityThreshold: 0.005,
+      slices: stableColors(meta,
+                uniqueOrdered((allData || data).map(function (r) { return String(r.name); })),
+                data.map(function (r) { return String(r.name); }))
     });
     var container = document.getElementById("chart");
     var chart = new google.visualization.PieChart(container);
@@ -447,7 +532,7 @@
   //   Each row is one point.  When `g' (series) is present, reshape so
   //   each series gets its own numeric Y column.
   // ============================================================
-  function renderScatter(meta, data) {
+  function renderScatter(meta, data, allData) {
     var hasSeries = data.length > 0 && data.some(function (r) { return r.g != null; });
     var dt = new google.visualization.DataTable();
     dt.addColumn("number", meta.xlabel || "x");
@@ -474,6 +559,11 @@
       hAxis: { title: meta.xlabel || "" },
       vAxis: { title: meta.ylabel || "" },
       legend: { position: hasSeries ? "bottom" : "none" },
+      series: hasSeries
+        ? stableColors(meta,
+            uniqueOrdered((allData || data).map(function (r) { return String(r.g || ""); })),
+            uniqueOrdered(data.map(function (r) { return String(r.g || ""); })))
+        : {},
       pointSize: 8,
       animation: { startup: !!meta.animate, duration: 900, easing: "out" }
     });
@@ -537,9 +627,9 @@
       hAxis: { title: meta.xlabel || "", viewWindow: xw },
       vAxis: { title: meta.ylabel || "", viewWindow: yw },
       bubble: { textStyle: { auraColor: "transparent",
-                              color: "#1B2D55", fontName: meta.tx2036style ? "Montserrat" : "sans-serif",
+                              color: inkColor(meta), fontName: meta.tx2036style ? "Montserrat, Roboto, Arial, sans-serif" : "sans-serif",
                               fontSize: 10 },
-                opacity: 0.78, stroke: "#1B2D55" },
+                opacity: 0.78, stroke: inkColor(meta) },
       sizeAxis: { minSize: 3, maxSize: 36 },
       legend: { position: "right" }
     });
@@ -559,6 +649,10 @@
       var times = uniqueOrdered(data.map(function (r) { return +r.t; }))
                     .filter(isFinite).sort(function (a, b) { return a - b; });
       var tMin = times[0], tMax = times[times.length - 1];
+      // A filters() change re-runs this renderer: stop the previous Play
+      // loop and keep the time the reader had reached when it still exists.
+      if (meta._gcPlayIv) { clearInterval(meta._gcPlayIv); meta._gcPlayIv = null; }
+      var tStart = (meta._gcTime != null && times.indexOf(+meta._gcTime) >= 0) ? +meta._gcTime : tMin;
 
       var dashRoot = document.getElementById("dashboard");
       if (!dashRoot) {
@@ -593,7 +687,10 @@
           filterColumnLabel: meta.time || "time",
           ui: { format: { pattern: "####" }, step: 1, labelStacking: "vertical" }
         },
-        state: { lowValue: tMin, highValue: tMin }
+        state: { lowValue: tStart, highValue: tStart }
+      });
+      google.visualization.events.addListener(tFilter, "statechange", function () {
+        meta._gcTime = tFilter.getState().lowValue;
       });
       var hideTimeCol = dt.getNumberOfColumns() - 1;
       var visibleCols = [];
@@ -609,7 +706,7 @@
       var playing = false, iv = null;
       playBtn.onclick = function () {
         if (playing) {
-          clearInterval(iv); playing = false; playBtn.textContent = "▶ Play"; return;
+          clearInterval(iv); meta._gcPlayIv = null; playing = false; playBtn.textContent = "▶ Play"; return;
         }
         playing = true; playBtn.textContent = "⏸ Pause";
         var idx = times.indexOf(+tFilter.getState().lowValue);
@@ -617,15 +714,18 @@
         iv = setInterval(function () {
           idx = (idx + 1) % times.length;
           tFilter.setState({ lowValue: times[idx], highValue: times[idx] });
+          meta._gcTime = times[idx];
           tFilter.draw();
           if (idx === times.length - 1) {
-            clearInterval(iv); playing = false; playBtn.textContent = "▶ Play";
+            clearInterval(iv); meta._gcPlayIv = null; playing = false; playBtn.textContent = "▶ Play";
           }
         }, 900);
+        meta._gcPlayIv = iv;
       };
 
       return {
-        type: "dashboard", className: "BubbleChart", dashboard: dash, dataTable: dt, opts: opts,
+        type: "dashboard", className: "BubbleChart", dashboard: dash, chartWrapper: chartWrapper,
+        dataTable: dt, opts: opts,
         draw: function () { dash.draw(dt); }
       };
     }
@@ -706,8 +806,8 @@
       width: +meta.width || 980, height: +meta.height || 560,
       backgroundColor: "transparent",
       timeline: { showRowLabels: true, colorByRowLabel: false,
-                  rowLabelStyle: { fontName: meta.tx2036style ? "Montserrat" : "sans-serif", fontSize: 12, color: "#1B2D55" },
-                  barLabelStyle: { fontName: meta.tx2036style ? "Montserrat" : "sans-serif", fontSize: 11 } }
+                  rowLabelStyle: { fontName: meta.tx2036style ? "Montserrat, Roboto, Arial, sans-serif" : "sans-serif", fontSize: 12, color: inkColor(meta) },
+                  barLabelStyle: { fontName: meta.tx2036style ? "Montserrat, Roboto, Arial, sans-serif" : "sans-serif", fontSize: 11 } }
     });
     var container = document.getElementById("chart");
     var chart = new google.visualization.Timeline(container);
@@ -735,10 +835,10 @@
   //   Pure tabular view; no chart.  Inherits the dashboard +
   //   filter pattern so users can build filterable spreadsheets.
   // ============================================================
-  function renderTable(meta, data, filterDefs) {
-    // Build a wide DataTable from the row payload.  If `over` is set,
-    // pivot to wide; otherwise show every row's full record.
-    var cols = inferTableColumns(data);
+  function renderTable(meta, data, allData) {
+    // Build a wide DataTable from the row payload.  Columns come from the
+    // UNFILTERED rows so a filters() change never adds or drops a column.
+    var cols = inferTableColumns(allData || data);
     var dt = new google.visualization.DataTable();
     cols.forEach(function (c) { dt.addColumn(c.type, c.label); });
     data.forEach(function (r) {
@@ -751,38 +851,32 @@
     });
 
     // Wrap the chart container so we can attach a search overlay + a
-    // bordered card around the rendered table.  We only build the wrap
-    // when there are no dashboard filters -- the dashboard owns #chart
-    // directly via ChartWrapper(containerId:"chart") and wouldn't see
-    // the wrapper's interior tableHost.
-    var hasDashFilters = !!(filterDefs && filterDefs.length);
+    // bordered card around the rendered table.  A filters() change calls
+    // this renderer again with the filtered rows; the Search text is kept
+    // (meta._gcSearch) and re-applied to the new rows, so the two combine:
+    // filters() narrows the rows first, then Search narrows further.
     var container = document.getElementById("chart");
-    var wrap = null;
-    var tableHost = container;
-    var searchHost = null;
-    var countHost = null;
-    if (!hasDashFilters) {
-      container.innerHTML = "";
-      wrap = document.createElement("div");
-      wrap.className = "gc-table-wrap";
-      if (meta.table_search) {
-        searchHost = document.createElement("div");
-        searchHost.className = "gc-table-search";
-        var inp = document.createElement("input");
-        inp.type = "search";
-        inp.placeholder = "Search rows…";
-        inp.setAttribute("aria-label", "Search the table");
-        countHost = document.createElement("span");
-        countHost.className = "count";
-        countHost.textContent = data.length + " rows";
-        searchHost.appendChild(inp);
-        searchHost.appendChild(countHost);
-        wrap.appendChild(searchHost);
-      }
-      tableHost = document.createElement("div");
-      wrap.appendChild(tableHost);
-      container.appendChild(wrap);
+    container.innerHTML = "";
+    var wrap = document.createElement("div");
+    wrap.className = "gc-table-wrap";
+    var searchHost = null, countHost = null, inputEl = null;
+    if (meta.table_search) {
+      searchHost = document.createElement("div");
+      searchHost.className = "gc-table-search";
+      inputEl = document.createElement("input");
+      inputEl.type = "search";
+      inputEl.placeholder = "Search rows…";
+      inputEl.setAttribute("aria-label", "Search the table");
+      inputEl.value = meta._gcSearch || "";
+      countHost = document.createElement("span");
+      countHost.className = "count";
+      searchHost.appendChild(inputEl);
+      searchHost.appendChild(countHost);
+      wrap.appendChild(searchHost);
     }
+    var tableHost = document.createElement("div");
+    wrap.appendChild(tableHost);
+    container.appendChild(wrap);
 
     var numericCols = [];
     cols.forEach(function (c, i) { if (c.type === "number") numericCols.push(i); });
@@ -830,52 +924,42 @@
     google.visualization.events.addListener(chart, "sort",  function () { setTimeout(classifyNumericCells, 0); });
     google.visualization.events.addListener(chart, "page",  function () { setTimeout(classifyNumericCells, 0); });
 
-    // Client-side search: filter the underlying DataView on each
-    // keystroke.  We rebuild a DataView with setRows() so pagination +
-    // sort still work on the filtered subset.
-    if (searchHost) {
-      var inputEl = searchHost.querySelector("input");
-      var allRows = [];
-      for (var i = 0; i < dt.getNumberOfRows(); i++) allRows.push(i);
-      var view = new google.visualization.DataView(dt);
-      view.setRows(allRows);
+    // Client-side search: a DataView over the (already filtered) rows,
+    // narrowed with setRows() so pagination + sort still work.
+    var allRows = [];
+    for (var i = 0; i < dt.getNumberOfRows(); i++) allRows.push(i);
+    var view = new google.visualization.DataView(dt);
+    function applySearch() {
+      var q = inputEl ? inputEl.value.trim().toLowerCase() : "";
+      var matched = q === "" ? allRows.slice() : allRows.filter(function (rowIdx) {
+        for (var ci = 0; ci < cols.length; ci++) {
+          var v = dt.getValue(rowIdx, ci);
+          if (v != null && String(v).toLowerCase().indexOf(q) >= 0) return true;
+        }
+        return false;
+      });
+      view.setRows(matched);
+      if (countHost) {
+        countHost.textContent = matched.length + (matched.length === 1 ? " row" : " rows") +
+                                (q ? " (filtered from " + allRows.length + ")" : "");
+      }
+    }
+    applySearch();
+    if (inputEl) {
       var debounce = null;
       inputEl.addEventListener("input", function () {
         clearTimeout(debounce);
         debounce = setTimeout(function () {
-          var q = inputEl.value.trim().toLowerCase();
-          var matched = q === "" ? allRows.slice() : allRows.filter(function (rowIdx) {
-            for (var ci = 0; ci < cols.length; ci++) {
-              var v = dt.getValue(rowIdx, ci);
-              if (v != null && String(v).toLowerCase().indexOf(q) >= 0) return true;
-            }
-            return false;
-          });
-          view.setRows(matched);
-          countHost.textContent = matched.length + (matched.length === 1 ? " row" : " rows") +
-                                   (q ? " (filtered from " + allRows.length + ")" : "");
+          meta._gcSearch = inputEl.value;
+          applySearch();
           chart.draw(view, opts);
         }, 120);
       });
-      // First draw uses the view so the chart and the view stay coupled.
-      if (filterDefs && filterDefs.length) {
-        // Dashboard mode below owns the draw; the search overlay coexists
-        // with the dashboard's filters (search refines the view further).
-        var dashboard = buildDashboardWithFilters(meta, dt, filterDefs, "Table", opts);
-        return { type: "dashboard", className: "Table", dashboard: dashboard, dataTable: dt, opts: opts,
-                 draw: function () { dashboard.draw(dt); } };
-      }
-      return { type: "chart", className: "Table", chart: chart, dataTable: dt, opts: opts,
-               draw: function () { chart.draw(view, opts); } };
-    }
-
-    if (filterDefs && filterDefs.length) {
-      var dashboard2 = buildDashboardWithFilters(meta, dt, filterDefs, "Table", opts);
-      return { type: "dashboard", className: "Table", dashboard: dashboard2, dataTable: dt, opts: opts,
-               draw: function () { dashboard2.draw(dt); } };
     }
     return { type: "chart", className: "Table", chart: chart, dataTable: dt, opts: opts,
-             draw: function () { chart.draw(dt, opts); } };
+             // CSV / View data table export what is shown: filters + Search.
+             exportTable: function () { return view.toDataTable(); },
+             draw: function () { chart.draw(view, opts); } };
   }
   function inferTableColumns(data) {
     if (!data.length) return [];
@@ -889,7 +973,9 @@
     });
     // Filter out the placeholder `_' field the Stata wrapper writes so
     // type(table) rows have valid JSON when no varlist is supplied.
-    keys = keys.filter(function (k) { return k !== "_"; });
+    // Also drop the filters() fields (f__VAR): they exist only so the
+    // engine can filter rows.  List a variable in tooltipvars() to show it.
+    keys = keys.filter(function (k) { return k !== "_" && k.indexOf("f__") !== 0; });
     return keys.map(function (k) {
       // Tooltip-prefixed columns get a cleaner label
       var label = k;
@@ -1096,61 +1182,164 @@
   }
 
   // ============================================================
-  //                   DASHBOARD + FILTERS
+  //                         FILTERS
+  //   One control per filters() variable, built from the raw rows'
+  //   f__VAR field:
+  //     categorical (string, or numeric with a value label) -> <select>
+  //       with "All" + each value (order: the levels list the Stata side
+  //       wrote, then any other value seen);
+  //     numeric -> two range sliders (low / high) that step through the
+  //       distinct values present.
+  //   A row passes when it passes every active control.  A control left
+  //   at "All" / the full range is inactive and keeps rows whose value is
+  //   missing.  On change: re-filter the raw rows and re-run the chart
+  //   type's renderer (renderRows), then draw.
   // ============================================================
-  function buildDashboardWithFilters(meta, dt, filterDefs, chartTypeName, opts) {
-    var dashRoot = document.getElementById("dashboard");
-    if (!dashRoot) {
-      // Create one inline if writehtml didn't allocate it.
-      dashRoot = document.createElement("div"); dashRoot.id = "dashboard";
-      document.getElementById("chart").parentNode.insertBefore(dashRoot, document.getElementById("chart"));
-    }
-    var dashboard = new google.visualization.Dashboard(dashRoot);
+  function filterKey(f) { return "f__" + f.var; }
 
-    // Filter container
-    var filterHost = document.getElementById("gc-filters");
-    if (!filterHost) {
-      filterHost = document.createElement("div"); filterHost.id = "gc-filters";
-      filterHost.className = "gc-filters";
+  function buildFilterControls(state) {
+    var host = document.getElementById("gc-filter-controls");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "gc-filter-controls"; host.className = "gc-filter-controls";
       var chartEl = document.getElementById("chart");
-      chartEl.parentNode.insertBefore(filterHost, chartEl);
+      chartEl.parentNode.insertBefore(host, chartEl);
     }
-    filterHost.innerHTML = "";
-
-    var ctrls = filterDefs.map(function (f, i) {
-      var slot = document.createElement("div");
-      slot.id = "gc-filter-" + i;
-      slot.className = "gc-filter-slot";
+    host.innerHTML = "";
+    state.filterDefs.forEach(function (f, i) {
+      var key = filterKey(f);
+      var present = state.allData.map(function (r) { return r[key]; })
+                         .filter(function (v) { return v != null && v !== ""; });
+      var id = "gc-filter-" + i;
       var label = document.createElement("label");
       label.textContent = f.label || f.var;
-      label.htmlFor = slot.id;
-      filterHost.appendChild(label);
-      filterHost.appendChild(slot);
-      var controlType = f.numeric ? "NumberRangeFilter" : "CategoryFilter";
-      var ui = f.numeric
-        ? { labelStacking: "vertical" }
-        : { allowMultiple: f.allowMultiple !== false,
-            allowTyping: false,
-            labelStacking: "vertical",
-            caption: "All",
-            selectedValuesLayout: "belowStacked" };
-      return new google.visualization.ControlWrapper({
-        controlType: controlType,
-        containerId: slot.id,
-        options: {
-          filterColumnLabel: f.label || f.var,
-          ui: ui
-        }
-      });
-    });
+      label.htmlFor = id;
+      host.appendChild(label);
 
-    var chartWrapper = new google.visualization.ChartWrapper({
-      chartType: chartTypeName,
-      containerId: "chart",
-      options: opts
+      if (f.numeric) {
+        var vals = uniqueOrdered(present.map(function (v) { return +v; }))
+                     .filter(isFinite).sort(function (a, b) { return a - b; });
+        var sel = { kind: "range", key: key, vals: vals, lo: 0, hi: Math.max(vals.length - 1, 0) };
+        state.sel[i] = sel;
+        var box = document.createElement("div");
+        box.className = "gc-range"; box.id = id;
+        var readout = document.createElement("div");
+        readout.className = "gc-range-readout";
+        function mk(which) {
+          var inp = document.createElement("input");
+          inp.type = "range"; inp.min = "0"; inp.max = String(sel.hi); inp.step = "1";
+          inp.value = String(which === "lo" ? 0 : sel.hi);
+          inp.className = "gc-range-" + which;
+          inp.setAttribute("aria-label", (f.label || f.var) + (which === "lo" ? " minimum" : " maximum"));
+          inp.disabled = vals.length < 2;
+          return inp;
+        }
+        var loIn = mk("lo"), hiIn = mk("hi");
+        function show() {
+          readout.textContent = vals.length
+            ? fmt(vals[sel.lo]) + " – " + fmt(vals[sel.hi]) : "(no values)";
+        }
+        function onInput(ev) {
+          var lo = +loIn.value, hi = +hiIn.value;
+          // Keep low <= high: the thumb being dragged pushes the other.
+          if (lo > hi) { if (ev && ev.target === loIn) hi = lo; else lo = hi; }
+          loIn.value = String(lo); hiIn.value = String(hi);
+          sel.lo = lo; sel.hi = hi; show();
+        }
+        loIn.addEventListener("input", onInput);
+        hiIn.addEventListener("input", onInput);
+        loIn.addEventListener("change", function (ev) { onInput(ev); refilter(state); });
+        hiIn.addEventListener("change", function (ev) { onInput(ev); refilter(state); });
+        show();
+        box.appendChild(readout); box.appendChild(loIn); box.appendChild(hiIn);
+        host.appendChild(box);
+      } else {
+        var seen = {};
+        present.forEach(function (v) { seen[String(v)] = 1; });
+        var levels = [];
+        (f.levels || []).forEach(function (v) {
+          var k = String(v);
+          if (seen[k] && levels.indexOf(k) < 0) levels.push(k);
+        });
+        uniqueOrdered(present.map(String)).forEach(function (k) {
+          if (levels.indexOf(k) < 0) levels.push(k);
+        });
+        state.sel[i] = { kind: "cat", key: key, value: null };
+        var s = document.createElement("select");
+        s.id = id; s.className = "gc-filter-select";
+        var oAll = document.createElement("option");
+        oAll.value = ""; oAll.textContent = "All";
+        s.appendChild(oAll);
+        levels.forEach(function (k, j) {
+          var o = document.createElement("option");
+          // Option values are indexes so any text (quotes, "&", "</") is safe.
+          o.value = String(j + 1); o.textContent = k;
+          s.appendChild(o);
+        });
+        s.addEventListener("change", function () {
+          state.sel[i].value = s.value === "" ? null : levels[+s.value - 1];
+          refilter(state);
+        });
+        host.appendChild(s);
+      }
     });
-    dashboard.bind(ctrls, chartWrapper);
-    return dashboard;
+    if (state.filterDefs.length > 1) {
+      var reset = document.createElement("button");
+      reset.type = "button"; reset.className = "gc-filter-reset";
+      reset.textContent = "Reset filters";
+      reset.addEventListener("click", function () {
+        state.sel.forEach(function (sl, i) {
+          var el = document.getElementById("gc-filter-" + i);
+          if (sl.kind === "cat") { sl.value = null; if (el) el.value = ""; }
+          else {
+            sl.lo = 0; sl.hi = Math.max(sl.vals.length - 1, 0);
+            if (el) {
+              el.querySelector(".gc-range-lo").value = "0";
+              el.querySelector(".gc-range-hi").value = String(sl.hi);
+              var ro = el.querySelector(".gc-range-readout");
+              if (ro && sl.vals.length) ro.textContent = fmt(sl.vals[0]) + " – " + fmt(sl.vals[sl.hi]);
+            }
+          }
+        });
+        refilter(state);
+      });
+      host.appendChild(reset);
+    }
+  }
+
+  function applyFilters(state) {
+    var active = state.sel.filter(function (sl) {
+      if (!sl) return false;
+      if (sl.kind === "cat") return sl.value != null;
+      return sl.vals.length > 0 && (sl.lo > 0 || sl.hi < sl.vals.length - 1);
+    });
+    if (!active.length) return state.allData.slice();
+    return state.allData.filter(function (r) {
+      for (var a = 0; a < active.length; a++) {
+        var sl = active[a], v = r[sl.key];
+        if (v == null || v === "") return false;
+        if (sl.kind === "cat") {
+          if (String(v) !== sl.value) return false;
+        } else {
+          var n = +v;
+          if (!(n >= sl.vals[sl.lo] && n <= sl.vals[sl.hi])) return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  // Re-filter the raw rows, rebuild the DataTable through the type's
+  // renderer, and draw.  An open "View data table" panel is refreshed.
+  function refilter(state) {
+    state.ctx = renderRows(state);
+    if (!state.ctx) return;
+    state.ctx.draw();
+    var host = document.getElementById("datatable");
+    if (host && host.classList.contains("open")) {
+      host.classList.remove("open");
+      toggleDataTable(state, state.meta);
+    }
   }
 
   // ============================================================
@@ -1164,14 +1353,14 @@
     var hideExport = (dlpos === "none");
     var exportInFooter = (dlpos === "below");
 
-    // Filters (if any) live in the sidebar -- the engine builds the
-    // ControlWrappers in buildDashboardWithFilters().  Here we just
-    // reserve the slot.
+    // Filters (if any) live in the sidebar -- buildFilterControls()
+    // fills this slot.  (#gc-filters, above the chart, stays reserved for
+    // the bubble time() slider.)
     if (filterDefs && filterDefs.length) {
       var h3f = document.createElement("h3");
       h3f.textContent = "Filters";
       root.appendChild(h3f);
-      var fh = document.createElement("div"); fh.id = "gc-filters"; fh.className = "gc-filters";
+      var fh = document.createElement("div"); fh.id = "gc-filter-controls"; fh.className = "gc-filter-controls";
       root.appendChild(fh);
     }
 
@@ -1238,7 +1427,7 @@
   }
 
   // ---- Wire menu clicks to the live chart instance ------------------------
-  function wireExportMenu(meta, ctx, data, tipvars) {
+  function wireExportMenu(meta, state, tipvars) {
     // Selector covers both the sidebar menu and the under-chart footer menu.
     var menus = document.querySelectorAll(".exportlist");
     menus.forEach(function (menu) {
@@ -1246,10 +1435,13 @@
         var b = ev.target;
         if (b.tagName !== "BUTTON") return;
         var action = b.dataset.action;
+        // Always the CURRENT chart: a filters() change replaces state.ctx.
+        var ctx = state.ctx;
+        if (!ctx) return;
         if (action === "png")      downloadPNG(ctx, meta);
         else if (action === "svg") downloadSVG(meta);
         else if (action === "csv") downloadCSV(ctx);
-        else if (action === "viewdata") toggleDataTable(ctx, meta, data, tipvars);
+        else if (action === "viewdata") toggleDataTable(state, meta);
       });
     });
   }
@@ -1263,7 +1455,7 @@
   function downloadPNG(ctx, meta) {
     // chart.getImageURI() works on corechart classes and GeoChart.  For
     // chart types where it isn't supported, fall back to SVG serialization.
-    var chart = ctx.chart || (ctx.dashboard && ctx.dashboard.getChart && ctx.dashboard.getChart());
+    var chart = ctx.chart || (ctx.chartWrapper && ctx.chartWrapper.getChart && ctx.chartWrapper.getChart());
     if (!chart || typeof chart.getImageURI !== "function") {
       return downloadSVG(meta);
     }
@@ -1290,15 +1482,21 @@
     var blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
     triggerDownload(blob, "googlechart_" + (meta.type || "chart") + ".svg");
   }
+  // The data behind the chart as currently filtered (for type(table), the
+  // rows shown after filters() and Search).
+  function currentTable(ctx) {
+    return ctx.exportTable ? ctx.exportTable() : ctx.dataTable;
+  }
   function downloadCSV(ctx) {
     if (!ctx.dataTable) { alert("No data table to export."); return; }
-    var csv = google.visualization.dataTableToCsv(ctx.dataTable);
+    var csv = google.visualization.dataTableToCsv(currentTable(ctx));
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     triggerDownload(blob, "googlechart_data.csv");
   }
 
   // ---- Collapsible data-table panel ---------------------------------------
-  function toggleDataTable(ctx, meta, data, tipvars) {
+  function toggleDataTable(state, meta) {
+    var ctx = state.ctx;
     var host = document.getElementById("datatable");
     if (!host) return;
     if (host.classList.contains("open")) {
@@ -1307,7 +1505,7 @@
       host.innerHTML = "";
       return;
     }
-    var dt = ctx.dataTable;
+    var dt = currentTable(ctx);
     var nCols = dt.getNumberOfColumns();
     var nRows = dt.getNumberOfRows();
     var html = "<div class='dt-header'><strong>Data behind the chart</strong> "
@@ -1335,7 +1533,7 @@
     host.classList.add("open");
     host.style.display = "block";
     host.querySelector(".dt-close").addEventListener("click", function () {
-      toggleDataTable(ctx, meta, data, tipvars);
+      toggleDataTable(state, meta);
     });
   }
 

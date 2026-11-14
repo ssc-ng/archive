@@ -1,4 +1,12 @@
-*! googlesheets_export v0.1.0  2026-06-27
+*! googlesheets_export v0.1.3  2026-11-09
+*! v0.1.3: a float variable is sent at the precision a float holds (3.58,
+*!   not 3.5799999); the args file uses a temporary file handle; text shown
+*!   in the summary is not macro-expanded.
+*! v0.1.2: send the column types to the helper, so a string variable stays
+*!   text in the Sheet ("00123" keeps its leading zeros, "1e5" is not turned
+*!   into 100000).  Numeric variables are still written as numbers.
+*! v0.1.1: export the temporary file with -quote- so a string that contains a
+*!   line break stays one row (it used to split into extra rows in the Sheet).
 *! Export the current Stata dataset to a Google Sheet range.
 *! Modelled on `export excel using ...'.
 *!
@@ -33,36 +41,53 @@ program define googlesheets_export
 
     * Dump current data to a temp TSV.  The helper will read it.
     tempfile datain
-    quietly export delimited using `"`datain'"', delimiter(tab) ///
+    quietly export delimited using `"`datain'"', delimiter(tab) quote ///
         `=cond("`firstrow'" != "", "", "novarnames")' replace
 
-    _gs_jesc, raw(`"`client_json'"')
-    local cj `"`r(escaped)'"'
-    _gs_jesc, raw(`"`token_json'"')
-    local tj `"`r(escaped)'"'
-    _gs_jesc, raw(`"`using'"')
-    local ss `"`r(escaped)'"'
-    _gs_jesc, raw(`"`sheet'"')
-    local sh `"`r(escaped)'"'
-    _gs_jesc, raw(`"`range'"')
-    local rg `"`r(escaped)'"'
-    _gs_jesc, raw(`"`datain'"')
-    local di `"`r(escaped)'"'
+    * One letter per variable, in dataset order: s = string, f = float,
+    * n = any other numeric.  The helper converts only the f and n columns
+    * to numbers.  export delimited writes a float with all the digits of its
+    * binary value (3.58 is written 3.5799999), so the helper writes an f
+    * value as the shortest decimal that gives back the same float (3.58).
+    local ctypes ""
+    foreach v of varlist _all {
+        local _t : type `v'
+        if substr("`_t'", 1, 3) == "str"  local ctypes "`ctypes's"
+        else if "`_t'" == "float"         local ctypes "`ctypes'f"
+        else                              local ctypes "`ctypes'n"
+    }
+    local hdr = cond("`firstrow'" != "", "true", "false")
+
+    _gs_jesc, raw(`"`macval(client_json)'"')
+    mata: st_local("cj", st_global("r(escaped)"))
+    _gs_jesc, raw(`"`macval(token_json)'"')
+    mata: st_local("tj", st_global("r(escaped)"))
+    _gs_jesc, raw(`"`macval(using)'"')
+    mata: st_local("ss", st_global("r(escaped)"))
+    _gs_jesc, raw(`"`macval(sheet)'"')
+    mata: st_local("sh", st_global("r(escaped)"))
+    _gs_jesc, raw(`"`macval(range)'"')
+    mata: st_local("rg", st_global("r(escaped)"))
+    _gs_jesc, raw(`"`macval(datain)'"')
+    mata: st_local("di", st_global("r(escaped)"))
 
     local sub = cond("`append'" != "", "append_range", "write_range")
 
     tempfile argjson
-    quietly file open _h using `"`argjson'"', write text replace
-    file write _h `"{"' _n
-    file write _h `"  "subcommand":"`sub'","' _n
-    file write _h `"  "client_json":"`cj'","' _n
-    file write _h `"  "token_json":"`tj'","' _n
-    file write _h `"  "spreadsheet":"`ss'","' _n
-    file write _h `"  "sheet":"`sh'","' _n
-    file write _h `"  "range":"`rg'","' _n
-    file write _h `"  "data_in_path":"`di'""' _n
-    file write _h `"}"' _n
-    file close _h
+    tempname h
+    quietly file open `h' using `"`argjson'"', write text replace
+    file write `h' `"{"' _n
+    file write `h' `"  "subcommand":"`macval(sub)'","' _n
+    file write `h' `"  "client_json":"`macval(cj)'","' _n
+    file write `h' `"  "token_json":"`macval(tj)'","' _n
+    file write `h' `"  "spreadsheet":"`macval(ss)'","' _n
+    file write `h' `"  "sheet":"`macval(sh)'","' _n
+    file write `h' `"  "range":"`macval(rg)'","' _n
+    file write `h' `"  "col_types":"`macval(ctypes)'","' _n
+    file write `h' `"  "header_row":`macval(hdr)',"' _n
+    file write `h' `"  "data_in_path":"`macval(di)'""' _n
+    file write `h' `"}"' _n
+    file close `h'
 
     googlesheets_runpy, args(`"`argjson'"') `verbose'
     if "`r(status)'" != "ok" {
@@ -76,8 +101,8 @@ program define googlesheets_export
     local cells `"`r(value)'"'
 
     display as result _n "[googlesheets export]"
-    display as text   "  spreadsheet: `using'"
-    display as text   "  sheet:       `sheet'"
+    display as text   `"  spreadsheet: `macval(using)'"'
+    display as text   `"  sheet:       `macval(sheet)'"'
     display as text   "  mode:        `=cond("`append'" != "", "append", "replace")'"
-    display as text   "  updated:     `updated'   (`cells' cells)"
+    display as text   `"  updated:     `macval(updated)'   (`macval(cells)' cells)"'
 end

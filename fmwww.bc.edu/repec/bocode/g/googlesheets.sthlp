@@ -1,5 +1,5 @@
 {smcl}
-{* *! googlesheets v0.1.2  2026-07-31}{...}
+{* *! googlesheets v0.1.7  2026-11-09}{...}
 {cmd:help googlesheets}{...}
 {viewerjumpto "Syntax"      "googlesheets##syntax"}{...}
 {viewerjumpto "Subcommands" "googlesheets##subcommands"}{...}
@@ -7,6 +7,7 @@
 {viewerjumpto "Examples"    "googlesheets##examples"}{...}
 {viewerjumpto "Form data"   "googlesheets##forms"}{...}
 {viewerjumpto "Brand styling" "googlesheets##brand"}{...}
+{viewerjumpto "Stored results" "googlesheets##results"}{...}
 {title:Title}
 
 {phang}{bf:googlesheets} {hline 2} Read, write, edit, and chart Google Sheets directly from Stata
@@ -22,7 +23,7 @@
 {p2col :{cmd:export}}write the current dataset to a sheet (like {cmd:export excel}){p_end}
 {p2col :{cmd:put}}place a single value, formula, or matrix at a cell (like {cmd:putexcel}){p_end}
 {p2col :{cmd:format}}apply colour / font / number-format to a cell range{p_end}
-{p2col :{cmd:addchart}}insert a chart object (column / bar / line / area / pie / donut){p_end}
+{p2col :{cmd:addchart}}insert a chart object (column / bar / stacked / line / area / scatter / pie / donut){p_end}
 {p2col :{cmd:list}}list the sheet (tab) names in a spreadsheet{p_end}
 {p2col :{cmd:ping}}confirm OAuth + API access against a target spreadsheet{p_end}
 {p2col :{cmd:create}}create a new spreadsheet in the user's Drive (returns its id / URL){p_end}
@@ -71,14 +72,16 @@
     {cmdab:dom:ain(}{it:A2:A6}{cmd:)} {cmd:series(}{it:B2:B6}|{it:C2:C6}|...{cmd:)}
     [{cmd:names(}{it:"label1|label2|..."}{cmd:)}
      {cmd:colors(}{it:"#1B2D55|#D44500|..."}{cmd:)}
-     {cmd:title(}{it:"..."}{cmd:)}
+     {cmd:title(}{it:"..."}{cmd:)} {cmdab:sub:title(}{it:"..."}{cmd:)}
      {cmd:xlabel(}{it:"..."}{cmd:)} {cmd:ylabel(}{it:"..."}{cmd:)}
+     {cmd:header}
      {cmd:legendpos(}{it:top|right|bottom|left|none|labeled}{cmd:)}   (default {cmd:bottom})
      {cmd:tx2036style}
      {cmd:piehole(}{it:0.5}{cmd:)}
      {cmd:targetsheet(}{it:name}{cmd:)} {cmd:anchor(}{it:H1}{cmd:)}
      {cmd:width(}{it:#}{cmd:)} {cmd:height(}{it:#}{cmd:)}]{p_end}
 
+{phang}{cmd:googlesheets create,} {cmd:title(}{it:"My report"}{cmd:)} [{cmd:sheettitle(}{it:"Data"}{cmd:)}]{p_end}
 {phang}{cmd:googlesheets list, spreadsheet(}{it:"<id-or-url>"}{cmd:)}{p_end}
 {phang}{cmd:googlesheets ping, spreadsheet(}{it:"<id-or-url>"}{cmd:)}{p_end}
 {phang}{cmd:googlesheets addsheet, spreadsheet(}{it:"..."}{cmd:) title(}{it:"New Tab"}{cmd:)} [{cmd:rows(}{it:#}{cmd:)} {cmd:cols(}{it:#}{cmd:)} {cmd:index(}{it:#}{cmd:)}]{p_end}
@@ -86,13 +89,46 @@
 {phang}{cmd:googlesheets renamesheet, spreadsheet(}{it:"..."}{cmd:) from(}{it:"Old"}{cmd:) to(}{it:"New"}{cmd:)}{p_end}
 
 {phang}Spreadsheets are addressed by either the bare ~44-character ID or a full URL.
-The wrapper extracts the ID either way.{p_end}
+The wrapper extracts the ID either way, including from the multi-account form
+{bf:.../spreadsheets/u/1/d/}{it:<id>}{bf:/edit} that the browser shows when more
+than one Google account is signed in.{p_end}
+
+{phang}{ul:import} behaves like {cmd:import excel}: when data are in memory,
+{cmd:clear} is required, and without it the command stops with error 4 ("no;
+data in memory would be lost").  The data in memory are replaced only after
+the Sheet has been read, so a failed read leaves them in place.  With
+{cmd:firstrow}, row 1 becomes the variable names; they are lowercased, as
+{cmd:import delimited} does by default (a header {bf:Timestamp} becomes the
+variable {bf:timestamp}).  {cmd:since()} still takes the header text as it
+appears in the Sheet.{p_end}
+
+{phang}{ul:export} writes numeric variables as numbers and string variables as
+text.  A string such as {bf:"00123"} keeps its leading zeros, and {bf:"1e5"} or
+{bf:"2026-01-01"} is stored as typed rather than converted to a number or a
+date.  (Each string cell is sent with Sheets' leading-apostrophe "store as
+text" marker, which Sheets does not display.)  Numeric variables with value
+labels are written as their labels, as {cmd:export delimited} does.  A
+{cmd:float} variable is written at the precision a float holds: 3.58 is sent
+as 3.58, not as 3.5799999, the digits of its binary value.{p_end}
+
+{phang}{ul:create} makes a new spreadsheet in your Drive.  {cmd:title()} names
+the spreadsheet and {cmd:sheettitle()} names its first tab (default: Sheets'
+own {bf:Sheet1}).  The new id and URL are returned in {cmd:r(id)} and
+{cmd:r(url)}; see {help googlesheets##results:Stored results}.{p_end}
+
+{phang}{ul:addchart} accepts only the {cmd:type()} values listed above (in any
+case); anything else is an error.  {cmd:subtitle()} adds a line under the
+title, and {cmd:header} tells Sheets that the first row of {cmd:domain()} and
+{cmd:series()} holds labels rather than data.{p_end}
+
+{phang}{ul:format} takes {cmd:range()} with or without a tab name; a range
+that names its own tab ({bf:'Auto'!A1:B2}) is used as given.{p_end}
 
 {phang}Every subcommand accepts these common options:{p_end}
 {p2colset 9 25 27 2}{...}
 {p2col :{cmd:keyfile(}{it:path}{cmd:)}}OAuth Desktop client JSON (overrides {cmd:$GS_CLIENT}){p_end}
 {p2col :{cmd:tokenfile(}{it:path}{cmd:)}}OAuth token cache file (overrides {cmd:$GS_TOKEN}){p_end}
-{p2col :{cmd:verbose}}echo the underlying Python invocation + Sheets API result{p_end}
+{p2col :{cmd:verbose}}echo the underlying Python invocation + Sheets API result; the helper also writes its full reply, with any Python traceback, to a {bf:.json} file next to its result file (the path is printed){p_end}
 {p2colreset}{...}
 
 {marker setup}{...}
@@ -106,31 +142,41 @@ ships with the package.  Auth uses an OAuth 2.0 Desktop client.{p_end}
 and {bf:Google Drive API}.{p_end}
 
 {phang}{bf:Step 2.}  {bf:APIs & Services > OAuth consent screen}: choose {bf:External}.
-Fill in the required fields, add yourself as a test user, and grant the scopes
-{bf:.../auth/spreadsheets} and {bf:.../auth/drive}.{p_end}
+Fill in the required fields, add yourself as a test user, and add the scopes
+the helper asks for: {bf:.../auth/spreadsheets}, {bf:.../auth/drive.file}, and
+{bf:.../auth/drive.metadata.readonly}.{p_end}
 
-{phang}{bf:Step 3.}  {bf:APIs & Services > Credentials > Create credentials > OAuth client ID}.
-Application type: {bf:Desktop app}.  Download the JSON file.{p_end}
+{phang}{bf:Step 3.}  {bf:APIs & Services > Credentials > Create credentials > OAuth
+client ID}.  Application type: {bf:Desktop app}.  Download the JSON file.{p_end}
 
 {phang}{bf:Step 4.}  Save the JSON locally and tell Stata where to find it by
 setting {cmd:$GS_CLIENT} once.  The recommended place is your {bf:profile.do},
 which Stata reads on every launch.  On macOS the profile is usually at
-{bf:~/Documents/Stata/ado/personal/profile.do}; on Windows it lives next to
+{bf:/Users/}{it:yourname}{bf:/Documents/Stata/ado/personal/profile.do}; on Windows it lives next to
 the Stata executable.  Add one of these blocks to it:{p_end}
 
 {phang}{ul:Simple form -- absolute path}{p_end}
-{phang}{cmd}global GS_CLIENT "~/.config/stata-googlesheets/client.json"{p_end}
+{phang}{cmd}global GS_CLIENT "/Users/yourname/.config/stata-googlesheets/client.json"{p_end}
+{phang}{cmd}global GS_CLIENT "C:/Users/yourname/AppData/Roaming/stata-googlesheets/client.json"{p_end}
 
-{phang}{ul:Cross-OS form -- auto-detects the Google Drive mount point}{p_end}
-{phang}{cmd}if inlist("`c(os)'", "MacOSX", "Unix") {c -(}{p_end}
+{pstd}Give the full path, as above, rather than one that starts with {bf:~}.
+Operating systems, Stata versions and Python handle {bf:~} differently.
+{cmd:googlesheets} expands a leading {bf:~} itself as a safety net, but a full
+path works everywhere.{p_end}
+
+{phang}{ul:macOS form -- finds the Google Drive for desktop folder}{p_end}
+{pstd}On macOS, Google Drive for desktop mounts under
+{bf:~/Library/CloudStorage}.  The lines below find that folder; on Linux or
+Windows (where the Drive letter varies), give the full path instead, as in
+the simple form above.{p_end}
+{phang}{cmd}if "`c(os)'" == "MacOSX" {c -(}{p_end}
 {phang}{cmd}    local _gd_base "/Users/`c(username)'/Library/CloudStorage"{p_end}
 {phang}{cmd}    local _gd_folders : dir "`_gd_base'" dirs "GoogleDrive-*"{p_end}
 {phang}{cmd}    local _gd_folder  : word 1 of `_gd_folders'{p_end}
 {phang}{cmd}    local _gd_folder  = subinstr(`"`_gd_folder'"', `"""', "", .){p_end}
 {phang}{cmd}    local _my_drive   `"`_gd_base'/`_gd_folder'/My Drive"'{p_end}
+{phang}{cmd}    global GS_CLIENT `"`_my_drive'/path/to/client.json"'{p_end}
 {phang}{cmd}{c )-}{p_end}
-{phang}{cmd}else if "`c(os)'" == "Windows" local _my_drive "G:/My Drive"{p_end}
-{phang}{cmd}global GS_CLIENT `"`_my_drive'/path/to/client.json"'{p_end}
 
 {phang}You can also point at a default test Sheet so the shipped
 {bf:test_googlesheets.do} example just runs:{p_end}
@@ -142,7 +188,8 @@ refresh token is cached next to the client JSON ({bf:token.json}, mode 0600).
 All future calls are silent.{p_end}
 
 {pstd}On the very first invocation the package also creates a private Python
-virtualenv at {bf:~/.config/stata-googlesheets/venv} and pip-installs the
+virtualenv at {bf:.config/stata-googlesheets/venv} in your home folder
+({bf:%APPDATA%\stata-googlesheets\venv} on Windows) and pip-installs the
 Google client libraries into it.  The user's system Python is left untouched.{p_end}
 
 {pstd}{ul:Verify the setup}{p_end}
@@ -155,9 +202,11 @@ Google client libraries into it.  The user's system Python is left untouched.{p_
 
 {pstd}Pass explicit hex codes to {cmd:colors()} on {cmd:addchart}, and to
 {cmd:bgcolor()} / {cmd:fgcolor()} on {cmd:format}, to style a chart or a cell
-range yourself.  The {cmd:tx2036style} option is a shortcut that applies one
-fixed house style (a Montserrat title in navy plus a matching series palette)
-if you publish under it.  A manual call looks like this:{p_end}
+range yourself.  The {cmd:tx2036style} option is an {it:internal} house style
+used in the authors' own workflows (a Montserrat title in navy plus a matching
+series palette).  It is off unless you ask for it, and you do not need it; if
+the Montserrat font is unavailable, Google Sheets uses its default font and the
+chart is still drawn.  A manual call looks like this:{p_end}
 
 {phang}{cmd}googlesheets format using "..."  , sheet("Auto") range("A1:L1") ///{p_end}
 {phang}{cmd}    bgcolor("#1B2D55") fgcolor("#FFFFFF") bold font("Montserrat") fontsize(12){p_end}
@@ -172,7 +221,7 @@ own spreadsheet URL or ID.  Each example builds on the previous one.{p_end}
 {phang}First, set the global pointing to your auth client JSON and the global
 pointing to a Sheet you can edit:{p_end}
 
-{phang}{cmd}global GS_CLIENT "~/.config/stata-googlesheets/client.json"{p_end}
+{phang}{cmd}global GS_CLIENT "/Users/yourname/.config/stata-googlesheets/client.json"{p_end}
 {phang}{cmd}global SS "https://docs.google.com/spreadsheets/d/.../edit"{p_end}
 
 
@@ -236,7 +285,8 @@ display the computed result.{p_end}
 {phang}{cmd}googlesheets put using "$SS", sheet("Auto") cell(O6) matrix(C) names{p_end}
 
 {pstd}{cmd:matrix(M)} writes a {it:rowsof(M)} x {it:colsof(M)} block starting
-at the given cell.  Missing values become blank cells.  Add {cmd:names} to write the matrix's row and column names as well: the column names go in a header row and the row names in the column to their left.  Numbers are written
+at the given cell.  Missing values become blank cells (a value already in such
+a cell is cleared).  {cmd:value(.)} likewise blanks a single cell.  Add {cmd:names} to write the matrix's row and column names as well: the column names go in a header row and the row names in the column to their left.  Numbers are written
 as numbers (USER_ENTERED parsing applies, so Sheets stores them as numeric).{p_end}
 
 
@@ -311,8 +361,12 @@ end up with a duplicate header in the middle of the data.{p_end}
 {phang}{cmd}    since(Timestamp=2026-01-01){p_end}
 
 {pstd}{cmd:since(column=value)} keeps rows where the named column is greater
-than or equal to the value.  Works on timestamp columns ({it:>=} compares
-string ISO dates) and integer/string codes.{p_end}
+than or equal to the value.  {it:column} is the header text in row 1 of the
+Sheet (as typed there, before any lowercasing) or a 0-based column number.
+When both sides parse as numbers they are compared as numbers; when both parse
+as dates or date-times (for example {bf:2026-01-01}, {bf:2026-07-04 9:00:00}, or
+{bf:7/4/2026}) they are compared as date-times; otherwise they are compared as
+text.{p_end}
 
 {phang}{ul:Pull only the last N responses}{p_end}
 {phang}{cmd}googlesheets import using "$SS", sheet("Form Responses 1") firstrow clear tail(50){p_end}
@@ -330,8 +384,8 @@ for enter Stata (the helper filters the reply before loading it).{p_end}
 {marker tips}{...}
 {title:Tips, gotchas, and headless / scheduled runs}
 
-{phang}-- {ul:Tabs must exist before you write to them.}  {cmd:googlesheets export} and
-{cmd:put} both fail if the target sheet doesn't exist.  Create
+{phang}-- {ul:Tabs must exist before you write to them.}  {cmd:googlesheets
+export} and {cmd:put} both fail if the target sheet doesn't exist.  Create
 it first with {cmd:googlesheets addsheet, title("...")} (the helpfile examples
 above always do this).{p_end}
 
@@ -342,19 +396,66 @@ different tabs.{p_end}
 is a rectangle; {bf:'My Sheet'!A1:E10} is an A1 with explicit sheet name
 (equivalent to passing the sheet via {cmd:sheet()}).{p_end}
 
-{phang}-- {ul:Headless / scheduled runs.}  OAuth needs a browser the first
-time per machine, so cron jobs / GitHub Actions / unattended Stata batches
-can't use the default flow.  Swap in a Service Account JSON instead:
-create one in the same GCP project, share each target Sheet with the
-service-account email, and point {cmd:$GS_CLIENT} at the SA JSON.  The
-wrapper auto-detects.{p_end}
+{phang}-- {ul:Tab names with apostrophes.}  A name such as {bf:Bob's data} can be
+passed to {cmd:sheet()} as is; the wrapper writes it as {bf:'Bob''s data'} in
+A1 notation.  {cmd:r(sheets)} joins tab names with {bf:|}, so a {bf:|} inside a
+tab name is shown there as a space.{p_end}
 
-{phang}-- {ul:Token expiry.}  Refresh tokens last ~6 months under Google's
-External-Testing OAuth consent screen.  When that expires the next call pops
-the browser again; click Allow and you're back.{p_end}
+{phang}-- {ul:Headless / scheduled runs.}  OAuth needs a browser the first
+time per machine.  After that the cached refresh token in {bf:token.json}
+lets later runs, including batch runs on the same machine, proceed without a
+browser.  For a machine with no browser at all (a scheduled server job, for
+example), use a service account instead: in the Google Cloud console create a
+service account, download its JSON key, share the spreadsheet with the
+service account's e-mail address (as an editor), and point {cmd:keyfile()} or
+{cmd:$GS_CLIENT} at the key.  {cmd:googlesheets} recognizes a service-account
+key from the file itself and signs in with no browser and no token file.{p_end}
+
+{phang}-- {ul:Token expiry.}  While the OAuth consent screen is in Google's
+{it:Testing} status, Google issues refresh tokens that expire after about seven
+days.  When one expires the next call opens the browser again; click Allow and
+you're back.  Publishing the consent screen ({it:In production}) removes that
+seven-day limit.{p_end}
+
+
+{marker results}{...}
+{title:Stored results}
+
+{pstd}{cmd:googlesheets import} stores the following in {cmd:r()}:{p_end}
+{synoptset 18 tabbed}{...}
+{p2col 5 18 22 2: Scalars}{p_end}
+{synopt:{cmd:r(N)}}number of observations loaded{p_end}
+{synopt:{cmd:r(k)}}number of variables loaded{p_end}
+{p2col 5 18 22 2: Macros}{p_end}
+{synopt:{cmd:r(spreadsheet)}}the spreadsheet id or URL as given{p_end}
+{synopt:{cmd:r(sheet)}}the tab that was read{p_end}
+
+{pstd}{cmd:googlesheets create} stores:{p_end}
+{synoptset 18 tabbed}{...}
+{p2col 5 18 22 2: Macros}{p_end}
+{synopt:{cmd:r(id)}}the new spreadsheet id{p_end}
+{synopt:{cmd:r(url)}}the new spreadsheet URL{p_end}
+{synopt:{cmd:r(spreadsheet)}}the URL again, for use in later {cmd:using} or {cmd:spreadsheet()}{p_end}
+{synopt:{cmd:r(title)}}the spreadsheet title{p_end}
+
+{pstd}{cmd:googlesheets ping} stores:{p_end}
+{synoptset 18 tabbed}{...}
+{p2col 5 18 22 2: Macros}{p_end}
+{synopt:{cmd:r(title)}}the spreadsheet title{p_end}
+{synopt:{cmd:r(sheets)}}the tab names, separated by {bf:|}{p_end}
+{synopt:{cmd:r(client_json)}}the OAuth client JSON path used{p_end}
+{synopt:{cmd:r(token_json)}}the token cache path used{p_end}
+
+{pstd}{cmd:googlesheets list} stores {cmd:r(sheets)}, the tab names separated
+by {bf:|}.  {cmd:googlesheets addsheet} stores {cmd:r(title)} and
+{cmd:r(sheetId)} of the new tab.  {cmd:export}, {cmd:put}, {cmd:format},
+{cmd:addchart}, {cmd:deletesheet}, and {cmd:renamesheet} store nothing in
+{cmd:r()}.{p_end}
 
 
 {title:Author and license}
 
 {phang}Authored by Eric A. Booth, Sr Researcher, Texas2036.org (eric.a.booth@gmail.com), 2026.  MIT-licensed.  Built atop
 the Google Sheets API; this package is not affiliated with Google.{p_end}
+
+{phang}Thanks to Marshall W. Garland and Elizabeth Teas for debugging, review, and input.{p_end}

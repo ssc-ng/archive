@@ -1,10 +1,10 @@
-d 'GOOGLECHART': module to stata wrapper for the Google Charts (Visualization API)
+d 'GOOGLECHART': module to draw interactive Google Charts (Visualization API) figures from Stata
 d
-d  library. Create a self-contained interactive HTML page,
-d dashboard, or single embeddable iframe from any Stata dataset.
-d Fourteen chart types: column, bar, line, area, combo, pie, donut,
-d scatter, bubble, geo (country + US-state level), timeline, table
-d (with built-in free-text search), histogram, divbar (Pew-style
+d  Create a self-contained interactive HTML page, dashboard, or
+d single embeddable iframe from any Stata dataset. Fourteen chart
+d types: column, bar, line, area, combo, pie, donut, scatter,
+d bubble, geo (country + US-state level), timeline, table (with
+d built-in free-text search), histogram, divbar (Pew-style
 d diverging stacked bar). Native filter dropdowns via Google
 d Dashboard + ControlWrapper. Animation on most types. Optional
 d Texas 2036 brand palette + Montserrat typography via tx2036style.
@@ -16,9 +16,9 @@ d KW: google charts; visualization; interactive; html; dashboard; choropleth; di
 d
 d Requires: Stata version 17
 d
-d Distribution-Date: 20260730
+d Distribution-Date: 20261113
 d
-d Author: Eric A. Booth, Texas 2036
+d Author: Eric Booth, Texas 2036
 d Support: email eric.a.booth@@gmail.com
 d
 f googlechart.ado

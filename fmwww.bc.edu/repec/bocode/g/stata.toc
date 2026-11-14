@@ -113,7 +113,7 @@ p goelevation module to compute elevation for latitude and longitude from Google
 p gologit module to estimate generalized ordered logit models
 p gologit2 module to estimate generalized logistic regression models for ordinal dependent variables
 p gologit29 module to estimate generalized logistic regression models for ordinal dependent variables
-p googlechart module to stata wrapper for the Google Charts (Visualization API)
+p googlechart module to draw interactive Google Charts (Visualization API) figures from Stata
 p googleplaces module to return search results from Google Places
 p googlesheets module to read, write, and edit Google Sheets directly from Stata
 p goprobit module to estimate generalized ordered probit models

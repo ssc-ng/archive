@@ -1,4 +1,11 @@
-*! googlechart_writehtml v0.1.1  2026-06-28
+*! googlechart_writehtml v0.1.3  2026-11-09
+*! v0.1.3: text options are read without macro expansion and escaped for JSON
+*!   (newlines, tabs, control characters and "</" included) and for HTML;
+*!   innerradius() and bucketsize() are written with a "." decimal point;
+*!   styles for the filters() controls the engine now draws itself.
+*! v0.1.2: ISTX2036style (was ISTX2036Style, which older Stata reads as a
+*!   different name than the caller passes -> "option istx2036Style()
+*!   required"); house colors and font only when istx2036style is on.
 *! Assemble the self-contained HTML for a googlechart chart.
 *!
 *! Page structure mirrors sparkta2's chart writehtml (Texas 2036 brand
@@ -17,7 +24,7 @@ program define googlechart_writehtml
         TYPE(string) SCHEME(string) TITLE(string)                        ///
         WIDTH(integer) HEIGHT(integer)                                   ///
         ISDOWNload(integer) ISDATAtable(integer) ISANImate(integer)      ///
-        ISTX2036Style(integer) ISSTACKed(integer) ISNORMAlize(integer)   ///
+        ISTX2036style(integer) ISSTACKed(integer) ISNORMAlize(integer)   ///
         ISDIRECTlabels(integer)                                          ///
         [ SUBtitle(string) NOTE(string)                                  ///
           XLAbel(string) YLAbel(string)                                  ///
@@ -41,15 +48,16 @@ program define googlechart_writehtml
     tempname fh
     quietly file open `fh' using `"`export'"', write text replace
 
-    local esc_title : subinstr local title `"&"' `"&amp;"', all
-    local esc_title : subinstr local esc_title `"<"' `"&lt;"', all
-    local esc_title : subinstr local esc_title `">"' `"&gt;"', all
-
+    * HTML-escaped copies of the page text.  title gets & < > " escaped;
+    * subtitle and note keep their HTML (only & is escaped), as before.  In
+    * all three, ' and ` become character references so the compound quotes
+    * of -file write- stay intact.
+    mata: st_local("esc_title", _gcw_hesc(st_local("title"), 1))
     file write `fh' `"<!DOCTYPE html>"' _n
     file write `fh' `"<html lang="en"><head>"' _n
     file write `fh' `"<meta charset="utf-8">"' _n
     file write `fh' `"<meta name="viewport" content="width=device-width, initial-scale=1">"' _n
-    file write `fh' `"<title>`esc_title'</title>"' _n
+    file write `fh' `"<title>`macval(esc_title)'</title>"' _n
 
     * tx2036style: Montserrat from Google Fonts.
     if `istx2036style' {
@@ -63,7 +71,14 @@ program define googlechart_writehtml
     file write `fh' `"<script src="https://www.gstatic.com/charts/loader.js"></script>"' _n
 
     file write `fh' `"<style>"' _n
-    file write `fh' `":root{--ink:#1B2D55;--accent:#D44500;--link:#2B6CB0;--bg:#F5F7FA;--muted:#6C7A8D;--card:#ffffff;--line:#e2e8f0;}"' _n
+    * Page colors: neutral by default; the authors' house colors only with
+    * istx2036style.
+    if `istx2036style' {
+        file write `fh' `":root{--ink:#1B2D55;--accent:#D44500;--link:#2B6CB0;--bg:#F5F7FA;--muted:#6C7A8D;--card:#ffffff;--line:#e2e8f0;}"' _n
+    }
+    else {
+        file write `fh' `":root{--ink:#202124;--accent:#1a73e8;--link:#1a73e8;--bg:#f8f9fa;--muted:#5f6368;--card:#ffffff;--line:#e2e8f0;}"' _n
+    }
     if `istx2036style' {
         file write `fh' `"*{box-sizing:border-box;}body{margin:0;font-family:'Montserrat',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--ink);font-weight:400;letter-spacing:-0.005em;}"' _n
         file write `fh' `"h1{font-weight:700;letter-spacing:-0.01em;}"' _n
@@ -104,6 +119,11 @@ program define googlechart_writehtml
     * Filter widgets (Google Charts ControlWrapper containers)
     file write `fh' `".gc-filters{display:flex;flex-direction:column;gap:6px;margin-bottom:8px;align-items:flex-start;}"' _n
     file write `fh' `".gc-filter-slot{min-height:34px;}"' _n
+    * filters() controls (dropdowns + two-thumb range sliders, sidebar)
+    file write `fh' `".gc-filter-controls select{width:100%;padding:5px 6px;font-size:.85rem;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);}"' _n
+    file write `fh' `".gc-range{display:flex;flex-direction:column;gap:2px;}.gc-range input{width:100%;margin:0;}"' _n
+    file write `fh' `".gc-range-readout{font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums;}"' _n
+    file write `fh' `".controls .gc-filter-reset{margin-top:10px;}"' _n
     file write `fh' `".gc-filters label{display:block;font-size:.78rem;color:var(--muted);font-weight:500;margin-top:6px;}"' _n
     * Play button for bubble + other time-driven charts.  Compact, not
     * full-width -- aligns to the left of the filter row.
@@ -170,14 +190,15 @@ program define googlechart_writehtml
     * default the Google Charts Table sets inline), the table can never
     * exceed its container, so per-cell min-widths get ignored and the
     * scroll affordance never triggers.
-    file write `fh' `".google-visualization-table-table { border-collapse: collapse !important; font-family: 'Montserrat',-apple-system,sans-serif !important; font-size: .85rem !important; width: auto !important; min-width: 100% !important; }"' _n
+    local _tblfont = cond(`istx2036style', "Montserrat,-apple-system,sans-serif", "-apple-system,BlinkMacSystemFont,Roboto,Arial,sans-serif")
+    file write `fh' `".google-visualization-table-table { border-collapse: collapse !important; font-family: `_tblfont' !important; font-size: .85rem !important; width: auto !important; min-width: 100% !important; }"' _n
     * Give cells comfortable padding so 6-column tables exceed the card
     * width and trigger the horizontal scroll affordance.  Without this
     * Google's defaults pack everything into ~720px regardless of column count.
     file write `fh' `".google-visualization-table-table th, .google-visualization-table-table td { white-space: nowrap !important; min-width: 180px !important; padding: 8px 12px !important; }"' _n
     file write `fh' `".google-visualization-table-table th:first-child, .google-visualization-table-table td:first-child { min-width: 500px !important; }"' _n
     file write `fh' `".google-visualization-table-table th { position: sticky; top: 0; background: var(--ink) !important; color: #fff !important; padding: 8px 10px !important; font-weight: 600 !important; text-align: left !important; border-bottom: 1px solid var(--line) !important; }"' _n
-    file write `fh' `".google-visualization-table-table td { padding: 6px 10px !important; border-bottom: 1px solid #f1f5f9 !important; color: #1B2D55 !important; vertical-align: top !important; }"' _n
+    file write `fh' `".google-visualization-table-table td { padding: 6px 10px !important; border-bottom: 1px solid #f1f5f9 !important; color: var(--ink) !important; vertical-align: top !important; }"' _n
     file write `fh' `".google-visualization-table-table tr.google-visualization-table-tr-even td { background: #ffffff !important; }"' _n
     file write `fh' `".google-visualization-table-table tr.google-visualization-table-tr-odd  td { background: #f8fafc !important; }"' _n
     file write `fh' `".google-visualization-table-table tr.google-visualization-table-tr-over td { background: #eef2f7 !important; }"' _n
@@ -190,19 +211,19 @@ program define googlechart_writehtml
     local _btype = lower("`type'")
     file write `fh' `"</head><body class="gc-type-`_btype'">"' _n
     file write `fh' `"<div class="wrap">"' _n
-    file write `fh' `"<h1>`esc_title'</h1>"' _n
-    if "`subtitle'" != "" {
-        local esc_sub : subinstr local subtitle `"&"' `"&amp;"', all
-        file write `fh' `"<p class="sub">`esc_sub'</p>"' _n
+    file write `fh' `"<h1>`macval(esc_title)'</h1>"' _n
+    if `"`macval(subtitle)'"' != "" {
+        mata: st_local("esc_sub", _gcw_hesc(st_local("subtitle"), 0))
+        file write `fh' `"<p class="sub">`macval(esc_sub)'</p>"' _n
     }
     file write `fh' `"<div class="panels">"' _n
     file write `fh' `"  <div class="card controls" id="controls"></div>"' _n
     file write `fh' `"  <div class="card chartcard"><div id="chart"></div><div id="chart-footer"></div></div>"' _n
     file write `fh' `"</div>"' _n
     file write `fh' `"<div id="datatable"></div>"' _n
-    if "`note'" != "" {
-        local esc_note : subinstr local note `"&"' `"&amp;"', all
-        file write `fh' `"<p class="note">`esc_note'</p>"' _n
+    if `"`macval(note)'"' != "" {
+        mata: st_local("esc_note", _gcw_hesc(st_local("note"), 0))
+        file write `fh' `"<p class="note">`macval(esc_note)'</p>"' _n
     }
     file write `fh' `"</div>"' _n
 
@@ -210,37 +231,30 @@ program define googlechart_writehtml
     file write `fh' `"<script>"' _n
     file write `fh' `"window.__GOOGLECHART__ = {"' _n
     file write `fh' `""meta":{"' _n
-    * JSON-safe escape of free-text fields (backslash + double-quote).
-    local _jtitle    : subinstr local title    `"\"' `"\\"', all
-    local _jtitle    : subinstr local _jtitle  `"""' `"\""', all
-    local _jsubtitle : subinstr local subtitle `"\"' `"\\"', all
-    local _jsubtitle : subinstr local _jsubtitle `"""' `"\""', all
-    local _jnote     : subinstr local note     `"\"' `"\\"', all
-    local _jnote     : subinstr local _jnote   `"""' `"\""', all
-    local _jxlabel   : subinstr local xlabel   `"\"' `"\\"', all
-    local _jxlabel   : subinstr local _jxlabel `"""' `"\""', all
-    local _jylabel   : subinstr local ylabel   `"\"' `"\\"', all
-    local _jylabel   : subinstr local _jylabel `"""' `"\""', all
-    local _jnamelbl  : subinstr local namelabel `"""' `"\""', all
-    local _jvallbl   : subinstr local valuelabel `"""' `"\""', all
-    local _jlevord   : subinstr local levelorder `"""' `"\""', all
-    local _jctrlvl   : subinstr local centerlevel `"""' `"\""', all
+    * JSON-safe escape of free-text fields, read without macro expansion.
+    foreach _o in title subtitle note xlabel ylabel namelabel valuelabel ///
+        levelorder centerlevel georegion georesolution combotypes        ///
+        combodefault labelwrap {
+        mata: st_local("_j`_o'", _gcw_jstr(st_local("`_o'")))
+    }
+    mata: st_local("_jinner",  _gcw_jnum(strtoreal(st_local("innerradius"))))
+    mata: st_local("_jbucket", _gcw_jnum(strtoreal(st_local("bucketsize"))))
 
     file write `fh' `""type":"`type'","scheme":"`scheme'","' _n
     file write `fh' `""width":`width',"height":`height',"' _n
-    file write `fh' `""title":"`_jtitle'","subtitle":"`_jsubtitle'","note":"`_jnote'","' _n
+    file write `fh' `""title":"`macval(_jtitle)'","subtitle":"`macval(_jsubtitle)'","note":"`macval(_jnote)'","' _n
     file write `fh' `""xvar":"`xvar'","yvar":"`yvar'","' _n
-    file write `fh' `""xlabel":"`_jxlabel'","ylabel":"`_jylabel'","' _n
+    file write `fh' `""xlabel":"`macval(_jxlabel)'","ylabel":"`macval(_jylabel)'","' _n
     file write `fh' `""name":"`name'","over":"`over'","level":"`level'","time":"`time'","' _n
-    file write `fh' `""namelabel":"`_jnamelbl'","valuelabel":"`_jvallbl'","' _n
-    file write `fh' `""levelorder":"`_jlevord'","centerlevel":"`_jctrlvl'","' _n
+    file write `fh' `""namelabel":"`macval(_jnamelabel)'","valuelabel":"`macval(_jvaluelabel)'","' _n
+    file write `fh' `""levelorder":"`macval(_jlevelorder)'","centerlevel":"`macval(_jcenterlevel)'","' _n
     file write `fh' `""download":`isdownload',"datatable":`isdatatable',"animate":`isanimate',"' _n
     file write `fh' `""tx2036style":`istx2036style',"downloadpos":"`downloadpos'","' _n
     file write `fh' `""stacked":`isstacked',"normalize":`isnormalize',"directlabels":`isdirectlabels',"' _n
-    file write `fh' `""innerradius":`innerradius',"bucketsize":`bucketsize',"' _n
-    file write `fh' `""geo_region":"`georegion'","geo_resolution":"`georesolution'","' _n
-    file write `fh' `""combo_types":"`combotypes'","combo_default":"`combodefault'","' _n
-    file write `fh' `""labelwrap":"`labelwrap'","' _n
+    file write `fh' `""innerradius":`_jinner',"bucketsize":`_jbucket',"' _n
+    file write `fh' `""geo_region":"`macval(_jgeoregion)'","geo_resolution":"`macval(_jgeoresolution)'","' _n
+    file write `fh' `""combo_types":"`macval(_jcombotypes)'","combo_default":"`macval(_jcombodefault)'","' _n
+    file write `fh' `""labelwrap":"`macval(_jlabelwrap)'","' _n
     file write `fh' `""legendpos":"`legendpos'","' _n
     file write `fh' `""table_search":`istblsearch',"' _n
     file write `fh' `""table_sticky":`istblsticky',"' _n
@@ -261,4 +275,70 @@ program define googlechart_writehtml
 
     file write `fh' `"</body></html>"' _n
     file close `fh'
+end
+
+
+* ---------------------------------------------------------------------------
+* Escaping helpers, private to this file (see googlechart_appendfile.ado for
+* why there is no "mata drop").  Characters are built with char() so the
+* source holds no escape sequences.  _gcw_jstr() matches _gc_jstr() in
+* googlechart.ado.
+* ---------------------------------------------------------------------------
+mata:
+string scalar _gcw_jnum(real scalar x)
+{
+    string scalar s
+
+    if (missing(x)) return("null")
+    s = strofreal(x, "%17.0g")
+    if (strtoreal(s) != x) s = strofreal(x, "%24.16e")
+    s = strtrim(s)
+    if (substr(s, 1, 1) == ".")       s = "0" + s
+    else if (substr(s, 1, 2) == "-.") s = "-0" + substr(s, 2, .)
+    return(s)
+}
+
+string scalar _gcw_jstr(string scalar s)
+{
+    real scalar i
+    string scalar bs, q
+
+    bs = char(92)
+    q  = char(34)
+    s = subinstr(s, bs, bs + bs)
+    s = subinstr(s, q, bs + q)
+    s = subinstr(s, char(10), bs + "n")
+    s = subinstr(s, char(13), bs + "r")
+    s = subinstr(s, char(9),  bs + "t")
+    s = subinstr(s, char(8),  bs + "b")
+    s = subinstr(s, char(12), bs + "f")
+    for (i = 1; i <= 31; i++) {
+        if (i != 8 & i != 9 & i != 10 & i != 12 & i != 13) {
+            s = subinstr(s, char(i), bs + "u00" + (i < 16 ? "0" : "1") + substr("0123456789abcdef", mod(i, 16) + 1, 1))
+        }
+    }
+    s = subinstr(s, "<" + "/", "<" + bs + "/")
+    s = subinstr(s, q + char(39), q + bs + "u0027")
+    if (substr(s, 1, 1) == char(39))  s = bs + "u0027" + substr(s, 2, .)
+    if (substr(s, -1, 1) == char(96)) s = substr(s, 1, strlen(s) - 1) + bs + "u0060"
+    return(s)
+}
+
+// HTML text.  full = 1 escapes & < > " (for the title); full = 0 escapes
+// only & so subtitle/note markup keeps working.  ' and ` always become
+// character references.  Line breaks become spaces.
+string scalar _gcw_hesc(string scalar s, real scalar full)
+{
+    s = subinstr(s, "&", "&amp;")
+    if (full) {
+        s = subinstr(s, "<", "&lt;")
+        s = subinstr(s, ">", "&gt;")
+        s = subinstr(s, char(34), "&quot;")
+    }
+    s = subinstr(s, char(39), "&#39;")
+    s = subinstr(s, char(96), "&#96;")
+    s = subinstr(s, char(13), " ")
+    s = subinstr(s, char(10), " ")
+    return(s)
+}
 end

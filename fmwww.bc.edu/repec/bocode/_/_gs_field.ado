@@ -1,4 +1,6 @@
-*! _gs_field v0.1.0  2026-06-27
+*! _gs_field v0.1.1  2026-08-16
+*! v0.1.1: CONTENT() is now optional -- an empty blob returns an empty value
+*!         instead of aborting with "option content() required".
 *! Extract `key=value' from a content blob returned by googlesheets_runpy.
 *! INTERNAL helper.  Used by every googlesheets_* subcommand that needs
 *! to pull individual result fields out of the runpy r(content) blob.
@@ -11,7 +13,12 @@
 
 program define _gs_field, rclass
 version 17.0
-    syntax , CONTENT(string) KEY(string)
+    * CONTENT is optional: an empty blob is a valid input (the requested key
+    * is simply absent) and must return an empty value, not error out.  A
+    * required CONTENT() would abort with "option content() required" the
+    * moment a caller passed an empty result blob -- see googlesheets_runpy,
+    * which now diagnoses that upstream.
+    syntax , KEY(string) [ CONTENT(string) ]
 
     local _val ""
     local _nl = char(10)

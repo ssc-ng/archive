@@ -1,5 +1,25 @@
 *! statplot - plots of summary statistics
-*! 1.3.0  Eric A. Booth and Nicholas J. Cox  18 July 2026
+*! 1.3.3  Eric A. Booth and Nicholas J. Cox  14 November 2026
+*         ci: groups run top to bottom in hbar and dot, as in graph hbar,
+*         so sort descending puts the largest on top; a group with one
+*         observation draws no interval instead of a zero-width one;
+*         percent also rescales the saved se; r(varlist) is in plotted order.
+*         savedata()/listdata/frame(): over() and by() variables keep their
+*         own values and value labels, not the group codes 1, 2, ...
+*         share now applies with headings() and groups().
+*         wrap() no longer splits ASCII words (as 1.3.0).
+*         Labels containing a backtick no longer stop the command.
+*         Stata 16 and earlier: group labels past 32 characters kept whole.
+*         savedata() accepts paths with spaces; sort copes with an
+*         all-missing variable; an empty string group is no longer drawn
+*         as "1".  Clearer messages for a third over(), iweights with ci,
+*         malformed headings()/groups(), and options that have no effect.
+*  1.3.2  Eric A. Booth and Nicholas J. Cox  9 September 2026
+*         wrap() now measures display width and breaks scripts written
+*         without spaces (Chinese, Japanese, Thai) between characters.
+*         Category labels always travel as relabel() text, so labels
+*         longer than 32 characters are no longer silently truncated.
+*  1.3.1  Eric A. Booth and Nicholas J. Cox  25 August 2026
 *  1.3.0  Eric A. Booth and Nicholas J. Cox 18 July 2026
 *         New, fully backward-compatible options (every earlier option retained):
 *           ci level() ciopts()          confidence-interval / error-bar mode
@@ -70,10 +90,18 @@ program statplot, rclass
 			di as err "ci may not be combined with share"
 			exit 198
 		}
-		if "`weight'" == "pweight" {
-			di as err "ci does not support pweights; use fweight/aweight or omit weights"
+		if "`weight'" == "pweight" | "`weight'" == "iweight" {
+			di as err "ci does not support `weight's; use fweights or aweights, or omit weights"
 			exit 198
 		}
+	}
+	if "`descending'" != "" & "`sort'" == "" {
+		di as txt "note: descending has no effect without sort"
+	}
+	/// a third over() falls through to the graph options, where it gives a
+	/// confusing error (or "variable not found"); say what is wrong instead
+	if `"`options'"' != "" {
+		_statplot_nover3 , `options'
 	}
 	if "`frame'" != "" & c(stata_version) < 16 {
 		di as err "frame() requires Stata 16 or later"
@@ -126,8 +154,18 @@ program statplot, rclass
 	/// 31-character macro-name limit for long variable names.)
 	local i = 1
 	foreach v of local origvl {
-		if `"`varnames'"' == "" local olbl`i' : var label `v'
-		if `"`olbl`i''"' == "" local olbl`i' `"`v'"'
+		if `"`varnames'"' == "" {
+			local olbl`i' : var label `v'
+			/// a lone backtick (typed for an apostrophe, as in Don-backtick-t)
+			/// opens a macro reference and stops the command; show it as a
+			/// typographic apostrophe.  The opener of a compound quote is kept.
+			if c(stata_version) >= 14 {
+				mata: st_local("olbl`i'", subinstr(subinstr(subinstr(st_local("olbl`i'"), char(96)+char(34), char(1)), char(96), uchar(8217)), char(1), char(96)+char(34)))
+			}
+		}
+		if `"`olbl`i''"' == "" {
+			local olbl`i' `"`v'"'
+		}
 		local ++i
 	}
 
@@ -136,20 +174,85 @@ program statplot, rclass
 	forval n = 1/3 {
 		if `"`over`n''"' != "" {
 			tempvar myby`n'
-			egen `myby`n'' = group(`by`n'var'), label `missing'
+			/// -egen, group() label- truncates the labels it creates at 32
+			/// characters when its caller runs under version control below
+			/// 17.  Run it at 17 where the host allows, so labels longer
+			/// than 32 characters reach wrap() and the axis whole.
+			if c(stata_version) >= 17 {
+				version 17: egen `myby`n'' = group(`by`n'var'), label `missing'
+			}
+			else egen `myby`n'' = group(`by`n'var'), label `missing'
 			su `myby`n'', meanonly
 			local by`n'max = r(max)
 
+			/// Before Stata 17 there is no way round that truncation in egen,
+			/// so a label that reaches 30 bytes is fetched again from the
+			/// grouping variable itself, from the group's first observation.
+			local refetch = 0
+			if c(stata_version) < 17 {
+				tempvar obsn
+				qui gen long `obsn' = _n
+				capture confirm string variable `by`n'var'
+				local isstr = (_rc == 0)
+				local refetch = 1
+			}
 			forval i = 1/`by`n'max' {
-				local by`n'label`i' `"`: label (`myby`n'') `i''"'
+				local by`n'label`i' : label (`myby`n'') `i'
+				if `refetch' {
+					if length(`"`macval(by`n'label`i')'"') >= 30 {
+						qui su `obsn' if `myby`n'' == `i', meanonly
+						if `isstr' local by`n'label`i' = `by`n'var'[r(min)]
+						else {
+							local fv = `by`n'var'[r(min)]
+							local by`n'label`i' : label (`by`n'var') `fv'
+						}
+					}
+				}
+				if c(stata_version) >= 14 {
+					mata: st_local("by`n'label`i'", subinstr(subinstr(subinstr(st_local("by`n'label`i'"), char(96)+char(34), char(1)), char(96), uchar(8217)), char(1), char(96)+char(34)))
+				}
+				/// an empty string group has no label text, and the
+				/// extended function then returns the code itself, so it
+				/// was drawn as "1"; draw it blank, as graph hbar does
+				if `"`by`n'label`i''"' == "`i'" {
+					capture confirm string variable `by`n'var'
+					if _rc == 0 {
+						qui count if `myby`n'' == `i' & `by`n'var' == ""
+						if r(N) local by`n'label`i' " "
+					}
+				}
 				if `wrap' > 0 {
 					_statplot_wrap , width(`wrap') text(`"`by`n'label`i''"')
 					local by`n'label`i' `"`s(wrapped)'"'
 				}
 			}
 
+			if `refetch' drop `obsn'
 			local by`n'label : var label `by`n'var'
-			if `"`by`n'label'"' == "" local by`n'label `"`by`n'var'"' //changed
+			if c(stata_version) >= 14 {
+				mata: st_local("by`n'label", subinstr(subinstr(subinstr(st_local("by`n'label"), char(96)+char(34), char(1)), char(96), uchar(8217)), char(1), char(96)+char(34)))
+			}
+			if `"`by`n'label'"' == "" {
+				local by`n'label `"`by`n'var'"'
+			}
+		}
+	}
+
+	/// for savedata()/listdata/frame(): a crosswalk from each group code to
+	/// the grouping variable's own values, so the exported data carry those
+	/// values (0/1 for foreign, say) rather than the codes 1, 2, ...
+	local expose = (`"`savedata'"' != "" | "`listdata'" != "" | "`frame'" != "")
+	if `expose' & `"`over1'`over2'`over3'"' != "" {
+		tempfile _full
+		qui save `_full'
+		forval n = 1/3 {
+			if "`myby`n''" != "" {
+				tempfile _xw`n'
+				qui keep `myby`n'' `by`n'var'
+				qui bysort `myby`n'': keep if _n == 1
+				qui save `_xw`n''
+				qui use `_full', clear
+			}
 		}
 	}
 
@@ -166,6 +269,11 @@ program statplot, rclass
 		collapse (`statistic') `varlist' if `touse' [`weight' `exp'],  `byby'
 
 		if `"`over1'`over2'`over3'"' != "" local _Ngroups = _N
+
+		foreach v of local varlist {
+			qui count if `v' < .
+			if r(N) == 0 di as txt "note: the `statistic' of `v' is missing throughout; nothing is drawn for it"
+		}
 
 		// ---- percent / share transforms (rescale the plotted values) ----
 		local ytitle `"`statistic'"'
@@ -210,7 +318,10 @@ program statplot, rclass
 			local keyval ""
 			foreach v of local varlist {
 				qui su `v', meanonly
-				local keyval `keyval' `r(mean)'
+				/// an all-missing variable leaves r(mean) empty, which
+				/// would shift every later key; hold its place with "."
+				local km = r(mean)
+				local keyval `keyval' `km'
 			}
 			_statplot_order , vlist(`varlist') keyval(`keyval') ///
 				`sort' `descending' order(`order') first(`first') last(`last')
@@ -234,17 +345,16 @@ program statplot, rclass
 		if `"`savedata'"' != "" | "`listdata'" != "" | "`frame'" != "" {
 			tempfile _hold
 			qui save `_hold'
+			local _front ""
 			forval n = 1/3 {
 				if "`myby`n''" != "" {
-					capture rename `myby`n'' `by`n'var'
-					if _rc == 0 {
-						label var `by`n'var' `"`by`n'label'"'
-					}
-					else {
-						capture rename `myby`n'' _group`n'
-						capture label var _group`n' `"`by`n'label'"'
-					}
+					_statplot_origby `myby`n'' `by`n'var' `"`_xw`n''"' _group`n' `"`by`n'label'"'
+					local _front `_front' `s(name)'
 				}
+			}
+			if "`_front'" != "" {
+				order `_front'
+				sort `_front'
 			}
 			if "`listdata'" != "" {
 				di as txt _n "statplot: collapsed results set -- (`statistic') as plotted"
@@ -253,7 +363,7 @@ program statplot, rclass
 			if `"`savedata'"' != "" {
 				gettoken _sdfile _sdrest : savedata, parse(",")
 				local _sdrepl = cond(strpos(`"`_sdrest'"', "replace"), "replace", "")
-				qui save `_sdfile', `_sdrepl'
+				qui save `"`_sdfile'"', `_sdrepl'
 			}
 			if "`frame'" != "" {
 				version 16: capture frame drop `frame'
@@ -276,9 +386,25 @@ program statplot, rclass
 			}
 			label val `which' `what'
 
+			/// Labels longer than 32 characters (quotes included) must
+			/// travel as relabel() text: the graph engine reads a
+			/// category's VALUE label through a 32-character window and
+			/// truncates the rest, silently.  relabel() has no such limit,
+			/// so every label goes that way, wrapped or not.
+			/// a relabel() the user supplied through varopts() wins: two
+			/// relabel() suboptions in one over() is an error, not a
+			/// last-one-wins.
+			local vrlb ""
+			if strpos(lower(`"`varopts'"'), "relabel") == 0 {
+				forval i = 1/`nvars' {
+					local vrlb `"`vrlb'`i' `"`label`i''"' "'
+				}
+				local vrlb `"relabel(`vrlb')"'
+			}
+
 			/// graph
 			graph `recast' v1,  ///
-				over(`which', `varopts') ///
+				over(`which', `vrlb' `varopts') ///
 				yti(`"`ytitle'"') `options'
 		}
 
@@ -318,16 +444,42 @@ program statplot, rclass
 					}
 					label val `myby`n'' `by`n'labels'
 					label var `myby`n'' `"`by`n'label'"'
+					/// see the relabel note above: wrapped labels must not
+					/// rely on the value label, which the graph engine
+					/// truncates at 32 characters.  by() has no relabel(),
+					/// so panel titles keep the value-label route.  The
+					/// relabel is appended into by`n'opts the same way the
+					/// sort suboption is, because by`n'opts carries its own
+					/// leading comma when present.
+					if `n' < 3 & strpos(lower(`"`by`n'opts'"'), "relabel") == 0 {
+						local rlb`n' ""
+						forval i = 1/`by`n'max' {
+							local rlb`n' `"`rlb`n''`i' `"`by`n'label`i''"' "'
+						}
+						if `"`by`n'opts'"' == "" local by`n'opts `", relabel(`rlb`n'')"'
+						else local by`n'opts `"`by`n'opts' relabel(`rlb`n'')"'
+					}
 					if `n'==1  loc OVER1 over(`myby1' `by1opts')
 					else if `n'==2  loc OVER2 over(`myby2' `by2opts')
 					else if `n'==3  loc BY by(`myby3' `by3opts')
 				}
 			}
 
-			if `"`xpose'"'  == "" {
-				local overs `OVER1'  `OVER2' `BY' over(_stack, `varopts')
+			/// a relabel() the user supplied through varopts() wins: two
+			/// relabel() suboptions in one over() is an error, not a
+			/// last-one-wins.
+			local vrlb ""
+			if strpos(lower(`"`varopts'"'), "relabel") == 0 {
+				forval i = 1/`nvars' {
+					local vrlb `"`vrlb'`i' `"`label`i''"' "'
+				}
+				local vrlb `"relabel(`vrlb')"'
 			}
-			else local overs over(_stack, `varopts') `OVER1'  `OVER2' `BY'
+
+			if `"`xpose'"'  == "" {
+				local overs `OVER1'  `OVER2' `BY' over(_stack, `vrlb' `varopts')
+			}
+			else local overs over(_stack, `vrlb' `varopts') `OVER1'  `OVER2' `BY'
 
 			/// graph
 			graph `recast' `which', `overs' ///
@@ -342,9 +494,17 @@ program statplot, rclass
 
 		local dowhisk = cond("`ci'" != "", 1, 0)
 
-		if "`myby2'" != "" | "`myby3'" != "" {
+		if ("`myby2'" != "" | "`myby3'" != "") & `dowhisk' {
 			di as err "ci does not support two over() options or by(); see -cibar- or -coefplot- (from SSC)"
 			exit 198
+		}
+		if ("`myby2'" != "" | "`myby3'" != "") {
+			di as err "headings() and groups() are supported only for variables plotted without over() or by()"
+			exit 198
+		}
+		/// the twoway engine has no over(); its suboptions cannot be honoured
+		if `"`by1opts'"' != "" & `dowhisk' {
+			di as txt "note: over() suboptions are ignored with ci; use the sort and descending options to order the groups"
 		}
 		if `"`headings'`groups'"' != "" {
 			if "`myby1'" != "" {
@@ -381,8 +541,14 @@ program statplot, rclass
 			rename _ct_ _ct
 			qui gen double _lo = _mn - invttail(_ct-1, (100-`level')/200)*_se
 			qui gen double _hi = _mn + invttail(_ct-1, (100-`level')/200)*_se
-			qui replace _lo = _mn if _ct <= 1 | _se >= .
-			qui replace _hi = _mn if _ct <= 1 | _se >= .
+			/// a CI is undefined for a group of one (or with no SE): draw no
+			/// whisker rather than a zero-width one that implies certainty
+			qui replace _lo = . if _ct <= 1 | _se >= .
+			qui replace _hi = . if _ct <= 1 | _se >= .
+			qui count if (_ct <= 1 | _se >= .) & _mn < .
+			if r(N) {
+				di as txt "note: no confidence interval for " r(N) " bar(s) based on a single observation"
+			}
 		}
 		else {
 			qui collapse (`statistic') `mstubs' if `touse' [`weight' `exp'], `ciby'
@@ -399,11 +565,30 @@ program statplot, rclass
 			if `dowhisk' {
 				qui replace _lo = 100*_lo
 				qui replace _hi = 100*_hi
+				qui replace _se = 100*_se
 			}
 			local ytitle "percent"
 		}
+		/// share is reached here only with headings()/groups() (ci excludes
+		/// it), so there is no over(): base(var) gives 100 for each bar, and
+		/// base(total) and base(over) give each bar's share of the total
+		if "`share'" != "" {
+			tempvar den
+			if "`base'" == "var" qui egen double `den' = total(_mn), by(_vni)
+			else                 qui egen double `den' = total(_mn)
+			qui replace _mn = cond(`den' == 0, ., 100*_mn/`den')
+			drop `den'
+			local ytitle `"percent (share of `base')"'
+		}
 
 		if "`myby1'" != "" local _Ngroups = `by1max'
+
+		local i = 0
+		foreach v of local varlist {
+			local ++i
+			qui count if _mn < . & _vni == `i'
+			if r(N) == 0 di as txt "note: the `statistic' of `v' is missing throughout; nothing is drawn for it"
+		}
 
 		tempvar xpos
 		qui gen double `xpos' = .
@@ -417,7 +602,8 @@ program statplot, rclass
 			local keyval ""
 			forval i = 1/`nvars' {
 				qui su _mn if _vni==`i', meanonly
-				local keyval `keyval' `r(mean)'
+				local km = r(mean)
+				local keyval `keyval' `km'
 			}
 			_statplot_order , vlist(`varlist') keyval(`keyval') ///
 				`sort' `descending' order(`order') first(`first') last(`last')
@@ -427,7 +613,7 @@ program statplot, rclass
 			// parse headings()/groups() into spec = "label" pairs
 			local nH 0
 			if `"`headings'"' != "" {
-				_statplot_hgparse `headings'
+				_statplot_hgparse headings `headings'
 				local nH = `s(n)'
 				forval h = 1/`nH' {
 					local Hspec`h' `"`s(spec`h')'"'
@@ -436,7 +622,7 @@ program statplot, rclass
 			}
 			local nG 0
 			if `"`groups'"' != "" {
-				_statplot_hgparse `groups'
+				_statplot_hgparse groups `groups'
 				local nG = `s(n)'
 				forval gg = 1/`nG' {
 					local Gspec`gg' `"`s(spec`gg')'"'
@@ -459,6 +645,9 @@ program statplot, rclass
 							continue, break
 						}
 					}
+				}
+				if !`done' {
+					di as txt `"note: headings() entry "`sp'" matches no plotted variable"'
 				}
 			}
 
@@ -515,21 +704,28 @@ program statplot, rclass
 					local mid = (`ymin'+`ymax')/2
 					local grouplab `"`grouplab' `mid' `"`Glab`gg''"'"'
 				}
+				else {
+					di as txt `"note: groups() entry "`sp'" matches no plotted variable"'
+				}
 			}
 			if `"`grouplab'"' != "" local phantom (scatteri 1 0 `naxis' 0, yaxis(2) msymbol(none))
 		}
 		else if `nvars' == 1 {
 			// ---- one over, single variable: one bar per group ----
 			if "`sort'" != "" {
-				if "`descending'" != "" gsort -_mn
-				else sort _mn
+				if "`descending'" != "" gsort -_mn `myby1'
+				else sort _mn `myby1'
 			}
 			else sort `myby1'
-			qui replace `xpos' = _n
+			/// the first group goes on top in hbar and dot (as in graph
+			/// hbar), and on the left in bar
 			local naxis = _N
+			if "`recast'" == "bar" qui replace `xpos' = _n
+			else                   qui replace `xpos' = `naxis' - _n + 1
 			forval j = 1/`naxis' {
 				local gid = `myby1'[`j']
-				label def `catlab' `j' `"`by1label`gid''"', modify
+				local y = `xpos'[`j']
+				label def `catlab' `y' `"`by1label`gid''"', modify
 			}
 		}
 		else {
@@ -537,7 +733,8 @@ program statplot, rclass
 			local keyval ""
 			forval i = 1/`nvars' {
 				qui su _mn if _vni==`i', meanonly
-				local keyval `keyval' `r(mean)'
+				local km = r(mean)
+				local keyval `keyval' `km'
 			}
 			_statplot_order , vlist(`varlist') keyval(`keyval') ///
 				`sort' `descending' order(`order') first(`first') last(`last')
@@ -558,10 +755,13 @@ program statplot, rclass
 				label def `plabel' `p' `"`_lab'"', modify
 			}
 			label val `panelv' `plabel'
-			qui replace `xpos' = `myby1'
 			local naxis = `by1max'
+			if "`recast'" == "bar" qui replace `xpos' = `myby1'
+			else                   qui replace `xpos' = `naxis' - `myby1' + 1
 			forval j = 1/`naxis' {
-				label def `catlab' `j' `"`by1label`j''"', modify
+				if "`recast'" == "bar" local y = `j'
+				else                   local y = `naxis' - `j' + 1
+				label def `catlab' `y' `"`by1label`j''"', modify
 			}
 			local byopt by(`panelv', legend(off) note(""))
 		}
@@ -594,15 +794,8 @@ program statplot, rclass
 				rename _ct N
 			}
 			if "`myby1'" != "" {
-				capture rename `myby1' `by1var'
-				if _rc {
-					capture rename `myby1' _group1
-					capture order _group1
-				}
-				else {
-					capture label var `by1var' `"`by1label'"'
-					capture order `by1var'
-				}
+				_statplot_origby `myby1' `by1var' `"`_xw1'"' _group1 `"`by1label'"'
+				order `s(name)' variable
 			}
 			else capture order variable
 			if "`listdata'" != "" {
@@ -613,7 +806,7 @@ program statplot, rclass
 			if `"`savedata'"' != "" {
 				gettoken _sdfile _sdrest : savedata, parse(",")
 				local _sdrepl = cond(strpos(`"`_sdrest'"', "replace"), "replace", "")
-				qui save `_sdfile', `_sdrepl'
+				qui save `"`_sdfile'"', `_sdrepl'
 			}
 			if "`frame'" != "" {
 				version 16: capture frame drop `frame'
@@ -651,6 +844,9 @@ program statplot, rclass
 		}
 	}
 
+	/// under the twoway engine the plotted order is held in seq
+	if "`seq'" != "" local varlist `seq'
+
 	/// ---- rclass results ----
 	return local cmd "statplot"
 	return local statistic "`statistic'"
@@ -659,6 +855,46 @@ program statplot, rclass
 	return scalar N_vars = `nvars'
 	if "`_Ngroups'" != "" return scalar N_groups = `_Ngroups'
 	if "`ci'" != "" return scalar level = `level'
+end
+
+
+*-----------------------------------------------------------------------------
+* helper: in an exported results set, replace a group-code variable by the
+* grouping variable's own values (merged from a crosswalk file), keeping the
+* row order.  If that name is already taken, the codes stay, renamed.
+* Returns the name used in s(name).
+*-----------------------------------------------------------------------------
+program _statplot_origby, sclass
+	version 8.2
+	args code orig xwfile fallback vlabel
+	capture confirm new variable `orig'
+	if _rc {
+		rename `code' `fallback'
+		label var `fallback' `"`vlabel'"'
+		sreturn local name `fallback'
+		exit
+	}
+	tempvar ord mrg
+	qui gen long `ord' = _n
+	sort `code'
+	qui merge `code' using `"`xwfile'"', uniqusing nokeep _merge(`mrg')
+	drop `mrg' `code'
+	sort `ord'
+	drop `ord'
+	label var `orig' `"`vlabel'"'
+	sreturn local name `orig'
+end
+
+
+*-----------------------------------------------------------------------------
+* helper: stop a third over(), which -syntax- leaves among the graph options
+*-----------------------------------------------------------------------------
+program _statplot_nover3
+	syntax [, OVER(str asis) * ]
+	if `"`over'"' != "" {
+		di as err "at most two over() options may be specified; use by() for a third grouping"
+		exit 198
+	}
 end
 
 
@@ -673,17 +909,59 @@ program _statplot_wrap, sclass
 		sreturn local wrapped `"`txt'"'
 		exit
 	}
+
+	/// Widths are measured with -udstrlen()-, the DISPLAY width, wherever the
+	/// host has it (Stata 14 and up).  -length()- counts BYTES, so a
+	/// 20-character Chinese label measured 60 and the breaks landed in the
+	/// wrong places.  Scripts written without spaces (Chinese, Japanese,
+	/// Thai) also leave wrap() nothing to break on, so a token too wide for
+	/// a line of its own is split between characters instead.  Stata 13 and
+	/// earlier keep the byte-based behaviour, which is exact for ASCII.
+	local uni = (c(stata_version) >= 14)
+
 	local nseg 0
 	local line ""
 	foreach word of local txt {
-		if `"`line'"' == "" local cand `"`word'"'
-		else                local cand `"`line' `word'"'
-		if length(`"`cand'"') > `width' & `"`line'"' != "" {
-			local ++nseg
-			local seg`nseg' `"`line'"'
-			local line `"`word'"'
+		if `uni' local wlen = udstrlen(`"`word'"')
+		else     local wlen = length(`"`word'"')
+
+		/// only words in a script written without spaces (or of full-width
+		/// characters) are split; an over-wide ASCII or other alphabetic
+		/// word stays whole on a line of its own, as in 1.3.0
+		local nospace 0
+		if `uni' & `wlen' > `width' {
+			local nospace = ustrregexm(`"`word'"', "[\x{0E00}-\x{0EFF}\x{1000}-\x{109F}\x{1780}-\x{17FF}\x{2E80}-\x{A4CF}\x{AC00}-\x{D7AF}\x{F900}-\x{FAFF}\x{FF00}-\x{FFEF}]")
 		}
-		else local line `"`cand'"'
+		if `nospace' {
+			/// wider than a whole line: break between characters
+			if `"`line'"' != "" {
+				local ++nseg
+				local seg`nseg' `"`line'"'
+				local line ""
+			}
+			local nch = ustrlen(`"`word'"')
+			forval c = 1/`nch' {
+				local ch = usubstr(`"`word'"', `c', 1)
+				if udstrlen(`"`line'`ch'"') > `width' & `"`line'"' != "" {
+					local ++nseg
+					local seg`nseg' `"`line'"'
+					local line `"`ch'"'
+				}
+				else local line `"`line'`ch'"'
+			}
+		}
+		else {
+			if `"`line'"' == "" local cand `"`word'"'
+			else                local cand `"`line' `word'"'
+			if `uni' local clen = udstrlen(`"`cand'"')
+			else     local clen = length(`"`cand'"')
+			if `clen' > `width' & `"`line'"' != "" {
+				local ++nseg
+				local seg`nseg' `"`line'"'
+				local line `"`word'"'
+			}
+			else local line `"`cand'"'
+		}
 	}
 	if `"`line'"' != "" {
 		local ++nseg
@@ -782,15 +1060,15 @@ end
 * Returns s(n), s(spec1), s(lab1), s(spec2), ... in order.
 *-----------------------------------------------------------------------------
 program _statplot_hgparse, sclass
-	local rest `"`0'"'
+	gettoken optname rest : 0
 	local n 0
-	while `"`rest'"' != "" {
+	while trim(`"`rest'"') != "" {
 		local eqpos = strpos(`"`rest'"', "=")
-		if `eqpos' == 0 {
-			local rest ""
-			continue
+		local spec = trim(substr(`"`rest'"', 1, max(`eqpos'-1, 0)))
+		if `eqpos' == 0 | `"`spec'"' == "" {
+			di as err `"`optname'() must be given as varlist = "label" pairs, for example `optname'(price mpg = "Cost")"'
+			exit 198
 		}
-		local spec = trim(substr(`"`rest'"', 1, `eqpos'-1))
 		local rest = substr(`"`rest'"', `eqpos'+1, .)
 		gettoken lab rest : rest
 		local ++n

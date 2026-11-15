@@ -1,0 +1,28 @@
+d 'XTPMED': module to perform causal mediation analysis for balanced or unbalanced panel data with one or more mediators
+d
+d  xtpmed is a Stata command for panel causal mediation analysis
+d using the Dynamic Fixed Effects (DFE) estimator within an
+d ARDL(1,1)-ECM framework. It estimates direct, indirect and total
+d effects while accounting for long-run relationships and dynamic
+d adjustment mechanisms. 
+d
+d KW: causal mediation
+d KW: panel data
+d KW: ARDL
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261114
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+d Author: Francis Baidoo, Koforidua Technical University
+d Support: email ytoyinyusuf@@gmail.com
+d
+f xtpmed.ado
+f xtpmed.sthlp
+f xtpmed_cert_dynamic.dta
+f xtpmed_cert_static.dta
+f xtpmed_cert.do
+f xtpmed_example.do

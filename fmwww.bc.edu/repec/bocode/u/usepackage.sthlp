@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 2.0.0  25jul2026}{...}
+{* *! version 2.0.3  14nov2026}{...}
 {vieweralsosee "[R] net" "help net"}{...}
 {vieweralsosee "[R] ssc" "help ssc"}{...}
 {vieweralsosee "[R] search" "help search"}{...}
@@ -15,7 +15,7 @@
 {viewerjumpto "Stored results" "usepackage##results"}{...}
 {viewerjumpto "Author" "usepackage##author"}{...}
 {hline}
-help for {hi:usepackage}{right:v 2.0.0}
+help for {hi:usepackage}{right:v 2.0.3}
 {hline}
 
 {title:Title}
@@ -64,8 +64,9 @@ help for {hi:usepackage}{right:v 2.0.0}
 {synopt :{cmd:data(}{it:owner/repo}{cmd:)}}fetch data files from a GitHub repository{p_end}
 {synopt :{cmdab:f:iles(}{it:filelist}{cmd:)}}which repository files to fetch{p_end}
 {synopt :{cmdab:br:anch(}{it:name}{cmd:)}}branch to use (default: try {cmd:main}, then {cmd:master}){p_end}
-{synopt :{cmd:into(}{it:dir}{cmd:)}}directory to fetch data into (default: current){p_end}
+{synopt :{cmd:into(}{it:dir}{cmd:)}}directory to fetch data into (default: current); created if missing{p_end}
 {synopt :{cmdab:use:it}}load the fetched dataset when exactly one was fetched{p_end}
+{synopt :{cmd:clear}}with {cmd:useit}, allow unsaved data in memory to be replaced{p_end}
 
 {syntab:Auditing a do-file}
 {synopt :{cmd:scan(}{it:filename}{cmd:)}}report commands in a do-file that do not resolve{p_end}
@@ -102,7 +103,10 @@ and {opt noconfirm}).
 
 {phang}
 {cmdab:u:pdate} reinstalls each listed package even when it is already present.
-Without it, an installed package is left alone and reported as such.
+Without it, an installed package is left alone and reported as such. The
+installed copy is overwritten in place, not uninstalled first, so if the
+reinstall fails (no network, a source that has moved) the copy you had still
+works.
 
 {phang}
 {cmdab:near:est} widens the search: after looking for a package of that name and
@@ -123,7 +127,10 @@ hanging on a question nobody can answer.
 {phang}
 {cmdab:dry:run} reports what would be installed, from where, and whether
 ancillary files are involved, without changing anything. Good for checking a
-do-file's dependency list before handing it to someone.
+do-file's dependency list before handing it to someone. An inferred match is
+counted as it would be in a real unattended run: awaiting confirmation
+({cmd:r(ndefer)}) unless {opt noconfirm} is also given, in which case it counts
+as resolvable ({cmd:r(nok)}).
 
 {phang}
 {cmdab:noanc:illary} suppresses ancillary files. See
@@ -138,13 +145,25 @@ repository. See {help usepackage##github:GitHub packages}.
 {cmdab:use:it} fetch data. See {help usepackage##data:GitHub data}.
 
 {phang}
+{cmd:clear} goes with {cmdab:use:it}, which replaces the data in memory. If
+those data have unsaved changes, {cmd:usepackage} stops with error 4 ("no; data
+in memory would be lost") before fetching anything, just as {helpb use} would;
+{cmd:clear} says to go ahead. Data loaded from a CSV or Excel file count as
+unsaved, so a second {cmd:useit} in a row needs {cmd:clear}.
+
+{phang}
 {cmdab:br:anch(}{it:name}{cmd:)} pins the branch. By default {cmd:main} is tried
 first, then {cmd:master}.
 
 {phang}
 {cmd:scan(}{it:filename}{cmd:)} reads a do-file and lists the commands in it that
 do not resolve on this machine, so you can see what a collaborator would be
-missing before you send it. It reports; it never installs.
+missing before you send it. It reports; it never installs. Programs the
+do-file defines itself, {cmd:end}, the contents of {cmd:mata} and {cmd:python}
+blocks, comments, and lines that only continue the one before ({cmd:///}, or
+anything up to the {cmd:;} under {cmd:#delimit ;}) are not reported. Only the
+first word of each command line is checked, so a command that follows a prefix
+such as {cmd:by ...:} is not looked at.
 
 
 {marker ancillary}{title:Ancillary files}
@@ -191,7 +210,7 @@ the repository root and then in {cmd:ado/}, {cmd:src/}, {cmd:stata/} and
 All of these are accepted:
 
 {p 8 8 2}{cmd:. usepackage applyvarlabels, github("ericabooth/applyvarlabels-stata-public")}{p_end}
-{p 8 8 2}{cmd:. usepackage sparkta2, github("texas-2036/sparkta2-stata-public")}{p_end}
+{p 8 8 2}{cmd:. usepackage sparkta2, github("ericabooth/sparkta2-stata-public")}{p_end}
 {p 8 8 2}{cmd:. usepackage mypkg, github("https://github.com/owner/repo")}     // pasted URL{p_end}
 {p 8 8 2}{cmd:. usepackage mypkg, github("https://github.com/owner/repo/tree/main")}{p_end}
 {p 8 8 2}{cmd:. usepackage mypkg, github("owner/repo.git")}{p_end}
@@ -208,14 +227,15 @@ If no {cmd:stata.toc} turns up, {cmd:usepackage} says so and points you at
 You usually remember the command, not which repository it sits in. Give
 {cmd:github()} a bare {it:owner} and {cmd:usepackage} works it out:
 
-{p 8 8 2}{cmd:. usepackage editanything, github("texas-2036")}{p_end}
-{p 8 8 2}{cmd:      searching repositories owned by texas-2036}{p_end}
+{p 8 8 2}{cmd:. usepackage editanything, github("ericabooth")}{p_end}
+{p 8 8 2}{cmd:      searching repositories owned by ericabooth}{p_end}
 {p 8 8 2}{cmd:      14 repositor(ies) listed; narrowing by name}{p_end}
-{p 8 8 2}{cmd:      matched texas-2036/EditAnything-stata-public in owner texas-2036}{p_end}
+{p 8 8 2}{cmd:      matched ericabooth/EditAnything-stata-public in owner ericabooth}{p_end}
 
 {p 4 4 2}
-It lists the account's repositories in {bf:one} request against the ordinary
-GitHub API (60 an hour), not the code-search API (about 10 a minute), then
+It lists the account's repositories against the ordinary GitHub API (60
+requests an hour; one request per 100 repositories, up to 1,000 repositories),
+not the code-search API (about 10 a minute), then
 narrows by name before probing anything: an exactly matching repository name
 first, then names beginning with the package name, then names containing it.
 
@@ -231,8 +251,8 @@ looks right but carries no matching {cmd:.pkg} is offered for confirmation.
 Leave the package name off, or give {cmd:*}, and {cmd:github()} becomes a
 catalogue rather than an install:
 
-{p 8 8 2}{cmd:. usepackage, github("texas-2036")}{p_end}
-{p 8 8 2}{cmd:. usepackage *, github("texas-2036")}     // the same thing{p_end}
+{p 8 8 2}{cmd:. usepackage, github("ericabooth")}{p_end}
+{p 8 8 2}{cmd:. usepackage *, github("ericabooth")}     // the same thing{p_end}
 
 {p 8 8 2}{cmd:      14 repositor(ies); checking each for a stata.toc...}{p_end}
 {p 8 8 2}{cmd:      --------------------------------------------------------}{p_end}
@@ -250,7 +270,7 @@ The package names come from each repository's {cmd:stata.toc}, which is what
 rather than a guess from file names. Repositories with no {cmd:stata.toc} are
 counted but not listed. Point it at one repository instead to see just that:
 
-{p 8 8 2}{cmd:. usepackage *, github("texas-2036/sparkta2-stata-public")}{p_end}
+{p 8 8 2}{cmd:. usepackage *, github("ericabooth/sparkta2-stata-public")}{p_end}
 
 
 {title:Searching your own accounts automatically}
@@ -259,16 +279,16 @@ counted but not listed. Point it at one repository instead to see just that:
 If you keep packages on GitHub, name the accounts once and stop typing
 {cmd:github()} at all. Put this in {helpb profile.do}:
 
-{p 8 8 2}{cmd:global usepackage_github "ericabooth texas-2036"}{p_end}
+{p 8 8 2}{cmd:global usepackage_github "ericabooth yourorg"}{p_end}
 
 {p 4 4 2}
 and any name that is on neither SSC nor the {cmd:net search} catalogue is looked
 for in those accounts, in order, before {cmd:usepackage} gives up:
 
-{p 8 8 2}{cmd:. usepackage editanything}{p_end}
+{p 8 8 2}{cmd:. usepackage mytool}{p_end}
 {p 8 8 2}{cmd:      not found on SSC, and no match in the net search catalogue}{p_end}
 {p 8 8 2}{cmd:      searching repositories owned by ericabooth}{p_end}
-{p 8 8 2}{cmd:      matched ericabooth/EditAnything-stata-public in owner ericabooth}{p_end}
+{p 8 8 2}{cmd:      matched ericabooth/mytool-repo in owner ericabooth}{p_end}
 {p 8 8 2}{cmd:      installed from https://raw.githubusercontent.com/...}{p_end}
 
 {p 4 4 2}
@@ -290,7 +310,11 @@ package. {cmd:data()} fetches it. Name the files you want:
 or name none and {cmd:usepackage} lists every {cmd:.dta}, {cmd:.csv},
 {cmd:.tsv}, {cmd:.xlsx} and {cmd:.txt} it can see and asks before downloading in
 bulk. {cmd:useit} loads the result when exactly one file was fetched, choosing
-{helpb use}, {helpb import delimited} or {helpb import excel} by extension.
+{helpb use}, {helpb import delimited} or {helpb import excel} by extension. It
+replaces the data in memory, so it stops with error 4 if they have unsaved
+changes; add {cmd:clear} to allow it. Delimited files are read with
+{cmd:bindquote(strict)}, so a quoted text field that holds a line break stays in
+one row.
 
 {p 4 4 2}
 Two things this handles that a hand-written {helpb copy} does not.
@@ -372,10 +396,12 @@ copy, {cmd:usepackage} says so instead of quietly reporting success.
 
 {p 4 4 2}
 {bf:Searching is chatty in a log.} Finding non-SSC packages means calling
-{helpb net##search_options:net search}, which writes its catalogue to any open
-log even when run quietly. Nothing is printed to the Results window, but expect
-the raw catalogue in a log file. (In version 1 this output could not be
-suppressed at all.)
+{helpb net##search_options:net search}, which writes its raw catalogue to any
+open log even when run quietly. {cmd:usepackage} pauses every open log for the
+length of the search and resumes it afterwards, so your log files stay clean.
+The one place it cannot do that is the log of a batch run
+({cmd:stata -b do ...}), which is the Results window itself; expect the raw
+catalogue lines there.
 
 {p 4 4 2}
 {bf:usepackage only saves typing for more than one package.} For a single known
@@ -416,25 +442,25 @@ package, {cmd:ssc install} is shorter.
 {phang2}{cmd:. usepackage applyvarlabels, github("ericabooth/applyvarlabels-stata-public")}{p_end}
 {phang2}{it:probes the layout, installs, and fetches the 2 ancillary example files}{p_end}
 
-{phang2}{cmd:. usepackage sparkta2, github("texas-2036/sparkta2-stata-public")}{p_end}
+{phang2}{cmd:. usepackage sparkta2, github("ericabooth/sparkta2-stata-public")}{p_end}
 {phang2}{it:its D3 and TopoJSON assets are ancillary, so they come too}{p_end}
 
 {pstd}{bf:Search a whole GitHub account instead of naming the repository}{p_end}
-{phang2}{cmd:. usepackage editanything, github("texas-2036")}{p_end}
+{phang2}{cmd:. usepackage editanything, github("ericabooth")}{p_end}
 {phang2}{it:lists the account's repos, narrows by name, installs the one that ships it}{p_end}
 
 {pstd}{bf:What Stata packages does an account ship?}{p_end}
-{phang2}{cmd:. usepackage, github("texas-2036")}{p_end}
+{phang2}{cmd:. usepackage, github("ericabooth")}{p_end}
 {phang2}{cmd:. usepackage *, github("ericabooth")}{p_end}
 
 {pstd}{bf:A pasted repository URL, in any of its usual shapes}{p_end}
-{phang2}{cmd:. usepackage editanything, github("https://github.com/texas-2036/EditAnything-stata-public")}{p_end}
-{phang2}{cmd:. usepackage editanything, github("https://github.com/texas-2036/EditAnything-stata-public/tree/main")}{p_end}
+{phang2}{cmd:. usepackage editanything, github("https://github.com/ericabooth/EditAnything-stata-public")}{p_end}
+{phang2}{cmd:. usepackage editanything, github("https://github.com/ericabooth/EditAnything-stata-public/tree/main")}{p_end}
 
 {pstd}{bf:Set your own accounts once, then forget about GitHub}{p_end}
-{phang2}{cmd:. global usepackage_github "ericabooth texas-2036"}    // in profile.do{p_end}
-{phang2}{cmd:. usepackage editanything}{p_end}
-{phang2}{it:not on SSC or in the catalogue, so those accounts are searched}{p_end}
+{phang2}{cmd:. global usepackage_github "ericabooth yourorg"}    // in profile.do{p_end}
+{phang2}{cmd:. usepackage mytool}{p_end}
+{phang2}{it:a name on neither SSC nor the catalogue is looked for in those accounts}{p_end}
 
 {pstd}{bf:One list spanning SSC, the Stata Journal, and your own repositories}{p_end}
 {phang2}{cmd:. usepackage fre dropmiss editanything sparkta2, noconfirm}{p_end}
@@ -449,13 +475,13 @@ package, {cmd:ssc install} is shorter.
 {phang2}{cmd:. list in 1/5}{p_end}
 
 {pstd}{bf:A Stata dataset held under Git LFS}{p_end}
-{phang2}{cmd:. usepackage, data("scunning1975/mixtape") files("nsw_mixtape.dta") useit}{p_end}
+{phang2}{cmd:. usepackage, data("scunning1975/mixtape") files("nsw_mixtape.dta") useit clear}{p_end}
 {phang2}{it:the raw endpoint serves an LFS pointer; usepackage re-fetches the real file}{p_end}
 
 {pstd}{bf:A repository still on master}{p_end}
-{phang2}{cmd:. usepackage, data("fivethirtyeight/data") files("airline-safety/airline-safety.csv") useit}{p_end}
+{phang2}{cmd:. usepackage, data("fivethirtyeight/data") files("airline-safety/airline-safety.csv") useit clear}{p_end}
 
-{pstd}{bf:Several data files into a subdirectory}{p_end}
+{pstd}{bf:Several data files into a subdirectory (created if it does not exist)}{p_end}
 {phang2}{cmd:. usepackage, data("scunning1975/mixtape") files("nsw_mixtape.dta cps_mixtape.dta") into("data")}{p_end}
 
 {pstd}{bf:See what data a repository holds before taking any}{p_end}
@@ -479,14 +505,25 @@ package, {cmd:ssc install} is shorter.
 {synoptset 20 tabbed}{...}
 {p2col 5 20 24 2: Scalars}{p_end}
 {synopt:{cmd:r(nreq)}}packages requested{p_end}
-{synopt:{cmd:r(nok)}}packages installed{p_end}
+{synopt:{cmd:r(nok)}}packages installed (with {cmd:dryrun}: packages that would be installed){p_end}
 {synopt:{cmd:r(nskip)}}packages already present{p_end}
-{synopt:{cmd:r(ndefer)}}inferred matches left awaiting confirmation{p_end}
-{synopt:{cmd:r(nfail)}}packages not resolved{p_end}
+{synopt:{cmd:r(ndefer)}}inferred matches left awaiting confirmation (with {cmd:dryrun}: that would be){p_end}
+{synopt:{cmd:r(nfail)}}packages not resolved plus data files not fetched{p_end}
+{synopt:{cmd:r(ndreq)}}data files requested with {cmd:data()}{p_end}
+{synopt:{cmd:r(ndok)}}data files fetched{p_end}
+{synopt:{cmd:r(ndfail)}}data files not fetched{p_end}
 
 {p2col 5 20 24 2: Macros}{p_end}
-{synopt:{cmd:r(unresolved)}}names that could not be found{p_end}
+{synopt:{cmd:r(unresolved)}}package names that could not be found{p_end}
 {synopt:{cmd:r(deferred)}}names whose match needs confirming{p_end}
+{synopt:{cmd:r(datafiles)}}data files fetched{p_end}
+{synopt:{cmd:r(datafailed)}}data files that could not be fetched{p_end}
+{synopt:{cmd:r(missing)}}with {cmd:scan()}, commands that did not resolve{p_end}
+
+{pstd}The lists are space-separated with no leading or trailing blank. Every
+route ({it:packages}, {cmd:github()}, {cmd:data()}) stores these
+results, so the guard below works after any of them. A failed {cmd:github()}
+install or data file adds to {cmd:r(nfail)}; the command itself still returns 0.
 
 {pstd}So a do-file can stop rather than fail obscurely later:
 

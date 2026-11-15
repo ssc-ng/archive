@@ -1,4 +1,4 @@
-*! example_usepackage.do -- a tour of usepackage 2.0.0
+*! example_usepackage.do -- a tour of usepackage 2.0.3
 *! Eric A. Booth, Sr Researcher, Texas 2036 <eric.a.booth@gmail.com>
 *!
 *! Run this from a scratch directory: several steps drop ancillary files and
@@ -77,7 +77,7 @@ usepackage applyvarlabels, github("ericabooth/applyvarlabels-stata-public")
 * usepackage applyvarlabels, github("ericabooth/applyvarlabels-stata-public") noancillary
 
 * sparkta2's D3 / TopoJSON assets are ancillary by extension, so they come along
-* usepackage sparkta2, github("texas-2036/sparkta2-stata-public")
+* usepackage sparkta2, github("ericabooth/sparkta2-stata-public")
 
 * all of these forms are accepted:
 *   github("owner/repo")                      plain
@@ -99,18 +99,19 @@ di "gdp.csv: " _N " obs, " c(k) " vars"
 * files, so a plain -copy- appears to work and leaves a file Stata cannot read
 * ("not Stata format", r(610)).  usepackage spots the pointer and re-fetches
 * from GitHub's media endpoint instead.
-usepackage, data("scunning1975/mixtape") files("nsw_mixtape.dta") useit
+* (clear: the CSV loaded above counts as unsaved data in memory)
+usepackage, data("scunning1975/mixtape") files("nsw_mixtape.dta") useit clear
 di "nsw_mixtape.dta: " _N " obs, " c(k) " vars"
 
 * older repositories are still on master; usepackage finds whichever is live
 usepackage, data("fivethirtyeight/data") ///
-    files("airline-safety/airline-safety.csv") useit
+    files("airline-safety/airline-safety.csv") useit clear
 di "airline-safety.csv: " _N " obs, " c(k) " vars"
 
-* several files, into a subdirectory of their own
-cap mkdir data
+* several files, into a subdirectory of their own (created if missing)
 usepackage, data("scunning1975/mixtape") ///
     files("nsw_mixtape.dta cps_mixtape.dta") into("data")
+di "fetched " r(ndok) " of " r(ndreq) " data file(s); r(nfail) = " r(nfail)
 
 * name no files and usepackage lists what a repository holds and asks before
 * downloading in bulk (dryrun here so nothing is fetched)

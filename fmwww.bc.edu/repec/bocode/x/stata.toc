@@ -98,6 +98,7 @@ p xtflexur module to provide factor-augmented, break- and Fourier-robust panel t
 p xtflucbreak module to perform a fluctuation test for a structural change at an unknown date in heterogeneous panel data models, with or without common correlated effects
 p xtfmb module to execute Fama-MacBeth two-step panel regression
 p xtfmg module providing second-generation heterogeneous panel estimators with individual and common shocks:
+p xtgamfe module to perform fixed-effects gamma regression with log link for strictly positive panel outcomes
 p xtgcause module to test for Granger non-causality in heterogeneous panels
 p xtgeebcv module to compute bias-corrected (small-sample) standard errors for generalized estimating equations
 p xtgets module providing Panel General-to-Specific (GETS) Indicator Saturation for Structural Break Detection
@@ -168,6 +169,7 @@ p xtpdroot module to perform second-generation panel unit-root and stationarity 
 p xtpdyn module to estimate dynamic random effects probit model with unobserved heterogeneity
 p xtpedroni module to perform Pedroni's panel cointegration tests and Panel Dynamic OLS estimation
 p xtpfardl module to provide Fourier-augmented panel ARDL / CS-ARDL estimator 
+p xtpmed module to perform causal mediation analysis for balanced or unbalanced panel data with one or more mediators
 p xtpmg module for estimation of nonstationary heterogeneous panels
 p xtpqardl module to estimate Panel Quantile Autoregressive Distributed Lag (PQARDL) models
 p xtpqcce module providing panel quantile CCE mean-group estimators (QCCEMG & CCEMG-CSQR)

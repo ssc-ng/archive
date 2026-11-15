@@ -1,7 +1,7 @@
 {smcl}
-{* 18jul2026}{...}
+{* 14nov2026}{...}
 {hline}
-help for {hi:statplot}{right:version 1.3.0}
+help for {hi:statplot}{right:version 1.3.3}
 {hline}
 
 {title:Plots of summary statistics, including plots by category}
@@ -62,13 +62,16 @@ help for {hi:statplot}{right:version 1.3.0}
 {p 4 6 2}
 {cmd:fweight}s, {cmd:aweight}s, {cmd:iweight}s and {cmd:pweight}s may be specified;
 whichever weights {help collapse} accepts for the chosen {cmd:statistic()} are
-allowed.  The {cmd:ci} option does not accept {cmd:pweight}s.
+allowed.  The {cmd:ci} option accepts {cmd:fweight}s and {cmd:aweight}s only.
 
 
 {title:Description}
 
 {p 4 4 2}
-{cmd:statplot} plots summary statistics for {it:varlist}.
+{cmd:statplot} plots summary statistics for {it:varlist}: by default the mean
+of each variable, drawn as a horizontal bar chart with one bar per variable,
+optionally within the groups of one or two {cmd:over()} variables or in
+{cmd:by()} panels.
 
 
 {title:Remarks}
@@ -147,19 +150,31 @@ ordinary t-based confidence intervals of the mean (the same numbers as
 size returned by {help collapse}.
 
 {p 8 8 2}
-{cmd:ci} requires {cmd:statistic(mean)} (the default) and does not accept
-{cmd:pweight}s.  It supports no {cmd:over()}, one {cmd:over()} with a single
-variable, and one {cmd:over()} with several variables (drawn as small
-multiples, one panel per variable).  Two {cmd:over()} options, or {cmd:by()},
-are not supported with {cmd:ci}; for those, or for weighted intervals, see
+{cmd:ci} requires {cmd:statistic(mean)} (the default).  It accepts
+{cmd:fweight}s and {cmd:aweight}s, which give the same intervals as
+{cmd:ci means} with those weights, but not {cmd:pweight}s or {cmd:iweight}s.
+It supports no {cmd:over()}, one {cmd:over()} with a single variable, and one
+{cmd:over()} with several variables (drawn as small multiples, one panel per
+variable).  Two {cmd:over()} options, or {cmd:by()}, are not supported with
+{cmd:ci}; for those, or for survey and {cmd:pweight}ed data, see
 {help cibar:cibar} (Staudt) or {help coefplot:coefplot} (Jann), from SSC.
 {it:Use case:} a reviewer asks for 95% CIs on a bar chart of group means.
 
 {p 8 8 2}
+The groups appear in the same order as in {cmd:graph hbar}: the first group
+on top under {cmd:recast(hbar)} and {cmd:recast(dot)}, and on the left under
+{cmd:recast(bar)}.  Use {cmd:sort} and {cmd:descending} to rank them;
+suboptions inside {cmd:over()}, such as {cmd:sort(1)} or {cmd:relabel()}, are
+not used under {cmd:ci}, and a note says so.  A confidence interval needs at
+least two observations, so a bar based on one observation is drawn without
+whiskers, again with a note.
+
+{p 8 8 2}
 Because the {cmd:ci} graph is built with {help twoway} rather than
-{cmd:graph bar}, the {cmd:xpose} and {cmd:varopts()} options have no effect
-under {cmd:ci}, and {cmd:base()} is reserved by the {cmd:share} option (so it
-cannot be forwarded to {cmd:twoway bar}).
+{cmd:graph bar}, {it:graph_options} must be {help twoway_options:twoway options}
+(for example {cmd:title()}, {cmd:xlabel()}, {cmd:xsize()}); {cmd:graph bar}
+options such as {cmd:blabel()} or {cmd:bargap()} are not available, and
+{cmd:xpose} and {cmd:varopts()} have no effect.
 
 {p 4 8 2}
 {cmd:level(#)} sets the confidence level; the default is {cmd:level(95)} (or
@@ -171,8 +186,9 @@ example {cmd:ciopts(lcolor(gs6))} for grey error bars.
 
 {p 4 8 2}
 {cmd:baropts()} passes options to the CI bars in {cmd:recast(hbar)} (the
-default) and {cmd:recast(bar)} mode, for example {cmd:baropts(fcolor(gs10)
-lcolor(gs6))}.  It has no effect under {cmd:recast(dot)}.
+default) and {cmd:recast(bar)} mode, for example
+{cmd:baropts(fcolor(gs10) lcolor(gs6))}.  It has no effect under
+{cmd:recast(dot)}.
 
 {dlgtab:Percentages and shares}
 
@@ -203,7 +219,8 @@ across groups (each variable sums to 100 across the axis).{p_end}
 variables (each group sums to 100).{p_end}
 
 {p 8 8 2}
-{cmd:share} is most natural with {cmd:statistic(sum)} or {cmd:statistic(count)}.
+{cmd:share} may not be combined with {cmd:percent} or {cmd:ci}.  It is most
+natural with {cmd:statistic(sum)} or {cmd:statistic(count)}.
 {it:Use case:} showing how counts are distributed across categories as
 percentages, without collapsing and normalizing by hand.  For frequencies,
 fractions or percents of {it:categorical} data, {help catplot:catplot} (Cox,
@@ -215,8 +232,8 @@ from SSC) is a close relative.
 {cmd:sort} orders the bars or dots by the plotted value.  With two or more
 variables in {it:varlist} it orders the variables by their statistic; with a
 single variable and an {cmd:over()} it orders the groups.  {cmd:descending}
-orders from high to low.  {it:Use case:} turning an alphabetical bar chart into
-a ranking.
+orders from high to low; without {cmd:sort} it has no effect.  {it:Use case:}
+turning an alphabetical bar chart into a ranking.
 
 {p 4 8 2}
 {cmd:order(varlist)} fixes the order of the plotted variables to the order
@@ -233,7 +250,7 @@ after the options of the same names in {help coefplot:coefplot} (Jann, from
 SSC).  Each takes one or more {it:spec}{cmd: = "}{it:label}{cmd:"} entries,
 where {it:spec} is one or more variable names (with {cmd:*} and {cmd:?}
 wildcards).  Bold and other {help text:text} markup may be used in the labels,
-e.g. {cmd:"{bf:Access}"}.
+e.g. {cmd:"{c -(}bf:Access{c )-}"}.
 
 {p 8 8 2}
 {cmd:headings()} inserts each label as a section-title row immediately before
@@ -245,8 +262,9 @@ items under section titles such as "Access" and "Quality".
 {p 8 8 2}
 Because these labels occupy positioned rows, they build the graph with
 {help twoway} (as {cmd:ci} does), and are supported only for variables plotted
-without {cmd:over()}, in {cmd:recast(hbar)} (the default).  They may be combined
-with {cmd:ci}.
+without {cmd:over()} or {cmd:by()}, in {cmd:recast(hbar)} (the default).  They
+may be combined with {cmd:ci}, {cmd:percent} or {cmd:share}.  An entry that
+matches none of the plotted variables is skipped with a note.
 
 {dlgtab:Saving the results set}
 
@@ -260,6 +278,14 @@ bars against the numbers, or reusing the summary without re-running
 {cmd:collapse}.  The saved numbers reflect any {cmd:percent}/{cmd:share}
 rescaling.  Under {cmd:ci}, the saved data also carries the interval bounds
 ({cmd:mean}, {cmd:lo}, {cmd:hi}, {cmd:se}, {cmd:N}).
+
+{p 8 8 2}
+The {cmd:over()} and {cmd:by()} variables keep their names, values and value
+labels, so the results can be merged back onto other data.  (Before version
+1.3.3 they held the group codes 1, 2, ... instead.)  If a grouping variable has
+the same name as a plotted variable, its group codes are saved as
+{cmd:_group1}, {cmd:_group2} or {cmd:_group3}.  A file name containing spaces
+must be in double quotes: {cmd:savedata("my results", replace)}.
 
 {dlgtab:Presentation}
 
@@ -278,11 +304,20 @@ labels off the axis.
 {cmd:bar}, or {cmd:dot}.
 
 {p 4 8 2}
-{cmd:wrap(#)} wraps axis labels longer than {it:#} characters onto several
-lines, breaking at spaces.  It applies to the {it:varlist} labels and to the
+{cmd:wrap(#)} wraps axis labels wider than {it:#} characters onto several
+lines, breaking at spaces.  A single word wider than {it:#} keeps a line of
+its own and is not split.  It applies to the {it:varlist} labels and to the
 {cmd:over()}/{cmd:by()} category labels, and changes only the label text, never
 the plotted values.  {it:Use case:} long survey-item or policy-category labels
 that would otherwise overrun or shrink on the axis.
+
+{p 8 8 2}
+Width is measured in display columns, so a character that occupies two columns
+on screen (as Chinese, Japanese and Korean characters do) counts as two.  Text
+in a script written without spaces (Chinese, Japanese, Thai and others) gives
+{cmd:wrap()} nothing to break at, so such text is broken between characters
+instead.  Under Stata 13 and earlier, width is measured in bytes, which is
+exact for plain ASCII text.
 
 {p 8 8 2}
 Wrapped labels need vertical room.  With many {cmd:over()} categories the
@@ -293,10 +328,53 @@ a smaller label size, e.g. {cmd:varopts(label(labsize(small)))}.
 {cmd:varnames} indicates that variable names should be used instead of variable
 labels for {it:varlist}.
 
+{p 8 8 2}
+Labels are drawn as stored, with one exception: a backtick ({c 96}), sometimes
+typed for an apostrophe as in Don{c 96}t know, would be read by Stata as the
+start of a macro, so under Stata 14 and later it is drawn as a typographic
+apostrophe instead.
+
 {p 4 8 2}
 {cmd:varopts()} specifies options for the display of the {it:varlist} bars or
-dots.  For example, labels could be modified with
-{cmd:varopts(label(labsize(medsmall)))}.
+dots.  Its contents are passed through as suboptions of the {cmd:over()} that
+carries the {it:varlist} categories, so any suboption of
+{help graph_bar:over()} may be used.  For example, labels could
+be modified with {cmd:varopts(label(labsize(medsmall)))}.
+
+{p 8 8 2}
+Because a single variable is plotted as a single category, its variable label
+is drawn beside the bars as a {it:category label}, not as an axis title, and so
+{cmd:ytitle()} and {cmd:title()} do not reach it.  {cmd:varopts()} is the way to
+control it.  To suppress it altogether:
+
+{p 8 8 2}
+{cmd:. statplot heatdd, over(region) varopts(label(nolabel))}
+
+{p 8 8 2}
+To substitute shorter text, without touching the variable label in your data
+({it:#} numbers the plotted variables 1, 2, ... in the order plotted):
+
+{p 8 8 2}
+{cmd:. statplot heatdd, over(region) varopts(relabel(1 "Heating DD"))}
+
+{p 8 8 2}
+{cmd:relabel()} also accepts several quoted strings for one category, which
+sets the lines of a multi-line label yourself:
+
+{p 8 8 2}
+{cmd:. statplot heatdd, over(region) varopts(relabel(1 {c 96}{c 34} {c 34}Heating{c 34} {c 34}degree days{c 34} {c 34}{c 39}))}
+
+{p 8 8 2}
+To restyle rather than replace the label, use the {cmd:label()} suboption:
+{cmd:varopts(label(labcolor(navy) labsize(small) angle(45)))}.  Note that
+{cmd:color()} is not a suboption of {cmd:over()}; the color of label text is set
+with {cmd:labcolor()} inside {cmd:label()}.
+
+{p 8 8 2}
+A {cmd:relabel()} of your own replaces the one {cmd:statplot} builds, including
+the one it builds from {cmd:wrap()}: two {cmd:relabel()} suboptions in a single
+{cmd:over()} is an error, so {cmd:statplot} stands aside.  {cmd:wrap()} still
+applies to the {cmd:over()} and {cmd:by()} category labels.
 
 {p 4 8 2}
 {it:graph_options} refer to options of {help graph_bar:graph hbar},
@@ -340,22 +418,33 @@ earlier use the {help Graph Editor:Graph Editor} for a per-bar {cmd:%} sign.
 {p 4 8 2}{cmd:. statplot marriage divorce, over(region) s(sum) xpose}{p_end}
 {p 4 8 2}{cmd:. statplot marriage divorce, over(region) s(sum) share base(var)}{p_end}
 
-{p 4 8 2}{it:Percentage of a 0/1 indicator, labeled with a % sign}{p_end}
+{p 4 8 2}{it:Percentage of a 0/1 indicator, with the value on each bar}{p_end}
 {p 4 8 2}{cmd:. sysuse nlsw88, clear}{p_end}
-{p 4 8 2}{cmd:. statplot union, over(race) percent blabel(bar, format(%2.0f) suffix(%))}
+{p 4 8 2}{cmd:. statplot union, over(race) percent blabel(bar, format(%2.0f))}{p_end}
+{p 4 8 2}{cmd:. statplot union, over(race) percent blabel(bar, format(%2.0f) suffix(%))}   {it:// with a % sign; Stata 19 or later}
 
 {p 4 8 2}{it:Means with 95% confidence intervals}{p_end}
 {p 4 8 2}{cmd:. statplot wage, over(race) ci}{p_end}
+{p 4 8 2}{cmd:. statplot wage, over(race) ci sort descending}   {it:// highest mean on top}{p_end}
 {p 4 8 2}{cmd:. statplot wage ttl_exp tenure, over(race) ci recast(bar)}{p_end}
 {p 4 8 2}{cmd:. statplot wage, over(race) ci level(90) baropts(fcolor(navy)) ciopts(lcolor(gs6))}
 
 {p 4 8 2}{it:Wrapping long labels}{p_end}
 {p 4 8 2}{cmd:. statplot ttl_exp tenure grade hours, wrap(18)}
 
+{p 4 8 2}{it:Controlling the label drawn beside the bars}{p_end}
+{p 4 8 2}{cmd:. sysuse citytemp, clear}{p_end}
+{p 4 8 2}{cmd:. label variable heatdd "Heating degree days, annual total"}{p_end}
+{p 4 8 2}{cmd:. statplot heatdd, over(region) varopts(label(nolabel))}   {it:// hide it}{p_end}
+{p 4 8 2}{cmd:. statplot heatdd, over(region) varopts(relabel(1 "Heating DD"))}   {it:// shorten it}{p_end}
+{p 4 8 2}{cmd:. statplot heatdd, over(region) varopts(relabel(1 "Heating DD") label(labcolor(navy) labsize(small)))}   {it:// restyle it}{p_end}
+{p 4 8 2}{cmd:. statplot heatdd, over(region) varopts(relabel(1 {c 96}{c 34} {c 34}Heating{c 34} {c 34}degree days{c 34} {c 34}{c 39}))}   {it:// set the lines yourself}
+
 {p 4 8 2}{it:Section headings and group labels among the bars}{p_end}
 {p 4 8 2}{cmd:. sysuse auto, clear}{p_end}
-{p 4 8 2}{cmd:. statplot price mpg weight length, headings(price = "{bf:Cost}" weight = "{bf:Size}")}{p_end}
-{p 4 8 2}{cmd:. statplot price mpg weight length, groups(price mpg = "{bf:Performance}" weight length = "{bf:Size}") ci}
+{p 4 8 2}{cmd:. statplot price mpg weight length, headings(price = "{c -(}bf:Cost{c )-}" weight = "{c -(}bf:Size{c )-}")}{p_end}
+{p 4 8 2}{cmd:. statplot price mpg weight length, groups(price mpg = "{c -(}bf:Performance{c )-}" weight length = "{c -(}bf:Size{c )-}") ci}{p_end}
+{p 8 8 2}{it:(the} {cmd:{c -(}bf:...{c )-}} {it:markup makes the heading bold in the graph; plain text works too)}
 
 {p 4 8 2}{it:Keeping the numbers behind the bars}{p_end}
 {p 4 8 2}{cmd:. sysuse nlsw88, clear}{p_end}

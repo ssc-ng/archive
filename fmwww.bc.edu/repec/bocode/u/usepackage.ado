@@ -1,6 +1,35 @@
 *!  usepackage.ado -- find, verify, and install the user-written packages (and data) a do-file needs
 *!  Eric A. Booth, Sr Researcher, Texas 2036 <eric.a.booth@gmail.com>
-*!  v 2.0.0   25jul2026
+*!  v 2.0.3   14nov2026
+*!
+*!  v2.0.3 changes:
+*!    - net installs (github(), from(), the net search catalogue) no longer
+*!      pass force, which added a duplicate stata.trk entry each time an
+*!      installed package was installed again; after that, ado uninstall
+*!      <pkg> failed with r(111) "criterion matches more than one package"
+*!
+*!  v2.0.2 changes:
+*!    - update no longer uninstalls first: the working copy stays in place
+*!      when the reinstall fails (network down, source moved)
+*!    - useit refuses with r(4) when the data in memory have unsaved changes,
+*!      unless clear is given; it used to replace them without a word
+*!    - dryrun counts an inferred match as awaiting confirmation (as a real
+*!      batch run would) unless noconfirm is given
+*!    - scan() skips program define names, end, mata/python blocks,
+*!      continuation lines and #delimit ; continuations
+*!    - github(owner) reads every page of the account's repository list
+*!      (100 per request, up to 1,000), not just the first
+*!    - useit reads CSV with bindquote(strict); open logs are paused while
+*!      the catalogue is searched; r() lists carry no leading space; a bare
+*!      -usepackage- prints the syntax
+*!
+*!  v2.0.1 changes:
+*!    - github() and data() routes now post r() like the package route
+*!      (they used to exit with r() empty, so -if r(nfail) > 0- fired even
+*!      after a successful github() install); r(nfail) counts failed data files
+*!    - data() creates into(), including nested folders, before fetching
+*!      (it used to fail every file with rc 603 when the folder was missing);
+*!      a leading ~ in into() is expanded
 *!
 *!  v2.0.0 changes vs v1.0.0 (2011):
 *!    - never installs a near-match without asking (see noconfirm)
@@ -30,23 +59,61 @@ program define usepackage, rclass
         Files(string)                        ///
         INTO(string)                         ///
         USEit                                ///
+        CLEAR                                ///
         SCAN(string)                         ///
         GHOwner(string)                      ///
         ]
+
+    *-- nothing asked for: say how to ask, rather than return in silence
+    if `"`pkgs'`github'`data'`scan'"' == "" {
+        di as text "{bf:usepackage}: nothing to do.  Name one or more packages, or use"
+        di as text "github(), data() or scan():"
+        di as text "    usepackage {it:pkglist} [, update nearest noconfirm noancillary dryrun from() ghowner()]"
+        di as text "    usepackage [{it:pkg}], github({it:owner}[/{it:repo}])"
+        di as text "    usepackage, data({it:owner/repo}) [files() into() useit clear]"
+        di as text "    usepackage, scan({it:filename})"
+        di as text `"see {help usepackage}"'
+    }
+
+    *-- useit replaces the data in memory: refuse before fetching anything
+    *-- when that would throw away unsaved changes, as -use- itself does
+    if "`useit'" != "" & "`clear'" == "" & "`dryrun'" == "" & `"`data'"' != "" {
+        if c(changed) == 1 {
+            di as error "no; data in memory would be lost"
+            di as error "usepackage: useit replaces the data in memory; save them first, or add {bf:clear}"
+            exit 4
+        }
+    }
 
     *-- mutually sensible defaults -------------------------------------------
     if "`into'" == "" local into "."
 
     *-- Owners to fall back on when a name is on neither SSC nor the net search
     *-- catalogue.  Set once per session (or in profile.do) with e.g.
-    *--     global usepackage_github "ericabooth texas-2036"
+    *--     global usepackage_github "ericabooth yourorg"
     *-- so your own repositories are searched without naming them every time.
     if `"`ghowner'"' == "" local ghowner `"$usepackage_github"'
+
+    *-- counters: every route (packages, github(), data()) posts the same r()
+    local nreq   0
+    local nok    0
+    local nskip  0
+    local ndefer 0
+    local nfail  0
+    local faillist ""
+    local deferlist ""
+    local ndreq  0
+    local ndok   0
+    local ndfail 0
+    local dgot   ""
+    local dfail  ""
+    local didpkg 0
+    local scanmiss ""
 
     *-- route: scan a do-file and report unresolved commands ------------------
     if `"`scan'"' != "" {
         _up_scan `"`scan'"'
-        if "`pkgs'" == "" & `"`data'"' == "" & `"`github'"' == "" exit 0
+        local scanmiss `"`r(missing)'"'
     }
 
     *-- route: fetch data files from a GitHub repository ----------------------
@@ -57,7 +124,11 @@ program define usepackage, rclass
             into(`"`into'"')                 ///
             branch(`"`branch'"')             ///
             `dryrun' `noconfirm' `useit'
-        if "`pkgs'" == "" & `"`github'"' == "" exit 0
+        local ndreq  = r(nreq)
+        local ndok   = r(nok)
+        local ndfail = r(nfail)
+        local dgot   `"`r(files)'"'
+        local dfail  `"`r(failed)'"'
     }
 
     *-- route: install one package from a GitHub repository -------------------
@@ -66,18 +137,82 @@ program define usepackage, rclass
         *-- there" rather than "install this"
         if "`pkgs'" == "" | "`pkgs'" == "*" | "`pkgs'" == "all" {
             _up_ghlist, target(`"`github'"') branch(`"`branch'"')
-            exit 0
         }
-        foreach p in `pkgs' {
-            _up_github `p',                  ///
-                repo(`"`github'"')           ///
-                branch(`"`branch'"')         ///
-                `update' `noancillary' `dryrun'
+        else {
+            local didpkg 1
+            foreach p in `pkgs' {
+                local ++nreq
+                _up_github `p',                  ///
+                    repo(`"`github'"')           ///
+                    branch(`"`branch'"')         ///
+                    `update' `noancillary' `dryrun'
+                if r(ok) == 1 {
+                    local ++nok
+                }
+                else {
+                    local ++nfail
+                    local faillist "`faillist' `p'"
+                }
+            }
         }
-        exit 0
+    }
+    else if "`pkgs'" != "" {
+        local didpkg 1
+        _up_main `pkgs', `update' `nearest' `noconfirm' `noancillary' ///
+            `dryrun' from(`"`from'"') ghowner(`"`ghowner'"')
+        local nreq   = r(nreq)
+        local nok    = r(nok)
+        local nskip  = r(nskip)
+        local ndefer = r(ndefer)
+        local nfail  = r(nfail)
+        local faillist  `"`r(unresolved)'"'
+        local deferlist `"`r(deferred)'"'
     }
 
-    if "`pkgs'" == "" exit 0
+    if `didpkg' & `"`github'"' != "" {
+        local verb "installed"
+        if "`dryrun'" != "" local verb "resolvable"
+        di as text _n "{hline 60}"
+        di as text "usepackage summary: " as result "`nreq' requested" as text ", " ///
+            as result "`nok' `verb'" as text ", " ///
+            as result "`nfail' unresolved"
+        if "`faillist'" != "" di as error "  unresolved:`faillist'"
+        di as text "{hline 60}"
+    }
+
+    *-- r(nfail) counts unresolved packages AND data files that failed, so the
+    *-- documented guard -if r(nfail) > 0- catches either kind of failure
+    local nfailall = `nfail' + `ndfail'
+
+    *-- the lists are built with a leading space; hand them back clean
+    local scanmiss  : list clean scanmiss
+    local dgot      : list clean dgot
+    local dfail     : list clean dfail
+    local deferlist : list clean deferlist
+    local faillist  : list clean faillist
+
+    if `"`scan'"' != "" return local missing `"`scanmiss'"'
+    return local datafiles  `"`dgot'"'
+    return local datafailed `"`dfail'"'
+    return local deferred   `"`deferlist'"'
+    return local unresolved `"`faillist'"'
+    return scalar ndfail = `ndfail'
+    return scalar ndok   = `ndok'
+    return scalar ndreq  = `ndreq'
+    return scalar nfail  = `nfailall'
+    return scalar nok    = `nok'
+    return scalar nskip  = `nskip'
+    return scalar ndefer = `ndefer'
+    return scalar nreq   = `nreq'
+end
+
+
+*==========================================================================
+*  _up_main : the SSC / net-search / owner-fallback loop over package names
+*==========================================================================
+program define _up_main, rclass
+    syntax anything(name=pkgs) [, Update NEARest NOCONFirm NOANCillary ///
+        DRYrun from(string) ghowner(string) ]
 
     *-- main loop over requested packages ------------------------------------
     local nreq   0
@@ -338,14 +473,17 @@ program define _up_netinstall, rclass
     if "`noancillary'" != "" local all ""
 
     if "`dryrun'" != "" {
-        di as text `"      would run: net install `pkg', from("`from'") `all' replace force"'
+        di as text `"      would run: net install `pkg', from("`from'") `all' replace"'
         return scalar ok = 1
         exit 0
     }
 
-    if "`update'" != "" capture qui ado uninstall `pkg'
-
-    capture qui net install `pkg', from(`"`from'"') `all' replace force
+    *-- update does NOT uninstall first: -net install, replace- overwrites
+    *-- in place, and if the download fails the copy the user already has
+    *-- is still there (v2.0.2).  No -force- (v2.0.3): it re-installs files
+    *-- that are already up to date and adds a duplicate stata.trk entry
+    *-- every time, after which -ado uninstall pkg- fails with r(111)
+    capture qui net install `pkg', from(`"`from'"') `all' replace
     if _rc == 0 {
         di as text "      installed from " as result `"`from'"'
         _up_report_anc `pkg', from(`"`from'"') `noancillary'
@@ -379,7 +517,7 @@ program define _up_try, rclass
             return scalar ok = 1
             exit 0
         }
-        if "`update'" != "" capture qui ado uninstall `pkg'
+        *-- no uninstall first (see _up_netinstall): replace overwrites
         capture qui ssc install `pkg', `all' replace
         if _rc == 0 {
             di as text "      installed from " as result "SSC"
@@ -425,8 +563,17 @@ program define _up_try, rclass
         }
         di as text `"          from {stata "net describe `cand', from(`candfm')":`candfm'}"'
         if "`dryrun'" != "" {
-            di as text "      would ask to install it"
-            return scalar ok = 1
+            *-- count it the way a real run would: with noconfirm it would
+            *-- be installed; without, it waits for an answer
+            if "`noconfirm'" != "" {
+                di as text "      would install it ({bf:noconfirm} accepts the inferred match)"
+                return scalar ok = 1
+            }
+            else {
+                di as text "      would ask to install it (add {bf:noconfirm} to accept unattended)"
+                return scalar ok = 0
+                return scalar skipped = 1
+            }
             exit 0
         }
         if "`noconfirm'" == "" {
@@ -459,13 +606,13 @@ program define _up_try, rclass
     }
 
     if "`dryrun'" != "" {
-        di as text `"      would run: net install `cand', from("`candfm'") `all' replace force"'
+        di as text `"      would run: net install `cand', from("`candfm'") `all' replace"'
         return scalar ok = 1
         exit 0
     }
 
-    if "`update'" != "" capture qui ado uninstall `cand'
-    capture qui net install `cand', from(`"`candfm'"') `all' replace force
+    *-- no uninstall first (see _up_netinstall): replace overwrites
+    capture qui net install `cand', from(`"`candfm'"') `all' replace
     if _rc == 0 {
         if `exact' {
             di as text "      installed " as result "`cand'" as text " from `candfm'"
@@ -500,11 +647,32 @@ program define _up_search, rclass
     *--     @net:describe PKG, from(URL)!PKG from URL@
     *-- so the package name and its site are explicitly delimited (far more
     *-- reliable than parsing the rendered two-column text).
+    *-- -quietly- does not keep that raw SMCL out of the user's own open
+    *-- logs, so pause every log that is on for the length of the search and
+    *-- resume it afterwards.  (The Results window of a batch run is not a
+    *-- log and cannot be paused; the raw lines still show there.)
+    local paused ""
+    capture quietly log query _all
+    if _rc == 0 {
+        local nlogs = r(numlogs)
+        if "`nlogs'" == "" | "`nlogs'" == "." local nlogs 0
+        forvalues i = 1/`nlogs' {
+            if "`r(status`i')'" == "on" local paused `"`paused' `"`r(name`i')'"'"'
+        }
+    }
+    foreach lg of local paused {
+        if `"`lg'"' == "<unnamed>" capture quietly log off
+        else                       capture quietly log off `lg'
+    }
     tempfile log
     capture log close _upsearch
     capture qui log using "`log'", text replace name(_upsearch)
     capture qui net search `pkg'
     capture qui log close _upsearch
+    foreach lg of local paused {
+        if `"`lg'"' == "<unnamed>" capture quietly log on
+        else                       capture quietly log on `lg'
+    }
 
     tempname fh
     capture file open `fh' using "`log'", read text
@@ -803,7 +971,8 @@ end
 *==========================================================================
 *  _up_ghlist : catalogue the installable Stata packages in an account or repo
 *
-*  One API request lists the account (with each repository's default branch);
+*  One API request per 100 repositories lists the account (with each
+*  repository's default branch);
 *  everything after that is raw.githubusercontent.com, which is not rate-limited.
 *  A repository is installable when it carries a stata.toc, and that file names
 *  the packages it offers on its "p" lines -- so the toc is the authority on what
@@ -838,43 +1007,13 @@ program define _up_ghlist
     local owner "`t'"
     di as text _n "{bf:usepackage}: Stata packages owned by " as result "`owner'"
 
-    tempfile js
-    capture qui copy "https://api.github.com/users/`owner'/repos?per_page=100" "`js'", replace
-    if _rc {
+    _up_ghrepos, owner("`owner'")
+    if r(ok) == 0 {
         di as error "      could not list `owner''s repositories (API unreachable or rate-limited)"
         exit 601
     }
-
-    *-- full_name and default_branch appear once per repository, in order, so
-    *-- collecting each into a list and pairing by index is exact
-    tempname fh
-    capture file open `fh' using "`js'", read text
-    if _rc exit 601
-    local repos ""
-    local brs   ""
-    file read `fh' line
-    while r(eof) == 0 {
-        foreach key in full_name default_branch {
-            local work `"`line'"'
-            local guard 0
-            local klen = length("`key'") + 2
-            while strpos(`"`work'"', `""`key'""') > 0 & `guard' < 5000 {
-                local ++guard
-                local pos = strpos(`"`work'"', `""`key'""')
-                local work = substr(`"`work'"', `pos' + `klen', .)
-                if regexm(`"`work'"', `"^: *"([^"]+)""') {
-                    if "`key'" == "full_name" {
-                        local repos `"`repos' `=regexs(1)'"'
-                    }
-                    else {
-                        local brs `"`brs' `=regexs(1)'"'
-                    }
-                }
-            }
-        }
-        file read `fh' line
-    }
-    file close `fh'
+    local repos `"`r(repos)'"'
+    local brs   `"`r(branches)'"'
 
     local nrepo : word count `repos'
     if `nrepo' == 0 {
@@ -921,6 +1060,84 @@ program define _up_ghlist
                "`nno' repositor(ies) have no stata.toc"
     di as text `"      install one with: {bf:usepackage <package>, github(`owner')}"'
     di as text `"      or all of them:   {bf:usepackage`allpkgs', ghowner(`owner')}"'
+end
+
+
+*==========================================================================
+*  _up_ghrepos : list an owner's repositories, every page of them
+*
+*  The API hands back at most 100 repositories per request, so keep asking
+*  for the next page until one comes back short.  Capped at 10 pages (1,000
+*  repositories) to stay well inside the unauthenticated budget of 60
+*  requests an hour.  full_name and default_branch appear once per
+*  repository, in order, so collecting each into a list and pairing by index
+*  is exact.
+*
+*  r(ok) is 0 only when the FIRST page cannot be read; a later page that
+*  fails just ends the listing with what was already collected.
+*==========================================================================
+program define _up_ghrepos, rclass
+    syntax , owner(string)
+
+    local repos ""
+    local brs   ""
+    local ok    0
+    local more  1
+    local pg    0
+    while `more' & `pg' < 10 {
+        local ++pg
+        *-- $usepackage_apitest (a folder of <owner>_<page>.json files) lets the
+        *-- test battery exercise paging without touching the network
+        if `"$usepackage_apitest"' != "" {
+            local src `"$usepackage_apitest/`owner'_`pg'.json"'
+        }
+        else {
+            local src "https://api.github.com/users/`owner'/repos?per_page=100&page=`pg'"
+        }
+        tempfile js
+        capture qui copy `"`src'"' "`js'", replace
+        if _rc {
+            local more 0
+            continue
+        }
+        tempname fh
+        capture file open `fh' using "`js'", read text
+        if _rc {
+            local more 0
+            continue
+        }
+        local ok 1
+        local nthis 0
+        file read `fh' line
+        while r(eof) == 0 {
+            foreach key in full_name default_branch {
+                local work `"`macval(line)'"'
+                local guard 0
+                local klen = length("`key'") + 2
+                while strpos(`"`macval(work)'"', `""`key'""') > 0 & `guard' < 5000 {
+                    local ++guard
+                    local pos = strpos(`"`macval(work)'"', `""`key'""')
+                    local work = substr(`"`macval(work)'"', `pos' + `klen', .)
+                    if regexm(`"`macval(work)'"', `"^: *"([^"]+)""') {
+                        if "`key'" == "full_name" {
+                            local repos `"`repos' `=regexs(1)'"'
+                            local ++nthis
+                        }
+                        else {
+                            local brs `"`brs' `=regexs(1)'"'
+                        }
+                    }
+                }
+            }
+            file read `fh' line
+        }
+        file close `fh'
+        if `nthis' < 100 local more 0
+    }
+
+    return local  repos    `"`repos'"'
+    return local  branches `"`brs'"'
+    return scalar ok = `ok'
 end
 
 
@@ -987,8 +1204,8 @@ end
 *==========================================================================
 *  _up_ghsearch : find which of an owner's repositories ships a package
 *
-*  Lists the owner's repositories in ONE request against the ordinary API
-*  (60/hour), not the code-search API (about 10/minute), then narrows by name
+*  Lists the owner's repositories against the ordinary API (60/hour; one
+*  request per 100 repositories), not the code-search API (about 10/minute), then narrows by name
 *  before probing anything.  A repository that actually contains <pkg>.pkg is
 *  treated as declared -- that is proof, not a guess -- while a repository whose
 *  name merely resembles the package is offered for confirmation.
@@ -1002,34 +1219,13 @@ program define _up_ghsearch, rclass
 
     di as text "      searching repositories owned by " as result "`owner'"
 
-    tempfile js
-    capture qui copy "https://api.github.com/users/`owner'/repos?per_page=100" "`js'", replace
-    if _rc {
+    _up_ghrepos, owner("`owner'")
+    if r(ok) == 0 {
         di as error "      could not list `owner''s repositories (API unreachable or rate-limited)"
         di as text  "      name the repository directly: {bf:github(`owner'/<repo>)}"
         exit 0
     }
-
-    *-- collect full_name values, one per repository, in order
-    tempname fh
-    capture file open `fh' using "`js'", read text
-    if _rc exit 0
-    local repos ""
-    file read `fh' line
-    while r(eof) == 0 {
-        local work `"`line'"'
-        local guard 0
-        while strpos(`"`work'"', `""full_name""') > 0 & `guard' < 5000 {
-            local ++guard
-            local pos = strpos(`"`work'"', `""full_name""')
-            local work = substr(`"`work'"', `pos' + 11, .)
-            if regexm(`"`work'"', `"^: *"([^"]+)""') {
-                local repos `"`repos' `=regexs(1)'"'
-            }
-        }
-        file read `fh' line
-    }
-    file close `fh'
+    local repos `"`r(repos)'"'
 
     local nrepo : word count `repos'
     if `nrepo' == 0 {
@@ -1128,7 +1324,20 @@ program define _up_data, rclass
     syntax [anything], repo(string) [ files(string) into(string) ///
         branch(string) DRYrun NOCONFirm USEit ]
 
-    if "`into'" == "" local into "."
+    if `"`into'"' == "" local into "."
+    *-- expand a leading ~ ourselves; Stata's file commands do not
+    _up_tilde `"`into'"'
+    local into `"`r(path)'"'
+    if substr(`"`into'"', -1, 1) == "/" & length(`"`into'"') > 1 {
+        local into = substr(`"`into'"', 1, length(`"`into'"') - 1)
+    }
+
+    *-- counts posted back to usepackage (and from there to the user)
+    return scalar nreq  = 0
+    return scalar nok   = 0
+    return scalar nfail = 0
+    return local  files  ""
+    return local  failed ""
 
     local r `"`repo'"'
     if strpos(`"`r'"', "#") {
@@ -1172,10 +1381,18 @@ program define _up_data, rclass
 
     local raw "https://raw.githubusercontent.com/`r'/`usebr'"
 
+    *-- create into() (nested folders too) before any copy lands there
+    if "`dryrun'" == "" {
+        _up_mkdirp `"`into'"'
+    }
+
     *-- explicit file list: just fetch it
     if `"`files'"' != "" {
         local got ""
+        local bad ""
+        local nf 0
         foreach f of local files {
+            local ++nf
             local stub = substr("`f'", strrpos("`f'", "/") + 1, .)
             if "`dryrun'" != "" {
                 di as text `"      would fetch `f' -> `into'/`stub'"'
@@ -1195,13 +1412,24 @@ program define _up_data, rclass
             }
             else if r(lfs) {
                 di as error "      `f' is a Git LFS pointer and the media endpoint failed"
+                local bad "`bad' `f'"
             }
             else {
                 di as error "      could not fetch `f' (rc = " r(rc) ")"
+                local bad "`bad' `f'"
             }
         }
+        local ngot : word count `got'
+        local nbad : word count `bad'
+        if `nbad' > 0 & "`dryrun'" == "" {
+            di as error "      `nbad' of `nf' file(s) not fetched; see r(datafailed)"
+        }
         _up_useit `"`got'"' `"`into'"' "`useit'"
-        return local files `"`got'"'
+        return scalar nreq  = `nf'
+        return scalar nok   = cond("`dryrun'" != "", `nf', `ngot')
+        return scalar nfail = `nbad'
+        return local  files  `"`got'"'
+        return local  failed `"`bad'"'
         exit 0
     }
 
@@ -1287,6 +1515,7 @@ program define _up_data, rclass
     }
 
     local got ""
+    local bad ""
     local nlfs 0
     foreach p of local cand {
         local stub = substr("`p'", strrpos("`p'", "/") + 1, .)
@@ -1305,9 +1534,11 @@ program define _up_data, rclass
         }
         else if r(lfs) {
             di as error "      `p' is a Git LFS pointer and the media endpoint failed"
+            local bad "`bad' `p'"
         }
         else {
             di as error "      could not fetch `p' (rc = " r(rc) ")"
+            local bad "`bad' `p'"
         }
     }
     if `nlfs' > 0 {
@@ -1315,7 +1546,73 @@ program define _up_data, rclass
     }
 
     _up_useit `"`got'"' `"`into'"' "`useit'"
-    return local files `"`got'"'
+    local ngot : word count `got'
+    local nbad : word count `bad'
+    return scalar nreq  = `n'
+    return scalar nok   = `ngot'
+    return scalar nfail = `nbad'
+    return local  files  `"`got'"'
+    return local  failed `"`bad'"'
+end
+
+
+*==========================================================================
+*  _up_tilde : expand a leading ~ from HOME (Windows: USERPROFILE, then
+*  HOMEDRIVE+HOMEPATH, then HOME)
+*==========================================================================
+program define _up_tilde, rclass
+    args path
+    if substr(`"`path'"', 1, 1) == "~" & inlist(substr(`"`path'"', 2, 1), "", "/", "\") {
+        local home : env HOME
+        if "`c(os)'" == "Windows" {
+            local up : env USERPROFILE
+            local hd : env HOMEDRIVE
+            local hp : env HOMEPATH
+            if `"`up'"' != "" local home `"`up'"'
+            else if `"`hd'`hp'"' != "" local home `"`hd'`hp'"'
+        }
+        if `"`home'"' == "" {
+            di as error "usepackage: cannot expand ~ (HOME is not set)"
+            exit 601
+        }
+        local rest = substr(`"`path'"', 2, .)
+        local path `"`home'`rest'"'
+    }
+    return local path `"`path'"'
+end
+
+
+*==========================================================================
+*  _up_mkdirp : create a folder and any missing parents (Mata, no shell)
+*==========================================================================
+program define _up_mkdirp
+    args dir
+    mata: _up_mkdirp_m(st_local("dir"))
+end
+
+mata:
+void _up_mkdirp_m(string scalar dir)
+{
+    string scalar d, built, sep
+    string rowvector parts
+    real scalar i
+
+    d = subinstr(dir, "\\", "/")
+    if (d == "" | direxists(d)) return
+    parts = tokens(d, "/")
+    built = ""
+    for (i = 1; i <= cols(parts); i++) {
+        sep = parts[i]
+        built = built + sep
+        if (sep != "/" & built != "." & built != ".." & !(strlen(built) == 2 & substr(built, 2, 1) == ":")) {
+            if (!direxists(built)) mkdir(built)
+        }
+    }
+    if (!direxists(d)) {
+        errprintf("usepackage: could not create folder %s\n", dir)
+        exit(603)
+    }
+}
 end
 
 
@@ -1379,6 +1676,7 @@ end
 *  _up_useit : load a single fetched dataset if the user asked for it
 *==========================================================================
 program define _up_useit
+    *-- the caller has already refused (r(4)) when unsaved data would be lost
     args got into useit
     if "`useit'" == "" exit 0
     local nf : word count `got'
@@ -1392,7 +1690,8 @@ program define _up_useit
         use `"`into'/`f'"', clear
     }
     else if inlist("`ext'", "csv", "tsv", "txt") {
-        import delimited `"`into'/`f'"', clear varnames(1)
+        *-- bindquote(strict): a quoted text field may hold a line break
+        import delimited `"`into'/`f'"', clear varnames(1) bindquote(strict)
     }
     else if inlist("`ext'", "xlsx", "xls") {
         import excel `"`into'/`f'"', clear firstrow
@@ -1424,22 +1723,69 @@ program define _up_scan, rclass
     file open `fh' using `"`dofile'"', read text
     local seen ""
     local miss ""
+    local defined ""          // programs the file defines itself
+    local inblock 0           // inside a mata/python ... end block
+    local incomm  0           // inside a /* ... */ comment
+    local incont  0           // the previous line ended with ///
+    local semi    0           // #delimit ; is in force
+    local newstmt 1           // under #delimit ; : this line starts a statement
+    local tab = char(9)
     file read `fh' line
     while r(eof) == 0 {
-        *-- Lines routinely contain double quotes (paths, option strings).  Use
-        *-- -macval- with compound quotes and pull tokens with -gettoken-, which
-        *-- is quote-safe: evaluating substr("`t'", ...) on a line holding a
-        *-- quoted path breaks the expression and the remnant gets run as a
-        *-- command (that is how a path once surfaced as "Users not found").
+        *-- Lines routinely contain double quotes (paths, option strings) and
+        *-- macro references.  Use -macval- with compound quotes throughout and
+        *-- pull tokens with -gettoken-, which is quote-safe: evaluating
+        *-- substr("`t'", ...) on a line holding a quoted path breaks the
+        *-- expression and the remnant gets run as a command (that is how a
+        *-- path once surfaced as "Users not found").
         local t `"`macval(line)'"'
-        if substr(`"`t'"', 1, 1) != "*" & substr(`"`t'"', 1, 2) != "//" & trim(`"`t'"') != "" {
+        local t : subinstr local t "`tab'" " ", all
+        local s = strtrim(`"`macval(t)'"')
+        local skip 0
+        local wascont `incont'
+
+        if `inblock' {
+            *-- Mata and Python code is not Stata commands; wait for -end-
+            if `"`macval(s)'"' == "end" local inblock 0
+            local skip 1
+        }
+        else if `incomm' {
+            if strpos(`"`macval(s)'"', "*/") local incomm 0
+            local skip 1
+        }
+        else if substr(`"`macval(s)'"', 1, 2) == "/*" {
+            if !strpos(`"`macval(s)'"', "*/") local incomm 1
+            local skip 1
+        }
+        else if `"`macval(s)'"' == "" | substr(`"`macval(s)'"', 1, 2) == "//" {
+            local skip 1
+        }
+        else if substr(`"`macval(s)'"', 1, 1) == "#" {
+            *-- #delimit ; / #delimit cr
+            if regexm(lower(`"`macval(s)'"'), "^#d[a-z]*[ ]*;") local semi 1
+            else if regexm(lower(`"`macval(s)'"'), "^#d[a-z]*([ ]+cr)?[ ]*$") local semi 0
+            local newstmt 1
+            local skip 1
+        }
+        else {
+            *-- a line that only continues the one before it starts no command
+            local incont = substr(`"`macval(s)'"', -3, 3) == "///"
+            if `wascont' local skip 1
+            if `semi' {
+                if !`newstmt' local skip 1
+                local newstmt = substr(`"`macval(s)'"', -1, 1) == ";"
+            }
+            if substr(`"`macval(s)'"', 1, 1) == "*" local skip 1
+        }
+
+        if !`skip' {
             * strip a leading "quietly"/"capture"/"noisily" stack
             local guard 0
             while `guard' < 4 {
                 gettoken w1 rest : t
-                local w1l = lower(`"`w1'"')
-                if inlist("`w1l'", "qui", "quietly", "cap", "capture", "noi", "noisily") {
-                    local t `"`rest'"'
+                local w1l = lower(`"`macval(w1)'"')
+                if inlist(`"`macval(w1l)'"', "qui", "quietly", "cap", "capture", "noi", "noisily") {
+                    local t `"`macval(rest)'"'
                     local ++guard
                 }
                 else {
@@ -1447,12 +1793,38 @@ program define _up_scan, rclass
                 }
             }
             gettoken cmd rest : t
-            *-- "coefplot, title(...)" leaves the comma glued to the name
-            if substr(`"`cmd'"', -1, 1) == "," {
-                local cmd = substr(`"`cmd'"', 1, length(`"`cmd'"') - 1)
+            *-- "coefplot, title(...)" leaves the comma glued to the name, and
+            *-- "mata:" its colon; under #delimit ; a bare command ends in ";"
+            if inlist(substr(`"`macval(cmd)'"', -1, 1), ",", ":", ";") {
+                local cmd = substr(`"`macval(cmd)'"', 1, length(`"`macval(cmd)'"') - 1)
+            }
+            local cl = lower(`"`macval(cmd)'"')
+            local r1 = strtrim(`"`macval(rest)'"')
+            if inlist(`"`macval(cl)'"', "mata", "python") {
+                *-- alone on its line it opens a block that runs to -end-;
+                *-- "mata: one statement" is a single line
+                if inlist(`"`macval(r1)'"', "", ":", "{") local inblock 1
+            }
+            else if inlist(`"`macval(cl)'"', "program", "progra", "progr", "prog", "pro", "pr") {
+                *-- remember the name the file defines so it is not reported
+                gettoken n1 r2 : rest
+                if inlist(lower(`"`macval(n1)'"'), "define", "defin", "defi", "def", "de") {
+                    gettoken n1 r2 : r2
+                }
+                if substr(`"`macval(n1)'"', -1, 1) == "," {
+                    local n1 = substr(`"`macval(n1)'"', 1, length(`"`macval(n1)'"') - 1)
+                }
+                if regexm(`"`macval(n1)'"', "^[a-zA-Z_][a-zA-Z_0-9]*$") {
+                    if !inlist("`n1'", "drop", "dir", "list", "di", "l") {
+                        local defined "`defined' `n1'"
+                    }
+                }
+            }
+            else if `"`macval(cl)'"' == "end" {
+                *-- closes a program; not a command
             }
             * a command token is bare letters/underscore/digits
-            if regexm(`"`cmd'"', "^[a-zA-Z_][a-zA-Z_0-9]*$") {
+            else if regexm(`"`macval(cmd)'"', "^[a-zA-Z_][a-zA-Z_0-9]*$") {
                 if !strpos(" `seen' ", " `cmd' ") {
                     local seen "`seen' `cmd'"
                     capture qui which `cmd'
@@ -1470,6 +1842,10 @@ program define _up_scan, rclass
     }
     file close `fh'
 
+    *-- a program the file defines itself is not something to install
+    local miss : list miss - defined
+    local miss : list clean miss
+
     if "`miss'" == "" {
         di as text "      every command in the file resolves on this machine"
     }
@@ -1478,7 +1854,7 @@ program define _up_scan, rclass
         foreach m of local miss {
             di as text "         " as result "`m'"
         }
-        di as text "      install them with: {bf:usepackage" "`miss'}"
+        di as text "      install them with: {bf:usepackage `miss'}"
     }
     return local missing "`miss'"
     *-- probing built-ins above leaves a nonzero _rc behind; clear it so a

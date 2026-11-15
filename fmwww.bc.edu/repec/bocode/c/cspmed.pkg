@@ -1,0 +1,25 @@
+d 'CSPMED': module to perform causal mediation analysis for cross-sectional and complex-survey data with one or more mediators: weighted OLS, logit, probit, 2SLS and DML
+d
+d  cspmed is Stata command for causal mediation analysis using
+d cross-sectional and complex-survey data. It accommodates one or
+d more mediators and supports weighted OLS, logit, probit, 2SLS and
+d double/debiased machine learning (DML), with design-based
+d (Taylor-linearised) inference and diagnostic procedures. 
+d
+d KW: causal mediation
+d KW: cross-section
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261114
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+d Author: Francis Baidoo, Koforidua Technical University
+d Support: email ytoyinyusuf@@gmail.com
+d
+f cspmed.ado
+f cspmed.sthlp
+f cspmed_cert_survey.dta
+f cspmed_cert.do

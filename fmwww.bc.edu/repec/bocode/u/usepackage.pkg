@@ -35,11 +35,11 @@ d KW: user-written packages; findit; search; ssc install; net install; ancillary
 d
 d Requires: Stata version 16.0
 d
-d Distribution-Date: 20260730
+d Distribution-Date: 20261114
 d
-d Author: Eric A. Booth, Texas 2036
+d Author: Eric Booth, Texas 2036
 d Support: email eric.a.booth@@gmail.com
 d
-f ../e/example_usepackage.do
+ ../e/example_usepackage.do
 f usepackage.ado
 f usepackage.sthlp

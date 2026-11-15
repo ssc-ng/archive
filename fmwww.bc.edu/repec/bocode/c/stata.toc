@@ -315,6 +315,7 @@ p csdlp module to compute causal state-dependent local projections:
 p csestudy module to provide Efficient Inference for Cross-Sectional Event Studies
 p csipolate module to perform cubic spline interpolation
 p csjl module to extend cs command for exposures with more than two categories
+p cspmed module to perform causal mediation analysis for cross-sectional and complex-survey data with one or more mediators: weighted OLS, logit, probit, 2SLS and DML
 p csranks module to construct uniformly asymptotically valid confidence sets on ranks
 p cstable module to calculate summary table for cohort study
 p csti module that modifies csi command in order to use total numbers rather than individual cell counts

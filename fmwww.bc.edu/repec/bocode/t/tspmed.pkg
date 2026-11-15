@@ -1,0 +1,25 @@
+d 'TSPMED': module to perform causal mediation analysis for time series with one or more mediators
+d
+d  tspmed is a Stata command for causal mediation analysis using
+d time-series data. It accommodates one or more mediators and
+d supports OLS-HAC, ARDL, FMOLS, DOLS and DML estimators, with
+d joint HAC inference and residual diagnostics. 
+d
+d KW: causal mediation
+d KW: time series
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261114
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+d Author: Francis Baidoo, Koforidua Technical University
+d Support: email ytoyinyusuf@@gmail.com
+d
+f tspmed.ado
+f tspmed.sthlp
+f tspmed_cert_coint.dta
+f tspmed_cert_stationary.dta
+f tspmed_cert.do

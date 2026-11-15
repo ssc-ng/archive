@@ -1,12 +1,27 @@
 d 'STATPLOT': module for plots of summary statistics, including by category 
 d
-d  statplot plots summary statistics. It is a wrapper for graph
-d hbar, or bar, or dot.  It is offered as an alternative command
+d   statplot plots summary statistics. It is a wrapper for graph
+d hbar, or bar, or dot. It is offered as an alternative command
 d that may on occasion produce graphs that are more congenial or
 d more convenient than those yielded by the equivalent Stata
-d commands.  The graphs produced are typically based more on axis
+d commands. The graphs produced are typically based more on axis
 d labeling than on the use of legends, and typically are shown in
-d one color rather than several. 
+d one color rather than several. Version 1.3.0 added confidence
+d intervals (ci, level(), ciopts()), percentages and shares
+d (percent, share, base()), label wrapping (wrap()), control of the
+d order in which variables are plotted (sort, descending, order(),
+d first(), last()), heading and group brackets on the category axis
+d (headings(), groups()), and export of the collapsed results set
+d that is graphed (savedata(), listdata, frame()); statplot is
+d rclass and returns its results in r(). Version 1.3.3 draws
+d category labels of any length in full on every Stata version;
+d wraps labels written in scripts that do not use spaces between
+d words, such as Chinese, Japanese and Thai, measuring width in
+d display columns; orders groups under ci as graph hbar does; and
+d keeps each grouping variable's own values and value labels in
+d exported results. Every option added since 1.2.7 is optional and
+d with none of them the behaviour is unchanged. A test battery
+d ships with the package as an ancillary file. 
 d
 d KW:  graphics
 d KW: summary statistics
@@ -15,10 +30,10 @@ d KW: dot chart
 d
 d Requires: Stata version 8.2
 d
-d Distribution-Date: 20260730
+d Distribution-Date: 20261114
 d
-d Author: Eric Booth, Public Policy Research Institute, Texas A&M University
-d Support: email ebooth@@ppri.tamu.edu
+d Author: Eric Booth, Texas 2036
+d Support: email eric.a.booth@@gmail.com
 d
 d Author: Nicholas J. Cox, Durham University
 d Support: email N.J.Cox@@durham.ac.uk

@@ -1,0 +1,28 @@
+d 'XTGAMFE': module to perform fixed-effects gamma regression with log link for strictly positive panel outcomes
+d
+d     xtgamfe fits a gamma regression with a log link and a fixed
+d effect for each panel to a strictly positive outcome.  The   
+d conditional mean is	     mu_it = exp(alpha_i + x_it'beta +
+d offset_it).	 For any value of beta the fixed effects have a
+d closed-form solution, so they are substituted out and the
+d coefficients are    found by Newton's method on a criterion in
+d beta alone.  That criterion is convex.  No indicator variables
+d are created, and run	  time grows linearly with the number of
+d observations. 
+d
+d KW: gamma regression
+d KW: fixed effects
+d KW: log link
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261114
+d
+d Author:  M. Christopher Roebuck,   RxEconomics LLC
+d Support: email   mcr@@rxeconomics.com
+d
+f xtgamfe.ado
+f xtgamfe_estat.ado
+f xtgamfe_p.ado
+f xtgamfe.sthlp
+f xtgamfe_example.dta

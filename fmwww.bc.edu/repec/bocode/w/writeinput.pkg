@@ -18,9 +18,9 @@ d KW: reproducible example; data management; Statalist; input
 d
 d Requires: Stata version 16.0
 d
-d Distribution-Date: 20260730
+d Distribution-Date: 20261114
 d
-d Author: Eric A. Booth, Texas 2036
+d Author: Eric Booth, Texas 2036
 d Support: email eric.a.booth@@gmail.com
 d
 f writeinput.ado

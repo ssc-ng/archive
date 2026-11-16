@@ -1,6 +1,7 @@
-*! version 1.1.0  11nov2026
+*! version 1.2.1  15nov2026
 *! cspmed: causal mediation analysis for cross-sectional and complex-survey
-*! data (weighted OLS, logit, probit, 2SLS, DML) with multiple mediators
+*! data (weighted OLS, logit, probit, ordered and multinomial logit/probit,
+*! 2SLS, DML) with multiple mediators
 *! Author: Yusuf Toyin Yusuf, Kwara State University, Malete, Nigeria
 
 program define cspmed, eclass sortpreserve
@@ -30,7 +31,7 @@ program define cspmed, eclass sortpreserve
     local depvar `varlist'
     if "`estimator'" == "" local estimator ols
     local estimator = lower("`estimator'")
-    local estlist ols logit probit iv dml
+    local estlist ols logit probit iv dml ologit oprobit mlogit mprobit
     if !`: list estimator in estlist' {
         di as err "estimator() must be one of: `estlist'"
         exit 198
@@ -92,8 +93,10 @@ program define cspmed, eclass sortpreserve
         local ivs
         local medivs
     }
-    if "`interaction'" != "" & !inlist("`estimator'", "ols", "logit", "probit") {
-        di as txt "(note: interaction applies to ols, logit and probit only; ignored)"
+    local catest = inlist("`estimator'", "ologit", "oprobit", "mlogit", "mprobit")
+    local nlest = inlist("`estimator'", "logit", "probit") | `catest'
+    if "`interaction'" != "" & !inlist("`estimator'", "ols", "logit", "probit", "ologit", "oprobit", "mlogit", "mprobit") {
+        di as txt "(note: interaction applies to ols, logit, probit, ologit, oprobit, mlogit and mprobit only; ignored)"
         local interaction
     }
     if "`estimator'" == "dml" & "`controls'" == "" {
@@ -115,7 +118,10 @@ program define cspmed, eclass sortpreserve
             di as err "data are not svyset"
             exit 119
         }
-        if "`wvar'" == "" & "`r(wvar)'" != "" local wvar `r(wvar)'
+        if "`wvar'" == "" & "`r(wvar)'" != "" {
+            local wvar `r(wvar)'
+            local wlabel "`r(wtype)'= `r(wvar)'"
+        }
         if "`cluster'" == "" & "`r(su1)'" != "" & "`r(su1)'" != "_n" local cluster `r(su1)'
         if "`strata'" == "" & "`r(strata1)'" != "" local strata `r(strata1)'
     }
@@ -131,6 +137,20 @@ program define cspmed, eclass sortpreserve
         qui count if `touse' & !inlist(`depvar', 0, 1)
         if r(N) > 0 {
             di as err "estimator(`estimator') requires a 0/1 outcome"
+            exit 450
+        }
+    }
+    if `catest' {
+        tempvar tagv
+        qui egen byte `tagv' = tag(`depvar') if `touse'
+        qui count if `tagv' == 1
+        local ncat = r(N)
+        if `ncat' < 3 {
+            di as err "estimator(`estimator') needs an outcome with at least 3 categories; use logit or probit for a binary outcome"
+            exit 450
+        }
+        if `ncat' > 20 {
+            di as err "estimator(`estimator'): outcome has `ncat' distinct values (at most 20 allowed)"
             exit 450
         }
     }
@@ -172,17 +192,34 @@ program define cspmed, eclass sortpreserve
         }
     }
     else {
-        local names `depvar':_cons `depvar':`treatment'
-        foreach m of local mediators {
-            local names `names' `depvar':`m'
-        }
+        local rhs `treatment' `mediators'
         if "`interaction'" != "" {
             foreach m of local mediators {
-                local names `names' `depvar':c.`treatment'#c.`m'
+                local rhs `rhs' c.`treatment'#c.`m'
             }
         }
-        foreach v of local controls {
-            local names `names' `depvar':`v'
+        local rhs `rhs' `controls'
+        if inlist("`estimator'", "ologit", "oprobit") {
+            foreach v of local rhs {
+                local names `names' `depvar':`v'
+            }
+            forvalues k = 1/`=`ncat'-1' {
+                local names `names' cut`k':_cons
+            }
+        }
+        else if inlist("`estimator'", "mlogit", "mprobit") {
+            forvalues k = 2/`ncat' {
+                local names `names' c`k':_cons
+                foreach v of local rhs {
+                    local names `names' c`k':`v'
+                }
+            }
+        }
+        else {
+            local names `names' `depvar':_cons
+            foreach v of local rhs {
+                local names `names' `depvar':`v'
+            }
         }
         foreach m of local mediators {
             local names `names' `m':_cons `m':`treatment'
@@ -190,7 +227,7 @@ program define cspmed, eclass sortpreserve
                 local names `names' `m':`v'
             }
         }
-        if inlist("`estimator'", "logit", "probit") {
+        if `nlest' {
             local j 0
             foreach m of local mediators {
                 local ++j
@@ -204,12 +241,35 @@ program define cspmed, eclass sortpreserve
     matrix colnames `b' = `names'
     matrix colnames `V' = `names'
     matrix rownames `V' = `names'
-    local enames NDE NIE TE PM
+    local base NDE NIE TE PM
     if `km' > 1 {
         foreach m of local mediators {
-            local enames `enames' NIE_`=substr("`m'", 1, 28)'
+            local base `base' NIE_`=substr("`m'", 1, 28)'
         }
     }
+    if `catest' {
+        tempname CATS
+        matrix `CATS' = __cp_cats
+        local targets ""
+        if inlist("`estimator'", "ologit", "oprobit") local targets EY
+        forvalues k = 1/`ncat' {
+            local targets `targets' c`k'
+        }
+        local enames ""
+        foreach t of local targets {
+            foreach nm of local base {
+                local enames `enames' `t':`nm'
+            }
+        }
+        local cnm ""
+        forvalues k = 1/`ncat' {
+            local cnm `cnm' c`k'
+        }
+        matrix colnames `CATS' = `cnm'
+        local llm = scalar(__cp_ll)
+        local ll0 = scalar(__cp_ll0)
+    }
+    else local enames `base'
     matrix `EFF' = __cp_eff
     matrix `VEFF' = __cp_veff
     matrix rownames `EFF' = `enames'
@@ -240,6 +300,9 @@ program define cspmed, eclass sortpreserve
         capture scalar drop __cp_`x'
     }
     capture matrix drop __cp_mlinkm
+    capture matrix drop __cp_cats
+    capture scalar drop __cp_ll
+    capture scalar drop __cp_ll0
 
     ereturn post `b' `V', esample(`touse') obs(`N') depname(`depvar')
     ereturn scalar km = `km'
@@ -256,6 +319,12 @@ program define cspmed, eclass sortpreserve
     if "`nodiag'" == "" ereturn matrix diag = `DIAG'
     ereturn matrix effects = `EFF'
     ereturn matrix V_eff = `VEFF'
+    if `catest' {
+        ereturn scalar k_cat = `ncat'
+        ereturn scalar ll = `llm'
+        ereturn scalar ll_0 = `ll0'
+        ereturn matrix cats = `CATS'
+    }
     ereturn local mlinks      "`mlinks'"
     ereturn local estimator   "`estimator'"
     ereturn local interaction "`interaction'"
@@ -263,7 +332,8 @@ program define cspmed, eclass sortpreserve
     ereturn local medivs      "`medivs'"
     ereturn local lewbel      = cond(`lewm' & `lewd', "both", cond(`lewm', "mediators", cond(`lewd', "treatment", "")))
     ereturn local lewbelvars  "`lewbelvars'"
-    ereturn local wvar        = cond("`wvar'"=="`one'", "", "`weight'`exp'")
+    if "`wlabel'" == "" local wlabel "`weight'`exp'"
+    ereturn local wvar        = cond("`wvar'"=="`one'", "", "`wlabel'")
     ereturn local clustvar    = cond("`clv'"=="`cluster'", "`cluster'", "")
     ereturn local strata      = cond("`strata'"=="`one'", "", "`strata'")
     ereturn local controls    "`controls'"
@@ -282,45 +352,79 @@ program define _cp_display
     local lab_logit  "Logit outcome, counterfactual effects"
     local lab_probit "Probit outcome, counterfactual effects"
     local lab_iv     "Two-stage least squares"
+    local lab_ologit  "Ordered logit outcome, counterfactual effects"
+    local lab_oprobit "Ordered probit outcome, counterfactual effects"
+    local lab_mlogit  "Multinomial logit outcome, counterfactual effects"
+    local lab_mprobit "Multinomial probit outcome, counterfactual effects"
+    local catest = inlist("`est'", "ologit", "oprobit", "mlogit", "mprobit")
     local lab_dml    "DML partialling-out, cross-fitted"
     di
     di as txt "`e(title)'" _col(55) "Number of obs = " as res %8.0fc e(N)
     di as txt "Estimator: " as res "`lab_`est''" _col(55) as txt "PSUs          = " as res %8.0fc e(N_psu)
     di as txt "Weights: " as res cond("`e(wvar)'"=="", "none", "`e(wvar)'") ///
         _col(55) as txt "Strata        = " as res %8.0fc e(N_strata)
-    di as txt "Variance: Taylor linearisation" cond("`e(clustvar)'"=="", "", ", PSU " + "`e(clustvar)'") ///
+    di as txt "Variance: Taylor linearization" cond("`e(clustvar)'"=="", "", ", PSU " + "`e(clustvar)'") ///
         cond("`e(strata)'"=="", "", ", strata " + "`e(strata)'")
     di as txt "Mediators: " as res "`e(mediators)'" as txt cond("`e(interaction)'"=="", "", "  (treatment x mediator interactions)")
-    if "`e(lewbel)'" != "" di as txt "Lewbel (2012) heteroskedasticity-based instruments for: " as res "`e(lewbel)'" as txt " (drivers: `e(lewbelvars)')"
-    if inlist("`est'", "logit", "probit") di as txt "Mediator models (0 linear, 1 logit, 2 probit): " as res "`e(mlinks)'"
+    if "`e(lewbel)'" != "" di as txt "Lewbel (2012) instruments for: " as res "`e(lewbel)'" as txt " (drivers: `e(lewbelvars)')"
+    if inlist("`est'", "logit", "probit") | `catest' di as txt "Mediator models (0 linear, 1 logit, 2 probit): " as res "`e(mlinks)'"
+    if `catest' {
+        tempname CT
+        matrix `CT' = e(cats)
+        local ctxt ""
+        forvalues k = 1/`=colsof(`CT')' {
+            local ctxt = "`ctxt' c`k' = " + string(`CT'[1,`k'], "%9.0g")
+        }
+        di as txt "Outcome categories:" as res "`ctxt'"
+        if inlist("`est'", "mlogit", "mprobit") di as txt "Base outcome: " as res "c1"
+    }
     ereturn display, level(`level')
 
     tempname E
     matrix `E' = e(effects)
     local rn : rownames `E'
+    local req : roweq `E'
     di
     di as txt "Causal mediation effects of moving `e(treatment)' from " as res %9.0g e(d0) as txt " to " as res %9.0g e(d1)
     if e(bootstrap) > 0 di as txt "Inference: PSU bootstrap within strata, " as res e(bootstrap) as txt " replications (percentile CI)"
-    else di as txt "Inference: linearisation including the averaging over the sample"
-    di as txt "{hline 26}{c TT}{hline 64}"
-    di as txt %25s "Effect" " {c |}" "      Coef.   Std. Err.      z    P>|z|     [`level'% Conf. Interval]"
-    di as txt "{hline 26}{c +}{hline 64}"
+    else di as txt "Inference: linearization, including the averaging over the sample"
+    di as txt "NDE natural direct, NIE natural indirect, TE total effect, PM proportion mediated"
+    if `catest' di as txt "E[Y]: expected outcome; Pr(Y=k): probability of outcome category k"
+    di as txt "{hline 13}{c TT}{hline 64}"
+    di as txt %12s "Effect" " {c |}" "      Coef.   Std. Err.      z    P>|z|     [`level'% Conf. Interval]"
+    di as txt "{hline 13}{c +}{hline 64}"
     local r 0
+    local prev ""
+    if `catest' {
+        tempname CT2
+        matrix `CT2' = e(cats)
+    }
     foreach nm of local rn {
         local ++r
+        local eq : word `r' of `req'
+        if "`eq'" != "_" & "`eq'" != "`prev'" {
+            if "`eq'" == "EY" local hdr "E[Y]"
+            else {
+                local kq = real(substr("`eq'", 2, .))
+                local hdr = "Pr(Y=" + string(`CT2'[1, `kq'], "%6.0g") + ")"
+            }
+            if "`prev'" != "" di as txt "{hline 13}{c +}{hline 64}"
+            di as res %12s abbrev("`hdr'", 12) as txt " {c |}"
+            local prev "`eq'"
+        }
         local lab "`nm'"
-        if "`nm'" == "NDE" local lab "Natural direct (NDE)"
-        if "`nm'" == "NIE" local lab "Natural indirect (NIE)"
-        if "`nm'" == "TE"  local lab "Total (TE)"
-        if "`nm'" == "PM"  local lab "Proportion mediated"
+        if "`nm'" == "NDE" local lab "NDE"
+        if "`nm'" == "NIE" local lab "NIE"
+        if "`nm'" == "TE"  local lab "TE"
+        if "`nm'" == "PM"  local lab "PM"
         if substr("`nm'", 1, 4) == "NIE_" {
             local medn = substr("`nm'", 5, .)
-            local lab "  via `medn'"
+            local lab "via `medn'"
         }
-        di as txt %25s abbrev("`lab'", 25) " {c |}  " as res %9.0g `E'[`r',1] "  " %9.0g `E'[`r',2] ///
+        di as txt %12s abbrev("`lab'", 12) " {c |}  " as res %9.0g `E'[`r',1] "  " %9.0g `E'[`r',2] ///
             "  " %7.2f `E'[`r',3] "  " %6.3f `E'[`r',4] "    " %9.0g `E'[`r',5] "   " %9.0g `E'[`r',6]
     }
-    di as txt "{hline 26}{c BT}{hline 64}"
+    di as txt "{hline 13}{c BT}{hline 64}"
 
     capture confirm matrix e(diag)
     if _rc exit
@@ -530,11 +634,11 @@ void _cp_est(real scalar est, real colvector Y, real colvector D, real matrix M,
     real scalar inter, real rowvector mlink, real scalar deg, real scalar K,
     real scalar lam, real matrix beta, real matrix IFb, real matrix RES, real matrix YS,
     real matrix ZS, real matrix zoff, real matrix KIND, real matrix ZIS, real matrix zioff,
-    real matrix NEX, real matrix END)
+    real matrix NEX, real matrix END, real colvector cats)
 {
     real scalar n, km, kx, j, k, W, s2, nzi, kk
     real matrix Xo, Xm, P, Pc, PP, Mt, Zf, b, IF, e, p, Mj
-    real colvector fold, Dt, Yt, tr, te, bb, ug, perm, fg
+    real colvector fold, Dt, Yt, tr, te, bb, ug, perm, fg, yc
     n = rows(Y); km = cols(M); kx = cols(X)
     endD = 0; instD = J(n, 0, .)
     beta = J(0, 1, .); IFb = J(n, 0, .); RES = J(n, 0, .); YS = J(n, 0, .)
@@ -574,6 +678,14 @@ void _cp_est(real scalar est, real colvector Y, real colvector D, real matrix M,
         _cp_glm(Y, Xo, w, est - 1, b, IF, p)
         e = Y - p
         KIND = (KIND, est - 1)
+        ZIS = (ZIS, J(n, 0, .)); zioff = (zioff, cols(ZIS))
+    }
+    else if (est >= 6) {
+        yc = J(n, 1, 0)
+        for (k = 1; k <= rows(cats); k++) yc = yc + k * (Y :== cats[k])
+        _cp_mfit(est, yc, Xo[., 2..cols(Xo)], w, rows(cats), b, IF)
+        e = J(n, 1, 0)
+        KIND = (KIND, est)
         ZIS = (ZIS, J(n, 0, .)); zioff = (zioff, cols(ZIS))
     }
     else if (est == 4) {
@@ -634,7 +746,7 @@ void _cp_est(real scalar est, real colvector Y, real colvector D, real matrix M,
         beta = beta \ b; IFb = (IFb, IF); RES = (RES, e); YS = (YS, M[., j])
         ZS = (ZS, Xm); zoff = (zoff, cols(ZS))
     }
-    if (est == 2 | est == 3) {
+    if (est == 2 | est == 3 | est >= 6) {
         W = sum(w)
         for (j = 1; j <= km; j++) {
             if (mlink[j] == 0) {
@@ -676,14 +788,200 @@ real colvector _cp_dmlres(real colvector a, real matrix Pc, real colvector w,
     return(out)
 }
 
+// ---------------------------------------------------------------- ordered and multinomial outcomes
+// est: 6 ordered logit, 7 ordered probit, 8 multinomial logit, 9 multinomial probit
+// R holds the outcome regressors without a constant: (D, M, [D x M], X)
+real matrix _cp_ordp(real scalar est, real colvector lin, real colvector kap)
+{
+    real matrix C
+    real scalar k, nc
+    nc = rows(kap) + 1
+    C = J(rows(lin), nc + 1, 0)
+    C[., nc + 1] = J(rows(lin), 1, 1)
+    for (k = 1; k < nc; k++) C[., k + 1] = _cp_cdf(est - 5, kap[k] :- lin)
+    return(C[., 2..(nc + 1)] - C[., 1..nc])
+}
+
+// multinomial probit with independent standard normal latent errors (as in -mprobit-):
+// Pr(k) = E_z[ prod_{j != k} Phi(z + eta_k - eta_j) ], Gauss-Hermite with 15 nodes
+real matrix _cp_mnp(real scalar est, real matrix ETA)
+{
+    real matrix E, P
+    real rowvector nd, wt
+    real colvector pk, pr
+    real scalar k, j, q, nc
+    nc = cols(ETA)
+    if (est == 8) {
+        E = exp(ETA :- rowmax(ETA))
+        return(E :/ rowsum(E))
+    }
+    _cp_gh(15, nd, wt)
+    P = J(rows(ETA), nc, 0)
+    for (k = 1; k <= nc; k++) {
+        pk = J(rows(ETA), 1, 0)
+        for (q = 1; q <= cols(nd); q++) {
+            pr = J(rows(ETA), 1, wt[q])
+            for (j = 1; j <= nc; j++) {
+                if (j != k) pr = pr :* normal(nd[q] :+ (ETA[., k] - ETA[., j]))
+            }
+            pk = pk + pr
+        }
+        P[., k] = pk
+    }
+    return(P)
+}
+
+// category probabilities; b = slopes then cut points (ordered), or one block
+// (constant, slopes) per non-base category (multinomial; base = lowest category)
+real matrix _cp_mprob(real scalar est, real scalar nc, real colvector b, real matrix R)
+{
+    real matrix ETA
+    real scalar ko, k
+    ko = cols(R) + 1
+    if (est <= 7) return(_cp_ordp(est, R * b[1..(ko - 1)], b[ko..(ko + nc - 2)]))
+    ETA = J(rows(R), 1, 0)
+    for (k = 2; k <= nc; k++) ETA = (ETA, (J(rows(R), 1, 1), R) * b[((k - 2) * ko + 1)..((k - 1) * ko)])
+    return(_cp_mnp(est, ETA))
+}
+
+void _cp_mlev(real scalar todo, real rowvector b, real colvector yc, real matrix R,
+    real colvector w, real rowvector info, real matrix v, real matrix g, real matrix H)
+{
+    real matrix P
+    real colvector py
+    real scalar k
+    P = _cp_mprob(info[1], info[2], b', R)
+    py = J(rows(yc), 1, 0)
+    for (k = 1; k <= info[2]; k++) py = py + P[., k] :* (yc :== k)
+    if (info[1] == 9) py = py :* (py :> 1e-300) + 1e-300 :* (py :<= 1e-300)
+    v = w :* ln(py)
+}
+
+real scalar _cp_mll(real scalar est, real scalar nc, real colvector b, real colvector yc,
+    real matrix R, real colvector w)
+{
+    real matrix v, g, H
+    _cp_mlev(0, b', yc, R, w, (est, nc), v, g, H)
+    return(sum(v))
+}
+
+// maximum likelihood; IF = weighted scores x inverse information
+void _cp_mfit(real scalar est, real colvector yc, real matrix R, real colvector w,
+    real scalar nc, real matrix b, real matrix IF)
+{
+    transmorphic S
+    real colvector b0, kap
+    real matrix H, Sc
+    real scalar ko, k, cs, W, rc, nb
+    ko = cols(R) + 1
+    nb = (est <= 7 ? ko - 2 + nc : (nc - 1) * ko)
+    b = J(nb, 1, .)
+    IF = J(rows(yc), nb, .)
+    W = sum(w)
+    for (k = 1; k <= nc; k++) {
+        if (sum(w :* (yc :== k)) <= 0) return
+    }
+    if (est <= 7) {
+        kap = J(nc - 1, 1, .)
+        cs = 0
+        for (k = 1; k < nc; k++) {
+            cs = cs + sum(w :* (yc :== k)) / W
+            kap[k] = (est == 6 ? logit(cs) : invnormal(cs))
+        }
+        b0 = J(ko - 1, 1, 0) \ kap
+    }
+    else b0 = J(nb, 1, 0)
+    S = optimize_init()
+    optimize_init_evaluator(S, &_cp_mlev())
+    optimize_init_evaluatortype(S, "gf0")
+    optimize_init_which(S, "max")
+    optimize_init_params(S, b0')
+    optimize_init_argument(S, 1, yc)
+    optimize_init_argument(S, 2, R)
+    optimize_init_argument(S, 3, w)
+    optimize_init_argument(S, 4, (est, nc))
+    optimize_init_tracelevel(S, "none")
+    optimize_init_conv_warning(S, "off")
+    optimize_init_conv_maxiter(S, 300)
+    rc = _optimize(S)
+    if (rc != 0) return
+    if (optimize_result_converged(S) != 1) return
+    b  = optimize_result_params(S)'
+    H  = optimize_result_Hessian(S)
+    Sc = optimize_result_scores(S)
+    IF = Sc * invsym(-H)
+}
+
+// counterfactual targets: (E[y], Pr(y = c1), ..., Pr(y = cJ)) for ordered outcomes,
+// (Pr(y = c1), ..., Pr(y = cJ)) for multinomial outcomes
+real matrix _cp_mu2(real scalar est, real scalar d, real rowvector dm, real colvector beta,
+    real scalar km, real scalar kx, real scalar inter, real rowvector mlink, real matrix X,
+    real rowvector nodes, real rowvector wts, real colvector cats)
+{
+    real scalar n, nc, ko, nbo, kmed, sp, pos, j, c, ncell, nt
+    real colvector z, pw, cnt
+    real matrix PAR, MV, R, P, total
+    real rowvector s2
+    n = rows(X)
+    nc = rows(cats)
+    ko = 2 + km * (1 + inter) + kx
+    nbo = (est <= 7 ? ko - 2 + nc : (nc - 1) * ko)
+    kmed = 2 + kx
+    PAR = J(n, km, .)
+    s2 = J(1, km, .)
+    sp = nbo + km * kmed
+    for (j = 1; j <= km; j++) {
+        pos = nbo + (j - 1) * kmed
+        z = beta[pos + 1] :+ beta[pos + 2] * dm[j] :+ (kx ? X * beta[(pos + 3)..(pos + kmed)] : J(n, 1, 0))
+        if (mlink[j] > 0) PAR[., j] = _cp_cdf(mlink[j], z)
+        else {
+            PAR[., j] = z
+            sp++
+            s2[j] = beta[sp]
+        }
+    }
+    nt = (est <= 7 ? nc + 1 : nc)
+    total = J(n, nt, 0)
+    cnt = J(km, 1, 1)
+    ncell = 1
+    for (j = 1; j <= km; j++) ncell = ncell * (mlink[j] > 0 ? 2 : cols(nodes))
+    for (c = 1; c <= ncell; c++) {
+        pw = J(n, 1, 1)
+        MV = J(n, km, .)
+        for (j = 1; j <= km; j++) {
+            if (mlink[j] > 0) {
+                MV[., j] = J(n, 1, cnt[j] == 2)
+                pw = pw :* (cnt[j] == 2 ? PAR[., j] : 1 :- PAR[., j])
+            }
+            else {
+                MV[., j] = PAR[., j] :+ sqrt(s2[j]) * nodes[cnt[j]]
+                pw = pw * wts[cnt[j]]
+            }
+        }
+        R = (J(n, 1, d), MV)
+        if (inter) R = (R, d :* MV)
+        if (kx) R = (R, X)
+        P = _cp_mprob(est, nc, beta[1..nbo], R)
+        if (est <= 7) total = total + pw :* (P * cats, P)
+        else total = total + pw :* P
+        for (j = 1; j <= km; j++) {
+            cnt[j] = cnt[j] + 1
+            if (cnt[j] <= (mlink[j] > 0 ? 2 : cols(nodes))) break
+            cnt[j] = 1
+        }
+    }
+    return(total)
+}
+
 // ---------------------------------------------------------------- effects
 real matrix _cp_mu(real scalar est, real scalar d, real rowvector dm, real colvector beta,
     real scalar km, real scalar kx, real scalar inter, real rowvector mlink, real matrix X,
-    real rowvector nodes, real rowvector wts)
+    real rowvector nodes, real rowvector wts, real colvector cats)
 {
     real scalar n, ko, j, pos, nc, c, r, kmed, sp
     real colvector bo, lin, xb, total, pw, z, cnt
     real matrix MEAN, KINDm, PAR, Mv, bm, s2
+    if (est >= 6) return(_cp_mu2(est, d, dm, beta, km, kx, inter, mlink, X, nodes, wts, cats))
     n = rows(X)
     if (est == 5) {
         bo = beta[1..(1 + km)]
@@ -749,20 +1047,29 @@ real matrix _cp_mu(real scalar est, real scalar d, real rowvector dm, real colve
 
 real matrix _cp_g(real scalar est, real colvector beta, real scalar km, real scalar kx,
     real scalar inter, real rowvector mlink, real matrix X, real rowvector nodes,
-    real rowvector wts, real scalar d1, real scalar d0)
+    real rowvector wts, real scalar d1, real scalar d0, real colvector cats)
 {
-    real colvector a11, a10, a00
-    real matrix G
+    real matrix a11, a10, a00, AJ, G
     real rowvector dm
-    real scalar j
-    a11 = _cp_mu(est, d1, J(1, km, d1), beta, km, kx, inter, mlink, X, nodes, wts)
-    a10 = _cp_mu(est, d1, J(1, km, d0), beta, km, kx, inter, mlink, X, nodes, wts)
-    a00 = _cp_mu(est, d0, J(1, km, d0), beta, km, kx, inter, mlink, X, nodes, wts)
-    G = (a10 - a00, a11 - a10, a11 - a00)
+    real scalar j, t, nt
+    a11 = _cp_mu(est, d1, J(1, km, d1), beta, km, kx, inter, mlink, X, nodes, wts, cats)
+    a10 = _cp_mu(est, d1, J(1, km, d0), beta, km, kx, inter, mlink, X, nodes, wts, cats)
+    a00 = _cp_mu(est, d0, J(1, km, d0), beta, km, kx, inter, mlink, X, nodes, wts, cats)
+    nt = cols(a11)
+    AJ = J(rows(a11), 0, .)
     if (km > 1) {
         for (j = 1; j <= km; j++) {
-            dm = J(1, km, d0); dm[j] = d1
-            G = (G, _cp_mu(est, d1, dm, beta, km, kx, inter, mlink, X, nodes, wts) - a10)
+            dm = J(1, km, d0)
+            dm[j] = d1
+            AJ = (AJ, _cp_mu(est, d1, dm, beta, km, kx, inter, mlink, X, nodes, wts, cats) - a10)
+        }
+    }
+    // per target: NDE, NIE, TE, then NIE via each mediator
+    G = J(rows(a11), 0, .)
+    for (t = 1; t <= nt; t++) {
+        G = (G, a10[., t] - a00[., t], a11[., t] - a10[., t], a11[., t] - a00[., t])
+        if (km > 1) {
+            for (j = 1; j <= km; j++) G = (G, AJ[., (j - 1) * nt + t])
         }
     }
     return(G)
@@ -771,31 +1078,51 @@ real matrix _cp_g(real scalar est, real colvector beta, real scalar km, real sca
 void _cp_effects(real scalar est, real colvector beta, real matrix IFb, real scalar km,
     real scalar kx, real scalar inter, real rowvector mlink, real matrix X, real colvector w,
     real rowvector nodes, real rowvector wts, real scalar d1, real scalar d0,
-    real matrix eff, real matrix IFe)
+    real colvector cats, real matrix eff, real matrix IFe)
 {
     real matrix G, Jm, IFa
     real rowvector th, gp, gm
     real colvector bp, bm
-    real scalar W, j, h, pm
+    real scalar W, j, h, pm, nb, nt, t, o
     W = sum(w)
-    G = _cp_g(est, beta, km, kx, inter, mlink, X, nodes, wts, d1, d0)
+    G = _cp_g(est, beta, km, kx, inter, mlink, X, nodes, wts, d1, d0, cats)
     th = colsum(w :* G) / W
+    // point estimates only (bootstrap replications): no Jacobian needed
+    if (rows(IFb) == 0) {
+        nb = 3 + (km > 1) * km
+        nt = cols(G) / nb
+        eff = J(1, 0, .)
+        for (t = 1; t <= nt; t++) {
+            o = (t - 1) * nb
+            eff = (eff, th[o + 1], th[o + 2], th[o + 3], th[o + 2] / th[o + 3])
+            if (nb > 3) eff = (eff, th[(o + 4)..(o + nb)])
+        }
+        IFe = J(0, cols(eff), .)
+        return
+    }
     Jm = J(cols(G), rows(beta), 0)
     for (j = 1; j <= rows(beta); j++) {
         h = 1e-6 * max((1, abs(beta[j])))
         bp = beta; bp[j] = bp[j] + h
         bm = beta; bm[j] = bm[j] - h
-        gp = colsum(w :* _cp_g(est, bp, km, kx, inter, mlink, X, nodes, wts, d1, d0)) / W
-        gm = colsum(w :* _cp_g(est, bm, km, kx, inter, mlink, X, nodes, wts, d1, d0)) / W
+        gp = colsum(w :* _cp_g(est, bp, km, kx, inter, mlink, X, nodes, wts, d1, d0, cats)) / W
+        gm = colsum(w :* _cp_g(est, bm, km, kx, inter, mlink, X, nodes, wts, d1, d0, cats)) / W
         Jm[., j] = ((gp - gm) / (2 * h))'
     }
     IFa = (w :* (G :- th)) / W + IFb * Jm'
-    pm = th[2] / th[3]
-    eff = (th[1], th[2], th[3], pm)
-    IFe = (IFa[., 1], IFa[., 2], IFa[., 3], (IFa[., 2] - pm * IFa[., 3]) / th[3])
-    if (cols(G) > 3) {
-        eff = (eff, th[4..cols(th)])
-        IFe = (IFe, IFa[., 4..cols(IFa)])
+    nb = 3 + (km > 1) * km
+    nt = cols(G) / nb
+    eff = J(1, 0, .)
+    IFe = J(rows(G), 0, .)
+    for (t = 1; t <= nt; t++) {
+        o = (t - 1) * nb
+        pm = th[o + 2] / th[o + 3]
+        eff = (eff, th[o + 1], th[o + 2], th[o + 3], pm)
+        IFe = (IFe, IFa[., o + 1], IFa[., o + 2], IFa[., o + 3], (IFa[., o + 2] - pm * IFa[., o + 3]) / th[o + 3])
+        if (nb > 3) {
+            eff = (eff, th[(o + 4)..(o + nb)])
+            IFe = (IFe, IFa[., (o + 4)..(o + nb)])
+        }
     }
 }
 
@@ -922,9 +1249,10 @@ void _cp_main(string scalar yv, string scalar dv, string scalar mv, string scala
 {
     real colvector Y, D, w, gg, gs, se, z, p, lo, hi, s, idx, ug, ugs, pick, bq
     real matrix M, X, Zi, Zm, Lv, beta, IFb, RES, YS, ZS, zoff, KIND, ZIS, zioff, NEX, END
-    real matrix V, eff, IFe, Ve, EB, DG, b2, I2, R2, Y2, Z2, zo2, K2, ZI2, zi2, N2, E2, ef2, IF2
+    real matrix V, eff, IFe, Ve, EB, DG, b2, I2, R2, Y2, Z2, zo2, K2, ZI2, zi2, N2, E2, ef2, IF2, Ro
     real rowvector mlink, nodes, wts
-    real scalar km, kx, j, n, q, b, h, a, nok, i, nfail, cvz, isbin
+    real colvector cats, yc
+    real scalar km, kx, j, n, q, b, h, a, nok, i, nfail, cvz, isbin, nq, nbo, ko, llm, ll0, Wk, k
     Y = st_data(., yv, touse); D = st_data(., dv, touse)
     M = st_data(., tokens(mv), touse)
     X = (strtrim(cv) != "" ? st_data(., tokens(cv), touse) : J(rows(Y), 0, .))
@@ -934,22 +1262,24 @@ void _cp_main(string scalar yv, string scalar dv, string scalar mv, string scala
     w = st_data(., wv, touse); gg = st_data(., ggv, touse); gs = st_data(., gsv, touse)
     n = rows(Y); km = cols(M); kx = cols(X)
     mlink = J(1, km, 0)
-    if (est == 2 | est == 3) {
+    if (est == 2 | est == 3 | est >= 6) {
         for (j = 1; j <= km; j++) {
             isbin = (rows(uniqrows(M[., j])) <= 2) & all((M[., j] :== 0) :| (M[., j] :== 1))
-            if (isbin) mlink[j] = est - 1
+            if (isbin) mlink[j] = ((est == 2 | est == 6 | est == 8) ? 1 : 2)
         }
     }
     st_matrix("__cp_mlinkm", mlink)
+    cats = (est >= 6 ? uniqrows(Y) : J(0, 1, .))
+    if (est >= 6) st_matrix("__cp_cats", cats')
     _cp_gh(ngh, nodes, wts)
     _cp_est(est, Y, D, M, X, Zi, Zm, Lv, lewd, lewm, w, gg, inter, mlink, deg, K, lam, beta, IFb, RES,
-        YS, ZS, zoff, KIND, ZIS, zioff, NEX, END)
+        YS, ZS, zoff, KIND, ZIS, zioff, NEX, END, cats)
     if (hasmissing(beta)) {
         errprintf("estimation failed (singular design)\n")
         exit(error(430))
     }
     V = _cp_svy(IFb, gg, gs)
-    _cp_effects(est, beta, IFb, km, kx, inter, mlink, X, w, nodes, wts, d1, d0, eff, IFe)
+    _cp_effects(est, beta, IFb, km, kx, inter, mlink, X, w, nodes, wts, d1, d0, cats, eff, IFe)
     Ve = _cp_svy(IFe, gg, gs)
     se = sqrt(diagonal(Ve))
     cvz = invnormal(1 - (1 - level / 100) / 2)
@@ -971,13 +1301,13 @@ void _cp_main(string scalar yv, string scalar dv, string scalar mv, string scala
             Zmb = (cols(Zm) ? Zm[idx, .] : J(rows(idx), 0, .))
             Lvb = (cols(Lv) ? Lv[idx, .] : J(rows(idx), 0, .))
             _cp_est(est, Y[idx], D[idx], M[idx, .], Xb, Zib, Zmb, Lvb, lewd, lewm, w[idx],
-                gg[idx], inter, mlink, deg, K, lam, b2, I2, R2, Y2, Z2, zo2, K2, ZI2, zi2, N2, E2)
+                gg[idx], inter, mlink, deg, K, lam, b2, I2, R2, Y2, Z2, zo2, K2, ZI2, zi2, N2, E2, cats)
             if (hasmissing(b2)) {
                 nfail++
                 if (dots) printf("{err}x{txt}")
             }
             else {
-                _cp_effects(est, b2, I2, km, kx, inter, mlink, Xb, w[idx], nodes, wts, d1, d0, ef2, IF2)
+                _cp_effects(est, b2, J(0, 0, .), km, kx, inter, mlink, Xb, w[idx], nodes, wts, d1, d0, cats, ef2, IF2)
                 EB[b, .] = ef2
                 if (dots) printf(".")
             }
@@ -1001,16 +1331,36 @@ void _cp_main(string scalar yv, string scalar dv, string scalar mv, string scala
     }
     z = eff' :/ se
     p = 2 * normal(-abs(z))
+    ko = 2 + km * (1 + inter) + kx
+    nbo = (est >= 6 ? (est <= 7 ? ko - 2 + rows(cats) : (rows(cats) - 1) * ko) : .)
+    if (est >= 6) {
+        yc = J(n, 1, 0)
+        for (k = 1; k <= rows(cats); k++) yc = yc + k * (Y :== cats[k])
+        Ro = (D, M)
+        if (inter) Ro = (Ro, D :* M)
+        Ro = (Ro, X)
+        llm = _cp_mll(est, rows(cats), beta[1..nbo], yc, Ro, w)
+        ll0 = 0
+        for (k = 1; k <= rows(cats); k++) {
+            Wk = sum(w :* (yc :== k))
+            ll0 = ll0 + Wk * ln(Wk / sum(w))
+        }
+        st_numscalar("__cp_ll", llm)
+        st_numscalar("__cp_ll0", ll0)
+    }
     if (dodiag) {
         DG = J(14, 0, .)
         a = 0
         for (q = 1; q <= km + 1; q++) {
-            bq = beta[(a + 1)..(a + zoff[q + 1] - zoff[q])]
-            a = a + zoff[q + 1] - zoff[q]
+            nq = zoff[q + 1] - zoff[q]
+            if (q == 1 & est >= 6) nq = nbo
+            bq = beta[(a + 1)..(a + nq)]
+            a = a + nq
             DG = (DG, _cp_diag(KIND[q], YS[., q], ZS[., (zoff[q] + 1)..zoff[q + 1]], RES[., q], bq,
                 (zioff[q + 1] > zioff[q] ? ZIS[., (zioff[q] + 1)..zioff[q + 1]] : J(n, 0, .)),
                 NEX[q, .], END[q, .], w, gg, gs, est, 0))
         }
+        if (est >= 6) DG[12, 1] = 1 - llm / ll0
         st_matrix("__cp_diag", DG)
     }
     st_matrix("__cp_b", beta')

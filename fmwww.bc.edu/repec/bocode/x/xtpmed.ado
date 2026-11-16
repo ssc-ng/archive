@@ -1,4 +1,4 @@
-*! version 2.1.0  11nov2026
+*! version 2.3.0  15nov2026
 *! xtpmed: causal mediation analysis for (unbalanced) panel data with
 *! multiple mediators, nine panel estimators and residual diagnostics
 *! Author: Yusuf Toyin Yusuf, Kwara State University, Malete, Nigeria
@@ -35,6 +35,8 @@ program define xtpmed, eclass sortpreserve
           NODOTS                                    ///
           NODIAG                                    ///
           BREAK(string)                             ///
+          ARDLlags(numlist integer min=2 max=2 >=1) ///
+          IC(string) MAXP(integer 3) MAXQ(integer 3) ///
           Level(cilevel) ]
 
     local depvar `varlist'
@@ -75,6 +77,40 @@ program define xtpmed, eclass sortpreserve
             local repeat 1
         }
     }
+
+    * ---------------- ARDL lag orders ----------------
+    local isardl = inlist("`estimator'", "dfe", "mg", "pmg", "csardl")
+    local icode 0
+    local pf 1
+    local qf 1
+    if "`ic'`ardllags'" != "" & !`isardl' {
+        di as txt "(note: ardllags() and ic() apply to dfe, mg, pmg and csardl only; ignored)"
+        local ic
+        local ardllags
+    }
+    if "`ic'" != "" & "`ardllags'" != "" {
+        di as err "specify either ardllags() or ic(), not both"
+        exit 198
+    }
+    if "`ardllags'" != "" {
+        local pf : word 1 of `ardllags'
+        local qf : word 2 of `ardllags'
+    }
+    if "`ic'" != "" {
+        local ic = lower("`ic'")
+        if "`ic'" == "sbc" | "`ic'" == "sic" local ic bic
+        if "`ic'" == "hq" local ic hqic
+        local icode = cond("`ic'"=="aic", 1, cond("`ic'"=="bic", 2, cond("`ic'"=="hqic", 3, 0)))
+        if `icode' == 0 {
+            di as err "ic() must be aic, bic or hqic"
+            exit 198
+        }
+        if `maxp' < 1 | `maxq' < 1 | `maxp' > 8 | `maxq' > 8 {
+            di as err "maxp() and maxq() must be between 1 and 8"
+            exit 198
+        }
+    }
+    local lagmax = cond(`icode' > 0, max(`maxp', `maxq'), max(`pf', `qf'))
 
     * ---------------- checks on options ----------------
     if `lags' < 0 | `ivlags' < 1 | `repeat' < 1 | `ridge' < 0 | `bootstrap' < 0 {
@@ -144,7 +180,7 @@ program define xtpmed, eclass sortpreserve
         di as err "time variable is not on a regular grid of the xtset delta"
         exit 459
     }
-    local minT = cond("`estimator'"=="dml", `lags' + 4, 4)
+    local minT = cond("`estimator'"=="dml", `lags' + 4, cond(`isardl', `lagmax' + 4, 4))
     if `T' < `minT' {
         di as err "too few time periods (T = `T')"
         exit 2001
@@ -179,7 +215,7 @@ program define xtpmed, eclass sortpreserve
         `dklag', ("`timefe'"!=""), `lags', `ivlags', `poly', `folds',          ///
         `repeat', `ridge', `kdsq', ("`onestep'"==""), ("`nocollapse'"==""),     ///
         `d1', `d0', `bootstrap', ("`nodots'"==""), `level', ("`nodiag'"==""),   ///
-        `brk')
+        `brk', `icode', `pf', `qf', `maxp', `maxq')
 
     * ---------------- coefficient names ----------------
     local names ""
@@ -257,7 +293,45 @@ program define xtpmed, eclass sortpreserve
         matrix `BBOOT' = __xp_bboot
         matrix colnames `BBOOT' = `enames'
     }
-    foreach x in b V eff beff veff bboot diag chowj {
+    tempname LAGS SRM
+    matrix `LAGS' = __xp_lags
+    matrix rownames `LAGS' = `depvar' `mediators'
+    matrix colnames `LAGS' = p q
+    if `isardl' {
+        matrix `SRM' = __xp_sr
+        local srn ""
+        local q 0
+        foreach eq in `depvar' `mediators' {
+            local ++q
+            local pq = `LAGS'[`q', 1]
+            local qq = `LAGS'[`q', 2]
+            if `q' == 1 local xv `treatment' `mediators' `controls'
+            else local xv `treatment' `controls'
+            local srn `srn' `eq':ec
+            forvalues j = 0/`=`qq' - 1' {
+                local op = cond(`j' == 0, "D.", cond(`j' == 1, "LD.", "L`j'D."))
+                foreach v of local xv {
+                    local srn `srn' `eq':`op'`v'
+                }
+            }
+            forvalues j = 1/`=`pq' - 1' {
+                local op = cond(`j' == 1, "LD.", "L`j'D.")
+                local srn `srn' `eq':`op'`eq'
+            }
+            if "`estimator'" != "dfe" local srn `srn' `eq':_cons
+        }
+        local zc = invnormal(1 - (1 - `level' / 100) / 2)
+        matrix `SRM' = (`SRM', J(rowsof(`SRM'), 4, .))
+        forvalues r = 1/`=rowsof(`SRM')' {
+            matrix `SRM'[`r', 3] = `SRM'[`r', 1] / `SRM'[`r', 2]
+            matrix `SRM'[`r', 4] = 2 * normal(-abs(`SRM'[`r', 1] / `SRM'[`r', 2]))
+            matrix `SRM'[`r', 5] = `SRM'[`r', 1] - `zc' * `SRM'[`r', 2]
+            matrix `SRM'[`r', 6] = `SRM'[`r', 1] + `zc' * `SRM'[`r', 2]
+        }
+        matrix rownames `SRM' = `srn'
+        matrix colnames `SRM' = b se z pvalue ll ul
+    }
+    foreach x in b V eff beff veff bboot diag chowj lags sr {
         capture matrix drop __xp_`x'
     }
     foreach x in J Jdf bfail {
@@ -294,6 +368,13 @@ program define xtpmed, eclass sortpreserve
         ereturn matrix diag  = `DIAG'
         ereturn matrix chow  = `CHOWJ'
     }
+    if `isardl' {
+        ereturn matrix ardllags = `LAGS'
+        ereturn matrix sr = `SRM'
+        ereturn local ic = cond(`icode' > 0, "`ic'", "")
+        ereturn scalar maxp = cond(`icode' > 0, `maxp', .)
+        ereturn scalar maxq = cond(`icode' > 0, `maxq', .)
+    }
     ereturn matrix effects = `EFF'
     ereturn matrix b_eff   = `BEFF'
     ereturn matrix V_eff   = `VEFF'
@@ -320,9 +401,9 @@ program define _xp_display
     local lab_dml    "DML-GMM (Wu-Xiao), two-way FE"
     local lab_fe     "Fixed effects (within)"
     local lab_re     "Random effects (GLS)"
-    local lab_dfe    "Dynamic fixed effects, ARDL(1,1)-ECM"
-    local lab_mg     "Mean group, ARDL(1,1)-ECM"
-    local lab_pmg    "Pooled mean group, ARDL(1,1)-ECM"
+    local lab_dfe    "Dynamic fixed effects, ARDL-ECM"
+    local lab_mg     "Mean group, ARDL-ECM"
+    local lab_pmg    "Pooled mean group, ARDL-ECM"
     local lab_ccep   "CCE pooled (Pesaran 2006)"
     local lab_ccemg  "CCE mean group (Pesaran 2006)"
     local lab_csardl "CS-ARDL mean group (Chudik-Pesaran)"
@@ -343,9 +424,23 @@ program define _xp_display
             as res %8.3f e(J) as txt ",  p = " as res %6.4f e(J_p)
     }
     if inlist("`est'", "dfe", "mg", "pmg", "csardl") {
+        tempname LG
+        matrix `LG' = e(ardllags)
+        local eqs `e(depvar)' `e(mediators)'
+        local ltxt ""
+        local q 0
+        foreach eq of local eqs {
+            local ++q
+            local ltxt = "`ltxt' `eq'(" + string(`LG'[`q',1]) + "," + string(`LG'[`q',2]) + ")"
+        }
+        if "`e(ic)'" != "" di as txt "ARDL(p,q) by equation:" as res "`ltxt'" ///
+            as txt "  [selected by " as res upper("`e(ic)'") as txt ", maxp = " as res e(maxp) ///
+            as txt ", maxq = " as res e(maxq) as txt "]"
+        else di as txt "ARDL(p,q) by equation:" as res "`ltxt'"
         di as txt "Coefficients are long-run; " as res "ec" as txt " = speed of adjustment"
     }
     ereturn display, level(`level')
+    _xp_srdisplay, level(`level')
 
     tempname E
     matrix `E' = e(effects)
@@ -355,38 +450,78 @@ program define _xp_display
         as txt " to " as res %9.0g e(d1)
     if e(bootstrap) > 0 di as txt "Inference: unit bootstrap, " as res e(bootstrap) as txt " replications (percentile CI)"
     else di as txt "Inference: delta method on the joint (cross-equation) variance"
-    di as txt "{hline 26}{c TT}{hline 64}"
-    di as txt %25s "Effect" " {c |}" ///
+    di as txt "NDE natural direct, NIE natural indirect, TE total effect, PM proportion mediated"
+    di as txt "{hline 13}{c TT}{hline 64}"
+    di as txt %12s "Effect" " {c |}" ///
         "      Coef.   Std. Err.      z    P>|z|     [`level'% Conf. Interval]"
-    di as txt "{hline 26}{c +}{hline 64}"
+    di as txt "{hline 13}{c +}{hline 64}"
     local r 0
     foreach nm of local rn {
         local ++r
         if "`nm'" == "NDE" {
-            if "`est'" == "dml" di as txt %25s "Long run (sustained)" " {c |}"
-            else if inlist("`est'", "dfe", "mg", "pmg", "csardl") di as txt %25s "Long run" " {c |}"
+            if "`est'" == "dml" di as txt %12s "Sustained" " {c |}"
+            else if inlist("`est'", "dfe", "mg", "pmg", "csardl") di as txt %12s "Long run" " {c |}"
         }
-        if "`nm'" == "NDE_0" di as txt %25s "Impact (same period)" " {c |}"
+        if "`nm'" == "NDE_0" di as txt %12s "Impact" " {c |}"
         local lab "`nm'"
-        if "`nm'" == "NDE"  local lab "Natural direct (NDE)"
-        if "`nm'" == "NIE"  local lab "Natural indirect (NIE)"
-        if "`nm'" == "TE"   local lab "Total (TE)"
-        if "`nm'" == "PM"   local lab "Proportion mediated"
+        if "`nm'" == "NDE"  local lab "NDE"
+        if "`nm'" == "NIE"  local lab "NIE"
+        if "`nm'" == "TE"   local lab "TE"
+        if "`nm'" == "PM"   local lab "PM"
         if "`nm'" == "NDE_0" local lab "Impact NDE"
         if "`nm'" == "NIE_0" local lab "Impact NIE"
         if "`nm'" == "TE_0"  local lab "Impact TE"
         if substr("`nm'", 1, 4) == "NIE_" & "`nm'" != "NIE_0" {
             local medn = substr("`nm'", 5, .)
-            local lab "  via `medn'"
+            local lab "via `medn'"
         }
-        local lab = abbrev("`lab'", 25)
-        di as txt %25s "`lab'" " {c |}  " as res %9.0g `E'[`r',1] "  " %9.0g `E'[`r',2] ///
+        local lab = abbrev("`lab'", 12)
+        di as txt %12s "`lab'" " {c |}  " as res %9.0g `E'[`r',1] "  " %9.0g `E'[`r',2] ///
             "  " %7.2f `E'[`r',3] "  " %6.3f `E'[`r',4] "    " %9.0g `E'[`r',5] "   " %9.0g `E'[`r',6]
     }
-    di as txt "{hline 26}{c BT}{hline 64}"
+    di as txt "{hline 13}{c BT}{hline 64}"
 
     capture confirm matrix e(diag)
     if _rc == 0 _xp_diagdisplay
+end
+
+program define _xp_srdisplay
+    syntax [, Level(cilevel)]
+    capture confirm matrix e(sr)
+    if _rc exit
+    tempname S
+    matrix `S' = e(sr)
+    local rn : rownames `S'
+    local req : roweq `S'
+    local zc = invnormal(1 - (1 - `level' / 100) / 2)
+    di
+    di as txt "Short-run coefficients (error-correction form)"
+    if "`e(estimator)'" == "dfe" di as txt "Pooled estimates; standard errors clustered by unit"
+    else if "`e(estimator)'" == "pmg" di as txt "Averages of unit estimates given the pooled long-run coefficients;" _n ///
+        "mean-group standard errors"
+    else di as txt "Averages of unit estimates; mean-group standard errors"
+    di as txt "{hline 13}{c TT}{hline 64}"
+    di as txt %12s "" " {c |}" ///
+        "      Coef.   Std. Err.      z    P>|z|     [`level'% Conf. Interval]"
+    local r 0
+    local prev ""
+    foreach nm of local rn {
+        local ++r
+        local eq : word `r' of `req'
+        if "`eq'" != "`prev'" {
+            di as txt "{hline 13}{c +}{hline 64}"
+            di as res %12s abbrev("`eq'", 12) as txt " {c |}"
+            local prev "`eq'"
+        }
+        local lab "`nm'"
+        
+        local bb = `S'[`r', 1]
+        local ss = `S'[`r', 2]
+        di as txt %12s abbrev("`lab'", 12) " {c |}  " as res %9.0g `bb' "  " %9.0g `ss' ///
+            "  " %7.2f `bb' / `ss' "  " %6.3f 2 * normal(-abs(`bb' / `ss')) ///
+            "    " %9.0g `bb' - `zc' * `ss' "   " %9.0g `bb' + `zc' * `ss'
+    }
+    di as txt "{hline 13}{c BT}{hline 64}"
 end
 
 program define _xp_diagdisplay
@@ -432,9 +567,9 @@ program define _xp_diagdisplay
             as res %9.3f `C'[1,1] as txt ",  p = " as res %6.4f `C'[1,3] ///
             as txt "   (break after " as res e(break_t) as txt ")"
     }
-    di as txt "Notes: the modified Wald test over-rejects when T is small; prefer Brown-Forsythe."
-    di as txt "       Pesaran CD has no power when factor loadings average zero; see the LM test."
-    if `fd' di as txt "       DML residuals are first-differenced and period-demeaned; AR(1) is expected." _n ///
+    di as txt "Notes: the modified Wald test over-rejects for small T; prefer Brown-Forsythe."
+    di as txt "       Pesaran CD lacks power when factor loadings average zero; see LM test."
+    if `fd' di as txt "       DML residuals are first-differenced and demeaned; AR(1) is expected." _n ///
         as txt "       AR tests include the Arellano-Bond estimation-effect correction."
     di as txt "       Pesaran-Yamagata uses the static fixed-effects version of each equation."
 end
@@ -647,16 +782,121 @@ void _xp_re(real colvector y, real matrix X, real colvector tt, real scalar N,
     res = _xp_within(comp, v, N, T)
 }
 
+// ======================================================= ARDL(p,q) building blocks
+// short-run regressors of the ARDL(p,q) error-correction form:
+// D.x, L.D.x, ..., L(q-1).D.x and L.D.y, ..., L(p-1).D.y
+real matrix _xp_srun(real colvector y, real matrix X, real colvector tt,
+    real scalar p, real scalar q)
+{
+    real matrix W, dX
+    real colvector dy
+    real scalar j
+    dX = _xp_diff(X, tt)
+    dy = _xp_diff(y, tt)
+    W  = J(rows(y), 0, .)
+    for (j = 0; j <= q - 1; j++) W = (W, _xp_lag(dX, j, tt))
+    for (j = 1; j <= p - 1; j++) W = (W, _xp_lag(dy, j, tt))
+    return(W)
+}
+
+// regressors: est 4, 5, 6 -> (L.y, L.x, short-run terms) for D.y
+//             est 9       -> (L.y ... Lp.y, x ... Lq.x, cross-section averages) for y
+real matrix _xp_ardlrg(real scalar est, real colvector y, real matrix X, real colvector tt,
+    real scalar N, real scalar T, real scalar p, real scalar q)
+{
+    real matrix Rg, Zb
+    real scalar l, pT
+    if (est != 9) return((_xp_lag(y, 1, tt), _xp_lag(X, 1, tt), _xp_srun(y, X, tt, p, q)))
+    Rg = J(rows(y), 0, .)
+    for (l = 1; l <= p; l++) Rg = (Rg, _xp_lag(y, l, tt))
+    for (l = 0; l <= q; l++) Rg = (Rg, _xp_lag(X, l, tt))
+    pT = floor(T^(1/3))
+    Zb = _xp_csa(y, X, N, T)
+    for (l = 0; l <= pT; l++) Rg = (Rg, _xp_lag(Zb, l, tt))
+    return(Rg)
+}
+
+real scalar _xp_ic(real scalar ic, real scalar ssr, real scalar n, real scalar k)
+{
+    real scalar pen
+    pen = (ic == 1 ? 2 : (ic == 2 ? ln(n) : 2 * ln(ln(n))))
+    return(ln(ssr / n) + pen * k / n)
+}
+
+// lag orders (p, q) minimising the information criterion over p = 1..maxp,
+// q = 1..maxq on a common estimation sample: pooled within regression for DFE,
+// average of the unit-specific criteria for MG, PMG and CS-ARDL
+real rowvector _xp_icsel(real scalar est, real colvector y, real matrix X, real colvector tt,
+    real scalar N, real scalar T, real scalar ic, real scalar maxp, real scalar maxq)
+{
+    real matrix Rmax, Rg, Rgi, Xi, Xt
+    real colvector dep, vmax, ok, idx, depi, b, e, yt
+    real scalar p, q, i, a, z, best, val, nu, kc, bp, bq, nobs, nuv
+    dep  = (est == 9 ? y : _xp_diff(y, tt))
+    Rmax = _xp_ardlrg(est, y, X, tt, N, T, maxp, maxq)
+    vmax = _xp_ok((dep, Rmax))
+    ok = J(N, 1, 0)
+    for (i = 1; i <= N; i++) {
+        a = (i - 1) * T + 1
+        z = i * T
+        if (sum(vmax[|a \ z|]) >= cols(Rmax) + 3) ok[i] = 1
+    }
+    if (sum(ok) == 0) return((1, 1))
+    best = .
+    bp = 1
+    bq = 1
+    for (p = 1; p <= maxp; p++) {
+        for (q = 1; q <= maxq; q++) {
+            Rg = _xp_ardlrg(est, y, X, tt, N, T, p, q)
+            kc = cols(Rg) + 1
+            if (est == 4) {
+                yt = _xp_z0(_xp_within(dep, vmax, N, T))
+                Xt = _xp_z0(_xp_within(Rg, vmax, N, T))
+                b  = invsym(cross(Xt, Xt)) * cross(Xt, yt)
+                e  = yt - Xt * b
+                nobs = sum(vmax)
+                nuv  = sum(rowsum(colshape(vmax, T)) :> 0)
+                val  = _xp_ic(ic, cross(e, e), nobs, cols(Rg) + nuv)
+            }
+            else {
+                val = 0
+                nu = 0
+                for (i = 1; i <= N; i++) {
+                    if (ok[i] == 0) continue
+                    a = (i - 1) * T + 1
+                    z = i * T
+                    idx  = selectindex(vmax[|a \ z|])
+                    Rgi  = Rg[|a, 1 \ z, cols(Rg)|]
+                    depi = dep[|a \ z|]
+                    Xi = (J(rows(idx), 1, 1), Rgi[idx, .])
+                    b  = invsym(cross(Xi, Xi)) * cross(Xi, depi[idx])
+                    e  = depi[idx] - Xi * b
+                    val = val + _xp_ic(ic, cross(e, e), rows(idx), kc)
+                    nu++
+                }
+                val = val / nu
+            }
+            if (best >= . | val < best) {
+                best = val
+                bp = p
+                bq = q
+            }
+        }
+    }
+    return((bp, bq))
+}
+
 // ======================================================= dynamic FE (ECM)
 void _xp_dfe(real colvector y, real matrix X, real colvector tt, real scalar N,
-    real scalar T, real scalar tfe, real matrix R, real matrix IF, real matrix res)
+    real scalar T, real scalar tfe, real scalar p, real scalar q, real matrix R,
+    real matrix IF, real matrix res)
 {
     real matrix Rg, XX, Xt, Ai, IFb, Jg
     real colvector dy, v, yt, b, e, beta
     real scalar k, phi
     k  = cols(X)
     dy = _xp_diff(y, tt)
-    Rg = (_xp_lag(y, 1, tt), _xp_lag(X, 1, tt), _xp_diff(X, tt))
+    Rg = _xp_ardlrg(4, y, X, tt, N, T, p, q)
     XX = (tfe ? (Rg, _xp_tdum(tt, T)) : Rg)
     v  = _xp_ok((dy, XX))
     yt = _xp_z0(_xp_within(dy, v, N, T))
@@ -674,6 +914,100 @@ void _xp_dfe(real colvector y, real matrix X, real colvector tt, real scalar N,
     Jg[k + 1, 1] = 1
     IF = IFb * Jg'
     res = _xp_setmiss(e, v)
+}
+
+// ======================================================= short-run coefficients
+// Error-correction form of each ARDL(p,q) equation:
+//   ec (speed of adjustment), D.x ... L(q-1)D.x for every regressor (lag by lag),
+//   LD.y ... L(p-1)D.y, and _cons (MG, PMG, CS-ARDL).
+// DFE: pooled within estimates, standard errors clustered by unit.
+// MG, PMG, CS-ARDL: averages of unit estimates with mean-group standard errors
+// (PMG: unit regressions given the pooled long-run coefficients; CS-ARDL: unit
+// levels coefficients converted to the error-correction form).
+real matrix _xp_sr(real scalar est, real colvector y, real matrix X, real colvector tt,
+    real scalar N, real scalar T, real scalar p, real scalar q, real scalar tfe)
+{
+    real matrix Rg, XX, Xt, Ai, IFb, Gc, V, Si, Rgi, Xi, Xl, W, Wi, Xli, Rq, IFq, rq
+    real colvector dep, v, yt, b, e, idx, depi, ok, sr, lam, th, ecv, dyi
+    real scalar k, kw, i, a, z, j, l, Nv, nsr, nmin
+    k  = cols(X)
+    W  = _xp_srun(y, X, tt, p, q)
+    kw = cols(W)
+    nsr = 1 + kw + (est != 4)
+    if (est == 4) {
+        dep = _xp_diff(y, tt)
+        Rg  = _xp_ardlrg(4, y, X, tt, N, T, p, q)
+        XX  = (tfe ? (Rg, _xp_tdum(tt, T)) : Rg)
+        v   = _xp_ok((dep, XX))
+        yt  = _xp_z0(_xp_within(dep, v, N, T))
+        Xt  = _xp_z0(_xp_within(XX, v, N, T))
+        Ai  = invsym(cross(Xt, Xt))
+        b   = Ai * cross(Xt, yt)
+        e   = yt - Xt * b
+        IFb = (Xt :* e) * Ai
+        Gc  = J(N, cols(Xt), 0)
+        Nv  = 0
+        for (i = 1; i <= N; i++) {
+            a = (i - 1) * T + 1
+            z = i * T
+            Gc[i, .] = colsum(IFb[|a, 1 \ z, cols(Xt)|])
+            if (sum(v[|a \ z|]) > 0) Nv++
+        }
+        V  = cross(Gc, Gc) * Nv / (Nv - 1)
+        idx = (1 \ ((k + 2)::(k + 1 + kw)))
+        e = diagonal(V)
+        return((b[idx], sqrt(e[idx])))
+    }
+    Si = J(N, nsr, .)
+    ok = J(N, 1, 0)
+    if (est == 6) {
+        _xp_pmg(y, X, tt, N, T, p, q, Rq, IFq, rq)
+        th  = Rq[1..k]
+        dep = _xp_diff(y, tt)
+        Xl  = _xp_lag(X, 1, tt)
+        ecv = _xp_lag(y, 1, tt) - Xl * th
+        Rg  = (ecv, W)
+        nmin = kw + k + 4
+    }
+    else {
+        dep = (est == 9 ? y : _xp_diff(y, tt))
+        Rg  = _xp_ardlrg(est, y, X, tt, N, T, p, q)
+        nmin = cols(Rg) + 3
+    }
+    v = _xp_ok((dep, Rg))
+    for (i = 1; i <= N; i++) {
+        a = (i - 1) * T + 1
+        z = i * T
+        idx = selectindex(v[|a \ z|])
+        if (rows(idx) < nmin) continue
+        Rgi  = Rg[|a, 1 \ z, cols(Rg)|]
+        depi = dep[|a \ z|]
+        Xi = (J(rows(idx), 1, 1), Rgi[idx, .])
+        b  = invsym(cross(Xi, Xi)) * cross(Xi, depi[idx])
+        if (est == 5) sr = (b[2] \ b[(k + 3)..(k + 2 + kw)] \ b[1])
+        else if (est == 6) sr = (b[2] \ b[3..(2 + kw)] \ b[1])
+        else {
+            // levels: b = (c, lambda_1..lambda_p, x_t (k), ..., x_t-q (k), averages)
+            lam = b[2..(p + 1)]
+            sr = sum(lam) - 1
+            for (j = 0; j <= q - 1; j++) {
+                if (j == 0) sr = sr \ b[(p + 2)..(p + 1 + k)]
+                else {
+                    e = J(k, 1, 0)
+                    for (l = j + 1; l <= q; l++) e = e + b[(p + 2 + l * k)..(p + 1 + (l + 1) * k)]
+                    sr = sr \ (-e)
+                }
+            }
+            for (j = 1; j <= p - 1; j++) sr = sr \ (-sum(lam[(j + 1)..p]))
+            sr = sr \ b[1]
+        }
+        Si[i, .] = sr'
+        ok[i] = 1
+    }
+    Si = select(Si, ok)
+    Nv = rows(Si)
+    if (Nv < 2) return(J(nsr, 2, .))
+    return((mean(Si)', sqrt(diagonal(variance(Si)) / Nv)))
 }
 
 // ======================================================= mean-group family
@@ -698,15 +1032,16 @@ real matrix _xp_csa(real colvector y, real matrix X, real scalar N, real scalar 
 
 // type: 1 = MG-ECM, 2 = CCEMG, 3 = CS-ARDL
 void _xp_mgfam(real scalar type, real colvector y, real matrix X, real colvector tt,
-    real scalar N, real scalar T, real matrix R, real matrix IF, real matrix res)
+    real scalar N, real scalar T, real scalar p, real scalar q, real matrix R,
+    real matrix IF, real matrix res)
 {
-    real matrix Rg, Zb, Zl, Ri, Rgi, Xi
-    real colvector dep, v, ok, vi, idx, depi, b, ri
-    real scalar k, i, l, pT, kR, lam, a, z
+    real matrix Rg, Ri, Rgi, Xi
+    real colvector dep, v, ok, vi, idx, depi, b, ri, bx
+    real scalar k, i, l, kR, lam, a, z
     k = cols(X)
     if (type == 1) {
         dep = _xp_diff(y, tt)
-        Rg  = (_xp_lag(y, 1, tt), _xp_lag(X, 1, tt), _xp_diff(X, tt))
+        Rg  = _xp_ardlrg(5, y, X, tt, N, T, p, q)
         kR  = k + 1
     }
     else if (type == 2) {
@@ -716,11 +1051,7 @@ void _xp_mgfam(real scalar type, real colvector y, real matrix X, real colvector
     }
     else {
         dep = y
-        pT  = floor(T^(1/3))
-        Zb  = _xp_csa(y, X, N, T)
-        Zl  = J(rows(y), 0, .)
-        for (l = 0; l <= pT; l++) Zl = (Zl, _xp_lag(Zb, l, tt))
-        Rg  = (_xp_lag(y, 1, tt), X, _xp_lag(X, 1, tt), Zl)
+        Rg  = _xp_ardlrg(9, y, X, tt, N, T, p, q)
         kR  = k + 1
     }
     v  = _xp_ok((dep, Rg))
@@ -740,8 +1071,10 @@ void _xp_mgfam(real scalar type, real colvector y, real matrix X, real colvector
         if (type == 1) Ri[i, .] = ((-b[3..(k + 2)] / b[2]) \ b[2])'
         else if (type == 2) Ri[i, .] = b[2..(k + 1)]'
         else {
-            lam = b[2]
-            Ri[i, .] = (((b[3..(k + 2)] + b[(k + 3)..(2 * k + 2)]) / (1 - lam)) \ (lam - 1))'
+            lam = sum(b[2..(p + 1)])
+            bx = J(k, 1, 0)
+            for (l = 0; l <= q; l++) bx = bx + b[(p + 2 + l * k)..(p + 1 + (l + 1) * k)]
+            Ri[i, .] = ((bx / (1 - lam)) \ (lam - 1))'
         }
         ok[i] = 1
         ri = J(T, 1, .)
@@ -790,22 +1123,24 @@ void _xp_ccep(real colvector y, real matrix X, real colvector tt, real scalar N,
 
 // ======================================================= PMG (Pesaran-Shin-Smith ML, back-substitution)
 void _xp_pmg(real colvector y, real matrix X, real colvector tt, real scalar N,
-    real scalar T, real matrix R, real matrix IF, real matrix res)
+    real scalar T, real scalar p, real scalar q, real matrix R, real matrix IF,
+    real matrix res)
 {
     real matrix Xl, W, Rtmp, IFtmp, rtmp, B, Wi, Hi, Xli, Bi, Wfull, Xlf
     real colvector dy, yl, v, units, th, thn, c, idx, dyi, yli, xi, hx, r, e, phis, ok
-    real scalar k, i, it, a, z, phi, s2, Nv, pbar, u, nidx
+    real scalar k, i, it, a, z, phi, s2, Nv, pbar, u, nidx, kw
     k  = cols(X)
     dy = _xp_diff(y, tt)
     yl = _xp_lag(y, 1, tt)
     Xl = _xp_lag(X, 1, tt)
-    W  = _xp_diff(X, tt)
+    W  = _xp_srun(y, X, tt, p, q)
+    kw = cols(W)
     v  = _xp_ok((dy, yl, Xl, W))
-    _xp_dfe(y, X, tt, N, T, 0, Rtmp, IFtmp, rtmp)
+    _xp_dfe(y, X, tt, N, T, 0, p, q, Rtmp, IFtmp, rtmp)
     th = Rtmp[1..k]
     units = J(0, 1, .)
     for (i = 1; i <= N; i++) {
-        if (sum(v[|(i - 1) * T + 1 \ i * T|]) >= 2 * k + 4) units = units \ i
+        if (sum(v[|(i - 1) * T + 1 \ i * T|]) >= kw + k + 4) units = units \ i
     }
     for (it = 1; it <= 500; it++) {
         B = J(k, k, 0)
@@ -816,7 +1151,7 @@ void _xp_pmg(real colvector y, real matrix X, real colvector tt, real scalar N,
             dyi = dy[|a \ z|]; dyi = dyi[idx]
             yli = yl[|a \ z|]; yli = yli[idx]
             Xli = Xl[|a, 1 \ z, k|]; Xli = Xli[idx, .]
-            Wi  = W[|a, 1 \ z, k|]; Wi = (J(rows(idx), 1, 1), Wi[idx, .])
+            Wi  = W[|a, 1 \ z, kw|]; Wi = (J(rows(idx), 1, 1), Wi[idx, .])
             Hi  = I(rows(idx)) - Wi * invsym(cross(Wi, Wi)) * Wi'
             xi  = yli - Xli * th
             hx  = Hi * xi
@@ -844,7 +1179,7 @@ void _xp_pmg(real colvector y, real matrix X, real colvector tt, real scalar N,
         dyi = dy[|a \ z|]; dyi = dyi[idx]
         yli = yl[|a \ z|]; yli = yli[idx]
         Xli = Xl[|a, 1 \ z, k|]; Xli = Xli[idx, .]
-        Wi  = W[|a, 1 \ z, k|]; Wi = (J(rows(idx), 1, 1), Wi[idx, .])
+        Wi  = W[|a, 1 \ z, kw|]; Wi = (J(rows(idx), 1, 1), Wi[idx, .])
         Hi  = I(rows(idx)) - Wi * invsym(cross(Wi, Wi)) * Wi'
         xi  = yli - Xli * th
         hx  = Hi * xi
@@ -1138,7 +1473,7 @@ void _xp_est(real scalar est, real colvector Y, real colvector D, real matrix Mm
     real matrix X, real matrix P, real scalar N, real scalar T, real matrix opt,
     real matrix R, real matrix IF, real matrix res, real matrix info, real matrix XA)
 {
-    real scalar km, q, tfe
+    real scalar km, q, tfe, pl, ql
     real matrix Xq, Rq, IFq, rq
     real colvector y, tt
     km = cols(Mm)
@@ -1162,14 +1497,16 @@ void _xp_est(real scalar est, real colvector Y, real colvector D, real matrix Mm
             Xq = (D, X)
         }
         info = (info, rows(R) + 1)
+        pl = (cols(opt) >= 10 + 2 * q ? opt[9 + 2 * q] : 1)
+        ql = (cols(opt) >= 10 + 2 * q ? opt[10 + 2 * q] : 1)
         if (est == 2)      _xp_fe(y, Xq, tt, N, T, tfe, Rq, IFq, rq)
         else if (est == 3) _xp_re(y, Xq, tt, N, T, tfe, Rq, IFq, rq)
-        else if (est == 4) _xp_dfe(y, Xq, tt, N, T, tfe, Rq, IFq, rq)
-        else if (est == 5) _xp_mgfam(1, y, Xq, tt, N, T, Rq, IFq, rq)
-        else if (est == 6) _xp_pmg(y, Xq, tt, N, T, Rq, IFq, rq)
+        else if (est == 4) _xp_dfe(y, Xq, tt, N, T, tfe, pl, ql, Rq, IFq, rq)
+        else if (est == 5) _xp_mgfam(1, y, Xq, tt, N, T, pl, ql, Rq, IFq, rq)
+        else if (est == 6) _xp_pmg(y, Xq, tt, N, T, pl, ql, Rq, IFq, rq)
         else if (est == 7) _xp_ccep(y, Xq, tt, N, T, Rq, IFq, rq)
-        else if (est == 8) _xp_mgfam(2, y, Xq, tt, N, T, Rq, IFq, rq)
-        else               _xp_mgfam(3, y, Xq, tt, N, T, Rq, IFq, rq)
+        else if (est == 8) _xp_mgfam(2, y, Xq, tt, N, T, 1, 1, Rq, IFq, rq)
+        else               _xp_mgfam(3, y, Xq, tt, N, T, pl, ql, Rq, IFq, rq)
         R = R \ Rq
         IF = (IF, IFq)
         res = (res, rq)
@@ -1622,11 +1959,13 @@ void _xp_main(string scalar yv, string scalar dv, string scalar mv, string scala
     real scalar L, real scalar Jl, real scalar deg, real scalar K, real scalar reps,
     real scalar lam, real scalar dsq, real scalar twostep, real scalar collapse,
     real scalar d1, real scalar d0, real scalar B, real scalar dots, real scalar level,
-    real scalar dodiag, real scalar brk)
+    real scalar dodiag, real scalar brk, real scalar icode, real scalar pf, real scalar qf,
+    real scalar maxp, real scalar maxq)
 {
     real matrix Dat, Mm, X, P, opt, R, V, res, info, Jm, Ve, EB, DG, CJ, Rb, Vb, rb, ib, IF, XA, IFb, XAb
-    real colvector gid, tid, row, Y, D, se, z, p, lo, hi, u, rr, s
-    real scalar n, km, kx, cvz, nfail, b, i, a, nok, lo_i, hi_i
+    real matrix LG, Xq, SRM
+    real colvector gid, tid, row, Y, D, se, z, p, lo, hi, u, rr, s, tt, yq
+    real scalar n, km, kx, cvz, nfail, b, i, a, nok, lo_i, hi_i, qq
     real rowvector eff
 
     gid = st_data(., gidv, touse)
@@ -1649,7 +1988,39 @@ void _xp_main(string scalar yv, string scalar dv, string scalar mv, string scala
         P = P[., s]
     }
     else P = J(n, 0, .)
-    opt = (L, Jl, K, dsq, twostep, collapse, lam, tfe)
+    LG = J(km + 1, 2, 1)
+    if (est == 4 | est == 5 | est == 6 | est == 9) {
+        tt = J(N, 1, (1::T))
+        for (qq = 0; qq <= km; qq++) {
+            if (qq == 0) {
+                yq = Y
+                Xq = (D, Mm, X)
+            }
+            else {
+                yq = Mm[., qq]
+                Xq = (D, X)
+            }
+            if (icode > 0) LG[qq + 1, .] = _xp_icsel(est, yq, Xq, tt, N, T, icode, maxp, maxq)
+            else LG[qq + 1, .] = (pf, qf)
+        }
+    }
+    st_matrix("__xp_lags", LG)
+    if (est == 4 | est == 5 | est == 6 | est == 9) {
+        SRM = J(0, 2, .)
+        for (qq = 0; qq <= km; qq++) {
+            if (qq == 0) {
+                yq = Y
+                Xq = (D, Mm, X)
+            }
+            else {
+                yq = Mm[., qq]
+                Xq = (D, X)
+            }
+            SRM = SRM \ _xp_sr(est, yq, Xq, tt, N, T, LG[qq + 1, 1], LG[qq + 1, 2], tfe)
+        }
+        st_matrix("__xp_sr", SRM)
+    }
+    opt = (L, Jl, K, dsq, twostep, collapse, lam, tfe, rowshape(LG, 1))
 
     _xp_fitV(est, Y, D, Mm, X, P, N, T, opt, reps, dk, m, R, V, res, info, IF, XA)
     if (hasmissing(R)) {

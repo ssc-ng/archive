@@ -1,4 +1,4 @@
-*! version 1.2.7  12jun2025  Ben Jann
+*! version 1.2.8  15nov2026  Ben Jann
 
 program violinplot, rclass
     version 15
@@ -26,6 +26,7 @@ program violinplot, rclass
         NOBox      Box      Box2(str)      BColors(str asis) ///
         NOMEDian   MEDian   MEDian2(str)   MEDColors(str asis) ///
         NOMEAN     MEAN     MEAN2(str)     MEANColors(str asis) ///
+        NORUG      RUG      RUG2(str)      RUGColors(str asis) ///
         NORAG      RAG      RAG2(str)      RAGColors(str asis) ///
         OUTsides OUTsides2(str) ///
         Colors(str asis) ///
@@ -33,14 +34,23 @@ program violinplot, rclass
         PSTYles(numlist int >0) ///
         BYOPTs(str) ///
         addplot(str asis) * ]
-    // outsides() -> rag()
+    // old syntax
+    if "`norag'"!="" local norug norug
+    if "`rag'"!=""   local rug   rug
+    if `"`rag2'"'!="" {
+        if `"`rug2'"'=="" local rug2: copy local rag2
+    }
+    if `"`ragcolors'"'!="" {
+        if `"`rugcolors'"'=="" local rugcolors: copy local ragcolors
+    }
+    // outsides() -> rug()
     if `"`outsides2'"'!="" local outsides outsides
     if "`outsides'"!="" {
-        if `"`rag'`rag2'"'!="" {
-            di as err "only on of rag() and outsides() allowed"
+        if `"`rug'`rug2'"'!="" {
+            di as err "only on of rug() and outsides() allowed"
             exit 198
         }
-        local rag2 outsides msymbol(o) `outsides2'
+        local rug2 outsides msymbol(o) `outsides2'
         local outsides
         local outsides2
     }
@@ -210,23 +220,23 @@ program violinplot, rclass
             else if "``el'_BARW'"!="" local `el'_barw barwidth(``el'_BARW')
         }
     }
-    // - rag option: default is norag
-    if `"`rag2'"'!="" local rag rag
-    if "`rag'"!="" {
-        if "`norag'"!="" {
-            di as err "rag and norag not both allowed"
+    // - rug option: default is norug
+    if `"`rug2'"'!="" local rug rug
+    if "`rug'"!="" {
+        if "`norug'"!="" {
+            di as err "rug and norug not both allowed"
             exit 198
         }
-        _parse_rag, `rag2' // rag_offset, rag_spread ... rag2
+        _parse_rug, `rug2' // rug_offset, rug_spread ... rug2
         if "`left'"!="" | "`split'"!="" {
-            if "`rag_right'"=="" local rag_left left
+            if "`rug_right'"=="" local rug_left left
         }
         else if "`right'"!="" {
-            if "`rag_left'"=="" local rag_right right
+            if "`rug_left'"=="" local rug_right right
         }
-        if "`rag_left'"!="" & "`rag_right'"!="" {
-            local rag_left
-            local rag_right
+        if "`rug_left'"!="" & "`rug_right'"!="" {
+            local rug_left
+            local rug_right
         }
     }
     // - list of summary statistics
@@ -239,7 +249,7 @@ program violinplot, rclass
     // - list of plot types
     local plotlist `fill'
     if "`box_type'"=="fill" local plotlist `plotlist' `box'
-    local plotlist `plotlist' `rag' `whiskers'
+    local plotlist `plotlist' `rug' `whiskers'
     if "`box_type'"!="fill" local plotlist `plotlist' `box'
     if "`median_type'"=="line" local plotlist `plotlist' `median'
     if "`mean_type'"=="line"   local plotlist `plotlist' `mean'
@@ -291,11 +301,11 @@ program violinplot, rclass
         else if "`box_type'"=="lines"   local domit 0
         else if "`median_type'"=="line" local domit 0
         else if "`mean_type'"=="line"   local domit 0
-        else if "`rag_spread'"!="" {
-            if `rag_spread2'>=.         local domit 0
+        else if "`rug_spread'"!="" {
+            if `rug_spread2'>=.         local domit 0
         }
-        else if "`rag_stack'"!="" {
-            if `rag_stack'!=1           local domit 0
+        else if "`rug_stack'"!="" {
+            if `rug_stack'!=1           local domit 0
         }
     }
     else local domit 0
@@ -484,7 +494,7 @@ program violinplot, rclass
         }
         local colors `"`r(p)'"'
     }
-    foreach opt in l f w b med mean rag {
+    foreach opt in l f w b med mean rug {
         if `"``opt'colors'"'=="" {
             local `opt'colors `"`colors'"'
             continue
@@ -594,11 +604,11 @@ program violinplot, rclass
     // prepare tempvars
     local ids  tag byid overid splitid grpid varid
     local vres pos avg med blo bup wlo wup dup dlo at
-    if "`rag'"!="" {
+    if "`rug'"!="" {
         local ids `ids' rtag
-        local vres `vres' xrag
-        if "`weight'"=="" & "`rag_unique'"=="" local rag_noweight noweight
-        if "`rag_noweight'"=="" local vres `vres' wrag wvar
+        local vres `vres' xrug
+        if "`weight'"=="" & "`rug_unique'"=="" local rug_noweight noweight
+        if "`rug_noweight'"=="" local vres `vres' wrug wvar
     }
     tempvar `ids' `vres'
     foreach v of local ids {
@@ -614,7 +624,7 @@ program violinplot, rclass
     if "`wvar'"!="" {
         if "`weight'"!="" qui replace `wvar' `exp'
         else              qui replace `wvar' = 1
-        local ragwgt [aw=`wrag']
+        local rugwgt [aw=`wrug']
     }
     
     // fill in byid for existing observations so that addplot() will
@@ -724,11 +734,11 @@ program violinplot, rclass
                         qui replace `bup' = `S'[1,4] in `a'
                         qui replace `wlo' = `S'[1,5] in `a'
                         qui replace `wup' = `S'[1,6] in `a'
-                        // rag: copy data
-                        if "`rag'"!="" {
+                        // rug: copy data
+                        if "`rug'"!="" {
                             qui replace `rtag' = 1 in `a' // first row
-                            mata: _copyrag(`a', `b', "`rag_outsides'", /*
-                                */ "`rag_unique'"!="",  "`wvar'", "`S'")
+                            mata: _copyrug(`a', `b', "`rug_outsides'", /*
+                                */ "`rug_unique'"!="",  "`wvar'", "`S'")
                         }
                         // ids
                         qui replace `varid'   = `i' in `a'/`b'
@@ -897,7 +907,7 @@ program violinplot, rclass
             }
         }
     }
-    if "`rag'"!="" & "`rag_offset'"=="" local rag_offset `offset'
+    if "`rug'"!="" & "`rug_offset'"=="" local rug_offset `offset'
     // - elements of box plot
     if !inlist("`offset'", "", "0") {
         if `: list sizeof offset'>1 {
@@ -919,15 +929,15 @@ program violinplot, rclass
         }
     }
     else local POS `pos'
-    // - rag
-    if "`rag'"!="" {
-        if !inlist("`rag_offset'", "", "0") {
-            if `: list sizeof rag_offset'>1 {
+    // - rug
+    if "`rug'"!="" {
+        if !inlist("`rug_offset'", "", "0") {
+            if `: list sizeof rug_offset'>1 {
                 tempname RPOS
                 qui gen double `RPOS' = .
-                local tmp `rag_offset'
+                local tmp `rug_offset'
                 forv p = 1/`k_`PID'' {
-                    if "`tmp'"=="" local tmp `rag_offset'
+                    if "`tmp'"=="" local tmp `rug_offset'
                     gettoken num tmp : tmp
                     if "`vertical'"=="" local num = -`num'
                     qui replace `RPOS' = `pos' + `num'*cond(`splitid'==1,-1,1)/*
@@ -935,29 +945,29 @@ program violinplot, rclass
                 }
             }
             else {
-                if "`vertical'"=="" local rag_offset = -`rag_offset'
+                if "`vertical'"=="" local rug_offset = -`rug_offset'
                 tempname RPOS
-                qui gen double `RPOS' = `pos' + `rag_offset'*cond(`splitid'==1,-1,1) `in'
+                qui gen double `RPOS' = `pos' + `rug_offset'*cond(`splitid'==1,-1,1) `in'
             }
         }
-        else if "`rag_spread'`rag_stack'"!="" {
+        else if "`rug_spread'`rug_stack'"!="" {
             tempname RPOS
             qui gen double `RPOS' = `pos' `in'
         }
         else local RPOS `pos'
-        if "`rag_spread'`rag_stack'"!="" {
-            local rag_dir = "`rag_left'`rag_right'"!=""
-            if `rag_dir' {
-                if      "`rag_left'"!="" & "`vertical'"!=""  local rag_dir -1
-                else if "`rag_right'"!="" & "`vertical'"=="" local rag_dir -1
+        if "`rug_spread'`rug_stack'"!="" {
+            local rug_dir = "`rug_left'`rug_right'"!=""
+            if `rug_dir' {
+                if      "`rug_left'"!="" & "`vertical'"!=""  local rug_dir -1
+                else if "`rug_right'"!="" & "`vertical'"=="" local rug_dir -1
             }
-            if "`rag_spread'"!="" {
-                mata: _rag_spread(`r0'+1, `r1', `rag_spread', `rag_spread2',/*
-                    */ `rag_dir')
+            if "`rug_spread'"!="" {
+                mata: _rug_spread(`r0'+1, `r1', `rug_spread', `rug_spread2',/*
+                    */ `rug_dir')
             }
             else {
-                mata: _rag_stack(`r0'+1, `r1', `rag_stack', `rag_stack2',/*
-                    */ `rag_dir')
+                mata: _rug_stack(`r0'+1, `r1', `rug_stack', `rug_stack2',/*
+                    */ `rug_dir')
             }
         }
     }
@@ -1345,25 +1355,25 @@ program violinplot, rclass
         }
     }
     
-    // rag plots
-    if "`rag'"!="" {
-        local K_rag `k_`PID''
+    // rug plots
+    if "`rug'"!="" {
+        local K_rug `k_`PID''
         local psty `pstyles'
-        local OPTS `rag_msymb' `rag_msang'
-        if `"`rag_msymb'"'=="" {
+        local OPTS `rug_msymb' `rug_msang'
+        if `"`rug_msymb'"'=="" {
             local OPTS `OPTS' msymbol(pipe)
-            if "`vertical'"!="" & `"`rag_msang'"'==""/*
+            if "`vertical'"!="" & `"`rug_msang'"'==""/*
                 */ local OPTS `OPTS' msangle(90)
         }
-        if "`vertical'"!="" local vlist `xrag' `RPOS'
-        else                local vlist `RPOS' `xrag'
-        forv i = 1/`K_rag' {
+        if "`vertical'"!="" local vlist `xrug' `RPOS'
+        else                local vlist `RPOS' `xrug'
+        forv i = 1/`K_rug' {
             if "`psty'"=="" local psty `pstyles'
             gettoken p psty : psty
-            _getcolr `i' `ragcolors'
-            local popts `axes' pstyle(p`p') `p_`i'' `OPTS' `colr' `rag2'/*
-                */ `p_`i'rag'
-            local prag_`i' (scatter `vlist' `ragwgt' if ``PID'id'==`i', `popts')
+            _getcolr `i' `rugcolors'
+            local popts `axes' pstyle(p`p') `p_`i'' `OPTS' `colr' `rug2'/*
+                */ `p_`i'rug'
+            local prug_`i' (scatter `vlist' `rugwgt' if ``PID'id'==`i', `popts')
         }
     }
     
@@ -1735,7 +1745,7 @@ program _parse_stats
     c_local stats `"`stats'"'
 end
 
-program _parse_rag
+program _parse_rug
     syntax [, OFFset(numlist) Unique noWeight/*
         */ SPread SPread2(numlist max=2 missingokay)/*
         */ STack STack2(str)/*
@@ -1745,7 +1755,7 @@ program _parse_rag
     // spread
     if "`spread'`spread2'"!="" {
         if `"`stack'`stack2'"'!="" {
-            di as err "rag(): spread() and stack() not both allowed"
+            di as err "rug(): spread() and stack() not both allowed"
             exit 198
         }
         gettoken spread spread2 : spread2
@@ -1755,7 +1765,7 @@ program _parse_rag
             capt n numlist "`spread'", range(>=.001 <=100) 
             if _rc==1 exit _rc
             if _rc {
-                di as err "rag(): error in spread()"
+                di as err "rug(): error in spread()"
                 exit _rc
             }
             local spread `r(numlist)'
@@ -1766,7 +1776,7 @@ program _parse_rag
     }
     else if `"`stack'`stack2'"'!="" {
         if "`unique'"!="" {
-            di as err "rag(): stack() and unique not both allowed"
+            di as err "rug(): stack() and unique not both allowed"
             exit 198
         }
         local stack = substr(`"`stack2'"',1,1)=="*"
@@ -1775,7 +1785,7 @@ program _parse_rag
             capt n numlist "`stack2'", max(1) missingok
             if _rc==1 exit _rc
             if _rc {
-                di as err "rag(): error in stack()"
+                di as err "rug(): error in stack()"
                 exit _rc
             }
             local stack2 `r(numlist)'
@@ -1788,19 +1798,19 @@ program _parse_rag
     // spread
     if      "`boutsides'"!="" local outsides b
     else if "`outsides'"!=""  local outsides w
-    c_local rag_offset   `offset'
-    c_local rag_unique   `unique'
-    c_local rag_noweight `weight'
-    c_local rag_spread   `spread'
-    c_local rag_spread2  `spread2'
-    c_local rag_stack    `stack'
-    c_local rag_stack2   `stack2'
-    c_local rag_left     `left'
-    c_local rag_right    `right'
-    c_local rag_outsides `outsides'
-    c_local rag_msymb    `msymbol'
-    c_local rag_msang    `msangle'
-    c_local rag2         `options'
+    c_local rug_offset   `offset'
+    c_local rug_unique   `unique'
+    c_local rug_noweight `weight'
+    c_local rug_spread   `spread'
+    c_local rug_spread2  `spread2'
+    c_local rug_stack    `stack'
+    c_local rug_stack2   `stack2'
+    c_local rug_left     `left'
+    c_local rug_right    `right'
+    c_local rug_outsides `outsides'
+    c_local rug_msymb    `msymbol'
+    c_local rug_msang    `msangle'
+    c_local rug2         `options'
 end
 
 program _parse_order
@@ -1824,8 +1834,9 @@ program _parse_order
 end
 
 program _parse_elist
-    syntax [, Line Fill Whiskers Box MEDian mean rag ]
-    c_local elist `line' `fill' `whiskers' `box' `median' `mean' `rag'
+    syntax [, Line Fill Whiskers Box MEDian mean rug rag ]
+    if "`rag'"!="" local rug rug // old syntax
+    c_local elist `line' `fill' `whiskers' `box' `median' `mean' `rug'
 end
 
 program _parse_key
@@ -1907,11 +1918,17 @@ program _parse_popts
     if "`el'"!="" {
         if      "`el'"=="median" local el "med"
         else if "`el'"=="mean"   local el "mean"
-        else if "`el'"=="rag"    local el "rag"
+        else if "`el'"=="rug"    local el "rug"
         else                     local el = substr("`el'", 1, 1)
     }
     gettoken p 0 : 0
     syntax [, p`p'`el'(str) * ]
+    if "`el'"=="rug" { // old syntax
+        if `"`p`p'`el''"'=="" {
+            syntax [, p`p'rag(str) * ]
+            local p`p'`el': copy local p`p'rag
+        }
+    }
     c_local p_`p'`el' `p`p'`el''
     c_local options `options'
 end
@@ -2135,10 +2152,10 @@ version 15
 mata:
 mata set matastrict on
 
-void _copyrag(real scalar a, real scalar b, string scalar out,
+void _copyrug(real scalar a, real scalar b, string scalar out,
     real scalar uniq, string scalar wvar, string scalar S)
 {
-    real scalar    n, wmean, wrag
+    real scalar    n, wmean, wrug
     real rowvector lim
     real colvector x, w, p
 
@@ -2150,7 +2167,7 @@ void _copyrag(real scalar a, real scalar b, string scalar out,
         wmean = mean(w)
     }
     if (uniq) {
-        if (wvar!="") _copyrag_unique(x, w)
+        if (wvar!="") _copyrug_unique(x, w)
         else          x = mm_unique(x)
     }
     if (out!="") {
@@ -2184,23 +2201,23 @@ void _copyrag(real scalar a, real scalar b, string scalar out,
                 st_local("tousej"))
         }
     }
-    st_store((a, a+n-1), st_local("xrag"), x)
+    st_store((a, a+n-1), st_local("xrug"), x)
     _st_store(a+n+1, st_varindex(st_local("rtag")), 2) // tag last row
     if (wvar!="") {
-        wrag = st_varindex(st_local("wrag"))
-        st_store((a, a+n-1), wrag, w)
+        wrug = st_varindex(st_local("wrug"))
+        st_store((a, a+n-1), wrug, w)
         /* including mean(w) and mean(w)*100 among the weights ensures that the
            average weight corresponds to the default (unweighted) marker size
            (unless the maximum weight is larger than 100 times the average);
            inclusion of mean(w) is needed because options unique and
            [b]outsides may lead to a situation in which all remaining weights
            are larger than mean(w) */
-        _st_store(a+n, wrag, wmean)
-        _st_store(a+n+1, wrag, wmean*100) 
+        _st_store(a+n, wrug, wmean)
+        _st_store(a+n+1, wrug, wmean*100) 
     }
 }
 
-void _copyrag_unique(real colvector x, real colvector w)
+void _copyrug_unique(real colvector x, real colvector w)
 {
     real scalar    i, a, b
     real colvector p
@@ -2243,17 +2260,17 @@ void _over_sort(real rowvector ab)
     st_local("overlbls", invtokens(lbls'))
 }
 
-void _rag_stack(real scalar a0, real scalar b0, real scalar typ,
+void _rug_stack(real scalar a0, real scalar b0, real scalar typ,
     real scalar val, real scalar dir)
 {   // typ=1: val contains fixed step size
     // typ=2: val contains factor; scale automatic step size by val
     // typ=0: val is missing; use automatic step size
     real scalar    j, d, n, sgn
-    real scalar    xrag, rpos, spid
+    real scalar    xrug, rpos, spid
     real colvector D, X
     real matrix    idx
     
-    xrag = st_varindex(st_local("xrag"))
+    xrug = st_varindex(st_local("xrug"))
     rpos = st_varindex(st_local("RPOS"))
     spid = st_varindex(st_local("splitid"))
     if (typ!=1) {
@@ -2267,13 +2284,13 @@ void _rag_stack(real scalar a0, real scalar b0, real scalar typ,
         if (idx[j,1]>idx[j,2]) continue // no data
         if (dir) sgn = (-1)^(_st_data(idx[j,1], spid)!=1) * dir
         else     sgn = 0
-        st_view(X=., idx[j,], xrag)
-        D[|idx[j,]':+(1-a0)|] = _rag_stack_offset(X, sgn, n)
+        st_view(X=., idx[j,], xrug)
+        D[|idx[j,]':+(1-a0)|] = _rug_stack_offset(X, sgn, n)
     }
     if (typ!=1) {
         d = d / (n - 1) * .8
         if (d>=.) d = 0
-        printf("{txt}(stacked rag: step size set to %g", d)
+        printf("{txt}(stacked rug: step size set to %g", d)
         if (typ) {
             d = d * val
             printf(" * %g", val)
@@ -2284,7 +2301,7 @@ void _rag_stack(real scalar a0, real scalar b0, real scalar typ,
     st_store((a0,b0), rpos, st_data((a0,b0), rpos) + D * d)
 }
 
-real _rag_stack_offset(real colvector X, real scalar sgn, real scalar nmax)
+real _rug_stack_offset(real colvector X, real scalar sgn, real scalar nmax)
 {   // updates nmax
     real scalar    j, n, a, b
     real colvector L, d, D, p
@@ -2318,17 +2335,17 @@ real _rag_stack_offset(real colvector X, real scalar sgn, real scalar nmax)
     return(D[invorder(p)])
 }
 
-void _rag_spread(real scalar a0, real scalar b0, real scalar s1, real scalar s2,
+void _rug_spread(real scalar a0, real scalar b0, real scalar s1, real scalar s2,
     real scalar dir)
 {
     real scalar    j, n, sgn
-    real scalar    xrag, spid, wrag, dlo, dup, at
+    real scalar    xrug, spid, wrug, dlo, dup, at
     real colvector D, d, X, a
     real matrix    idx, pdf
     
-    xrag = st_varindex(st_local("xrag"))
+    xrug = st_varindex(st_local("xrug"))
     spid = st_varindex(st_local("splitid"))
-    if (st_local("wrag")!="") wrag = st_varindex(st_local("wrag"))
+    if (st_local("wrug")!="") wrug = st_varindex(st_local("wrug"))
     idx = _get_index(a0, b0, "rtag", 2)
     if (s2>=.) {
         pdf = _get_index(a0, b0, "tag", 1)
@@ -2341,9 +2358,9 @@ void _rag_spread(real scalar a0, real scalar b0, real scalar s1, real scalar s2,
         n = idx[j,2] - idx[j,1] + 1
         if (!n) continue
         if (dir) sgn = (-1)^(_st_data(idx[j,1], spid)!=1) * dir
-        if (wrag<. | s2>=.) st_view(X=., idx[j,], xrag)
-        if (wrag<.) a = rowmin((J(n,1,1e5),rowmax((J(n,1,1),
-            s1 :* (st_data(idx[j,], wrag) / _st_data(idx[j,2]+1, wrag))))))
+        if (wrug<. | s2>=.) st_view(X=., idx[j,], xrug)
+        if (wrug<.) a = rowmin((J(n,1,1e5),rowmax((J(n,1,1),
+            s1 :* (st_data(idx[j,], wrug) / _st_data(idx[j,2]+1, wrug))))))
         else a = J(n, 1, s1)
         if (s2<.) d = s2
         else d = editmissing(mm_ipolate(st_data(pdf[j,], at),

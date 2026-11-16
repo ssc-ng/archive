@@ -1,4 +1,4 @@
-*! version 1.1.0  11nov2026
+*! version 1.2.0  15nov2026
 *! tspmed: causal mediation analysis for time series (OLS-HAC, ARDL, FMOLS,
 *! DOLS, DML) with multiple mediators and residual diagnostics
 *! Author: Yusuf Toyin Yusuf, Kwara State University, Malete, Nigeria
@@ -199,7 +199,43 @@ program define tspmed, eclass sortpreserve
         matrix `BBOOT' = __tp_bboot
         matrix colnames `BBOOT' = `enames'
     }
-    foreach x in b V eff veff bboot diag {
+    tempname SRM
+    if `ec' {
+        matrix `SRM' = __tp_sr
+        local srn ""
+        local q 0
+        foreach eq in `depvar' `mediators' {
+            local ++q
+            local pq = __tp_srlags[`q', 1]
+            local qq = max(__tp_srlags[`q', 2], 1)
+            if `q' == 1 local xv `treatment' `mediators' `controls'
+            else local xv `treatment' `controls'
+            local srn `srn' `eq':ec
+            foreach v of local xv {
+                forvalues j = 0/`=`qq' - 1' {
+                    local op = cond(`j' == 0, "D.", cond(`j' == 1, "LD.", "L`j'D."))
+                    local srn `srn' `eq':`op'`v'
+                }
+            }
+            forvalues j = 1/`=`pq' - 1' {
+                local op = cond(`j' == 1, "LD.", "L`j'D.")
+                local srn `srn' `eq':`op'`eq'
+            }
+            local srn `srn' `eq':_cons
+            if "`trend'" != "" local srn `srn' `eq':trend
+        }
+        local zc = invnormal(1 - (1 - `level' / 100) / 2)
+        matrix `SRM' = (`SRM', J(rowsof(`SRM'), 4, .))
+        forvalues r = 1/`=rowsof(`SRM')' {
+            matrix `SRM'[`r', 3] = `SRM'[`r', 1] / `SRM'[`r', 2]
+            matrix `SRM'[`r', 4] = 2 * normal(-abs(`SRM'[`r', 1] / `SRM'[`r', 2]))
+            matrix `SRM'[`r', 5] = `SRM'[`r', 1] - `zc' * `SRM'[`r', 2]
+            matrix `SRM'[`r', 6] = `SRM'[`r', 1] + `zc' * `SRM'[`r', 2]
+        }
+        matrix rownames `SRM' = `srn'
+        matrix colnames `SRM' = b se z pvalue ll ul
+    }
+    foreach x in b V eff veff bboot diag sr srlags {
         capture matrix drop __tp_`x'
     }
     capture scalar drop __tp_bfail
@@ -225,6 +261,7 @@ program define tspmed, eclass sortpreserve
         ereturn matrix eff_boot = `BBOOT'
     }
     if "`nodiag'" == "" ereturn matrix diag = `DIAG'
+    if `ec' ereturn matrix sr = `SRM'
     ereturn matrix effects = `EFF'
     ereturn matrix V_eff   = `VEFF'
     ereturn local estimator "`estimator'"
@@ -240,10 +277,46 @@ program define tspmed, eclass sortpreserve
     _tp_display, level(`level')
 end
 
+program define _tp_srdisplay
+    syntax [, Level(cilevel)]
+    capture confirm matrix e(sr)
+    if _rc exit
+    tempname S
+    matrix `S' = e(sr)
+    local rn : rownames `S'
+    local req : roweq `S'
+    local zc = invnormal(1 - (1 - `level' / 100) / 2)
+    di
+    di as txt "Short-run coefficients (error-correction form)"
+    di as txt "Std. errors: same long-run variance as for the long-run coefficients"
+    di as txt "{hline 13}{c TT}{hline 64}"
+    di as txt %12s "" " {c |}" ///
+        "      Coef.   Std. Err.      z    P>|z|     [`level'% Conf. Interval]"
+    local r 0
+    local prev ""
+    foreach nm of local rn {
+        local ++r
+        local eq : word `r' of `req'
+        if "`eq'" != "`prev'" {
+            di as txt "{hline 13}{c +}{hline 64}"
+            di as res %12s abbrev("`eq'", 12) as txt " {c |}"
+            local prev "`eq'"
+        }
+        local lab "`nm'"
+        
+        local bb = `S'[`r', 1]
+        local ss = `S'[`r', 2]
+        di as txt %12s abbrev("`lab'", 12) " {c |}  " as res %9.0g `bb' "  " %9.0g `ss' ///
+            "  " %7.2f `bb' / `ss' "  " %6.3f 2 * normal(-abs(`bb' / `ss')) ///
+            "    " %9.0g `bb' - `zc' * `ss' "   " %9.0g `bb' + `zc' * `ss'
+    }
+    di as txt "{hline 13}{c BT}{hline 64}"
+end
+
 program define _tp_display
     syntax [, Level(cilevel)]
     local est "`e(estimator)'"
-    local lab_ols   "OLS with HAC standard errors"
+    local lab_ols   "OLS"
     local lab_ardl  "ARDL, long-run coefficients"
     local lab_fmols "Fully modified OLS (Phillips-Hansen)"
     local lab_dols  "Dynamic OLS (Stock-Watson)"
@@ -257,34 +330,37 @@ program define _tp_display
     di as txt "Mediators: " as res "`e(mediators)'"
     if "`est'" == "ardl" di as txt "Coefficients are long-run; " as res "ec" as txt " = speed of adjustment"
     ereturn display, level(`level')
+    _tp_srdisplay, level(`level')
 
     tempname E
     matrix `E' = e(effects)
     local rn : rownames `E'
     di
     di as txt "Causal mediation effects of moving `e(treatment)' from " as res %9.0g e(d0) as txt " to " as res %9.0g e(d1)
-    if e(bootstrap) > 0 & "`e(bmethod)'" == "sieve" di as txt "Inference: sieve (VAR) bootstrap-t, " as res e(bootstrap) as txt " replications; p-values and CIs from the bootstrap"
+    if e(bootstrap) > 0 & "`e(bmethod)'" == "sieve" di as txt "Inference: sieve (VAR) bootstrap-t, " as res e(bootstrap) as txt " replications"
     else if e(bootstrap) > 0 di as txt "Inference: moving-block bootstrap, " as res e(bootstrap) as txt " replications, block length " as res e(blocklen)
+    else if "`e(vce)'" == "White robust" di as txt "Inference: delta method on the joint (cross-equation) robust variance"
     else di as txt "Inference: delta method on the joint (cross-equation) HAC variance"
-    di as txt "{hline 26}{c TT}{hline 64}"
-    di as txt %25s "Effect" " {c |}" "      Coef.   Std. Err.      z    P>|z|     [`level'% Conf. Interval]"
-    di as txt "{hline 26}{c +}{hline 64}"
+    di as txt "NDE natural direct, NIE natural indirect, TE total effect, PM proportion mediated"
+    di as txt "{hline 13}{c TT}{hline 64}"
+    di as txt %12s "Effect" " {c |}" "      Coef.   Std. Err.      z    P>|z|     [`level'% Conf. Interval]"
+    di as txt "{hline 13}{c +}{hline 64}"
     local r 0
     foreach nm of local rn {
         local ++r
         local lab "`nm'"
-        if "`nm'" == "NDE" local lab "Natural direct (NDE)"
-        if "`nm'" == "NIE" local lab "Natural indirect (NIE)"
-        if "`nm'" == "TE"  local lab "Total (TE)"
-        if "`nm'" == "PM"  local lab "Proportion mediated"
+        if "`nm'" == "NDE" local lab "NDE"
+        if "`nm'" == "NIE" local lab "NIE"
+        if "`nm'" == "TE"  local lab "TE"
+        if "`nm'" == "PM"  local lab "PM"
         if substr("`nm'", 1, 4) == "NIE_" {
             local medn = substr("`nm'", 5, .)
-            local lab "  via `medn'"
+            local lab "via `medn'"
         }
-        di as txt %25s abbrev("`lab'", 25) " {c |}  " as res %9.0g `E'[`r',1] "  " %9.0g `E'[`r',2] ///
+        di as txt %12s abbrev("`lab'", 12) " {c |}  " as res %9.0g `E'[`r',1] "  " %9.0g `E'[`r',2] ///
             "  " %7.2f `E'[`r',3] "  " %6.3f `E'[`r',4] "    " %9.0g `E'[`r',5] "   " %9.0g `E'[`r',6]
     }
-    di as txt "{hline 26}{c BT}{hline 64}"
+    di as txt "{hline 13}{c BT}{hline 64}"
 
     capture confirm matrix e(diag)
     if _rc exit
@@ -328,8 +404,9 @@ program define _tp_display
         }
     }
     di as txt "{hline 79}"
-    di as txt "Notes: CUSUM, CUSUMSQ, bounds and Engle-Granger critical values and p-values are simulated"
-    di as txt "       under the null for this sample size and specification (" as res e(simreps) as txt " replications)."
+    di as txt "Notes: CUSUM, CUSUMSQ, bounds and Engle-Granger critical values and p-values"
+    di as txt "       are simulated under the null for this sample size and specification"
+    di as txt "       (" as res e(simreps) as txt " replications)."
     di as txt "       Chow test: first post-break period " as res e(break_t) as txt "."
 end
 
@@ -725,6 +802,59 @@ void _tp_ardl(real colvector y, real matrix X, real scalar trend, real scalar fi
     ext = (p, q, F, tB, k)
 }
 
+// short-run coefficients of an ARDL(p,q) equation in error-correction form:
+// ec = sum(lambda) - 1; D.x = beta_0; L(j)D.x = -(beta_j+1 + ... + beta_q);
+// L(j)D.y = -(lambda_j+1 + ... + lambda_p); _cons [, trend].  The map from the levels
+// coefficients is linear, so the influence functions carry over and the same
+// long-run variance estimator as for the long-run coefficients is used.
+real matrix _tp_srardl(real colvector y, real matrix X, real scalar trend, real scalar p,
+    real scalar q, real scalar hlag)
+{
+    real matrix Z, A, Ib, Tm, IF, V
+    real colvector v, s, b, e, sr
+    real scalar n, k, nd, nq, r, c, a, j, nsr
+    n = rows(y)
+    k = cols(X)
+    nd = 1 + trend
+    nq = max((q, 1))
+    Z = _tp_ardldes(y, X, p, q, trend)
+    v = _tp_ok((y, Z))
+    s = selectindex(v)
+    A = invsym(cross(Z[s, .], Z[s, .]))
+    b = A * cross(Z[s, .], y[s])
+    e = J(n, 1, .)
+    e[s] = y[s] - Z[s, .] * b
+    Ib = J(n, cols(Z), 0)
+    Ib[s, .] = (Z[s, .] :* e[s]) * A
+    nsr = 1 + k * nq + (p - 1) + nd
+    Tm = J(nsr, cols(Z), 0)
+    Tm[1, (nd + 1)..(nd + p)] = J(1, p, 1)
+    r = 1
+    for (c = 1; c <= k; c++) {
+        a = nd + p + (c - 1) * (q + 1) + 1
+        r++
+        Tm[r, a] = 1
+        for (j = 1; j <= nq - 1; j++) {
+            r++
+            Tm[r, (a + j + 1)..(a + q)] = J(1, q - j, -1)
+        }
+    }
+    for (j = 1; j <= p - 1; j++) {
+        r++
+        Tm[r, (nd + j + 1)..(nd + p)] = J(1, p - j, -1)
+    }
+    for (j = 1; j <= nd; j++) {
+        r++
+        Tm[r, j] = 1
+    }
+    sr = Tm * b
+    sr[1] = sr[1] - 1
+    IF = Ib * Tm'
+    if (hlag < 0) V = _tp_vqs(IF)
+    else V = _tp_hac(IF, hlag)
+    return((sr, sqrt(diagonal(V))))
+}
+
 void _tp_fmols(real colvector y, real matrix X, real scalar trend, real scalar bw,
     real scalar pw, real matrix R, real matrix IF, real matrix e, real matrix Z, real matrix v,
     real matrix up, real matrix bf, real scalar bwu)
@@ -1099,6 +1229,8 @@ void _tp_main(string scalar yv, string scalar dv, string scalar mv, string scala
     real colvector tid, se, z, p, lo, hi, rr, starts, s, Ys, Ds, tobs
     real scalar km, kx, b, nb, i, a, nok, nfail, cvz, q, bwbar, bw2, nd, ne, pp, aic, best, best_p, t, l, burn, j
     real rowvector eff, lagv
+    real matrix SRM, Xsr
+    real colvector ysr
     tid = st_data(., tidv, touse)
     G0 = (st_data(., (yv, dv), touse), st_data(., tokens(mv), touse))
     if (strtrim(cv) != "") G0 = (G0, st_data(., tokens(cv), touse))
@@ -1113,6 +1245,22 @@ void _tp_main(string scalar yv, string scalar dv, string scalar mv, string scala
     if (hasmissing(R)) {
         errprintf("estimation failed (singular design or too few usable observations)\n")
         exit(error(430))
+    }
+    if (est == 2) {
+        SRM = J(0, 2, .)
+        for (q = 0; q <= km; q++) {
+            if (q == 0) {
+                ysr = G[., 1]
+                Xsr = G[., 2..cols(G)]
+            }
+            else {
+                ysr = G[., 2 + q]
+                Xsr = (kx ? (G[., 2], G[., (3 + km)..cols(G)]) : G[., 2])
+            }
+            SRM = SRM \ _tp_srardl(ysr, Xsr, trend, EXT[q + 1, 1], EXT[q + 1, 2], hlag)
+        }
+        st_matrix("__tp_sr", SRM)
+        st_matrix("__tp_srlags", EXT[., 1..2])
     }
     se = sqrt(diagonal(Ve))
     cvz = invnormal(1 - (1 - level / 100) / 2)

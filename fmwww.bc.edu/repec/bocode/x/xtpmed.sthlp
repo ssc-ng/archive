@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 2.1.0  10nov2026}{...}
+{* *! version 2.3.0  15nov2026}{...}
 {vieweralsosee "[CAUSAL] mediate" "help mediate"}{...}
 {vieweralsosee "[XT] xtset" "help xtset"}{...}
 {viewerjumpto "Syntax" "xtpmed##syntax"}{...}
@@ -35,6 +35,11 @@ inference and built-in residual diagnostics
 {synopt:{opth cont:rols(varlist)}}time-varying controls{p_end}
 {synopt:{opt est:imator(name)}}{cmd:dml} (default), {cmd:fe}, {cmd:re}, {cmd:dfe}, {cmd:mg}, {cmd:pmg}, {cmd:ccep}, {cmd:ccemg}, {cmd:csardl}{p_end}
 {synopt:{opt time:fe}}add period fixed effects ({cmd:fe}, {cmd:re}, {cmd:dfe}){p_end}
+
+{syntab:ARDL lag orders ({cmd:dfe}, {cmd:mg}, {cmd:pmg}, {cmd:csardl})}
+{synopt:{opt ardl:lags(p q)}}fixed ARDL(p,q) orders for every equation; default {cmd:1 1}{p_end}
+{synopt:{opt ic(name)}}choose (p,q) for each equation by {cmd:aic}, {cmd:bic} (Schwarz) or {cmd:hqic} (Hannan-Quinn){p_end}
+{synopt:{opt maxp(#)}, {opt maxq(#)}}largest orders searched with {opt ic()}; defaults {cmd:3} and {cmd:3} (at most 8){p_end}
 
 {syntab:Standard errors}
 {synopt:{opt vce(cluster|dk)}}cluster by panel (default) or Driscoll-Kraay{p_end}
@@ -97,15 +102,15 @@ learned by cross-fitted series regressions, lag dynamics.  Effects are
 {it:sustained} (treatment held at the new level) and {it:impact} effects.{p_end}
 {p2col:{cmd:fe}}Within estimator (optionally two-way with {cmd:timefe}).{p_end}
 {p2col:{cmd:re}}Random-effects GLS with Swamy-Arora-type variance components (unbalanced-panel version).{p_end}
-{p2col:{cmd:dfe}}Dynamic fixed effects, ARDL(1,1) in error-correction form; long-run coefficients.{p_end}
-{p2col:{cmd:mg}}Pesaran-Smith mean group of unit ARDL(1,1)-ECM regressions; long-run coefficients.{p_end}
+{p2col:{cmd:dfe}}Dynamic fixed effects, ARDL(p,q) in error-correction form; long-run coefficients.{p_end}
+{p2col:{cmd:mg}}Pesaran-Smith mean group of unit ARDL(p,q)-ECM regressions; long-run coefficients.{p_end}
 {p2col:{cmd:pmg}}Pooled mean group (Pesaran, Shin and Smith 1999): common long-run
 coefficients by maximum likelihood (back-substitution algorithm), heterogeneous
 short-run dynamics and speed of adjustment.{p_end}
 {p2col:{cmd:ccep}}Common correlated effects pooled (Pesaran 2006): unit-specific
 projection on cross-section averages of all variables.{p_end}
 {p2col:{cmd:ccemg}}Common correlated effects mean group.{p_end}
-{p2col:{cmd:csardl}}Cross-sectionally augmented ARDL(1,1) mean group (Chudik
+{p2col:{cmd:csardl}}Cross-sectionally augmented ARDL(p,q) mean group (Chudik
 and Pesaran 2015; Chudik et al. 2016) with floor(T^(1/3)) lags of the
 cross-section averages; long-run coefficients.{p_end}
 {p2colreset}{...}
@@ -118,6 +123,40 @@ estimators the variance is the mean-group variance across units; {cmd:vce(dk)}
 is not available for them.  Dynamic estimators need moderately long panels: the
 usual O(1/T) small-T bias applies.  CS-ARDL in particular is recommended for
 T of roughly 50 or more.
+
+{pstd}
+{it:Lag orders.}  The error-correction form of an ARDL(p,q) equation is
+
+{p 8 8 2}D.y_it = phi_i (y_i,t-1 - theta' x_i,t-1) + [lambda_ij D.y_i,t-j, j = 1..p-1] + [delta_ij' D.x_i,t-j, j = 0..q-1] + mu_i + e_it{p_end}
+
+{pstd}
+where the bracketed terms are summed over the lags shown ({cmd:dfe} pools phi, theta and the short-run terms; {cmd:mg} lets all of them vary by
+unit; {cmd:pmg} pools theta only).  CS-ARDL(p,q) regresses y_it on p lags of y, x_it to
+x_i,t-q and the cross-section averages, with long-run coefficients
+sum_l beta_il / (1 - sum_l lambda_il).  By default p = q = 1, which reproduces the
+ARDL(1,1) results of earlier versions.  {opt ardllags(p q)} fixes the orders for all
+equations.  {opt ic()} chooses p in 1..{opt maxp()} and q in 1..{opt maxq()} separately
+for the outcome equation and for each mediator equation: all candidate models are fitted
+on the common sample on which the largest model can be estimated, and the criterion
+ln(SSR/n) + c k/n (c = 2, ln n or 2 ln ln n) is minimized; for {cmd:dfe} it is the
+criterion of the pooled within regression, and for {cmd:mg}, {cmd:pmg} and {cmd:csardl}
+the average of the unit-specific criteria (the common-lag rule widely used with PMG;
+Pesaran, Shin and Smith 1999 choose lags with the Schwarz criterion).  The selected
+orders are shown in the header and stored in {cmd:e(ardllags)}; bootstrap replications
+and the stability test keep them fixed.
+
+{pstd}
+{it:Short-run coefficients.}  For {cmd:dfe}, {cmd:mg}, {cmd:pmg} and {cmd:csardl} a second
+table reports each equation in error-correction form: {cmd:ec} (speed of adjustment),
+{cmd:D.}x, {cmd:LD.}x, ..., {cmd:L}(q-1){cmd:D.}x for every regressor, {cmd:LD.}y, ...,
+{cmd:L}(p-1){cmd:D.}y and {cmd:_cons}.  {cmd:dfe} gives the pooled within estimates with
+standard errors clustered by unit (and no constant, which the unit effects absorb).
+{cmd:mg} and {cmd:csardl} give averages of the unit estimates with mean-group standard
+errors; for {cmd:csardl} the unit levels coefficients (lags of y and x, net of the
+cross-section averages) are converted to the error-correction form.  {cmd:pmg} gives
+averages of the unit short-run estimates obtained given the pooled long-run coefficients,
+with mean-group standard errors, as in Pesaran, Shin and Smith (1999).  The table is
+stored in {cmd:e(sr)}.
 
 
 {marker effects}{...}
@@ -189,14 +228,25 @@ For the DML options, see the description in Wu and Xiao (2026) and {cmd:help xtd
 {marker examples}{...}
 {title:Examples}
 
+{pstd}The datasets are installed with the package ({cmd:net get xtpmed}); they are
+simulated with known effects.  {cmd:mediation_panel.dta} is an unbalanced static panel
+(NDE = 1.5, NIE = 0.5 via m1 0.8 and m2 -0.3); {cmd:mediation_dynpanel.dta} is a
+heterogeneous ARDL(2,2) panel (long-run NDE = 1.5, NIE = 0.8).{p_end}
+
+{phang2}{cmd:. use mediation_panel, clear}{p_end}
 {phang2}{cmd:. xtset id year}{p_end}
-{phang2}{cmd:. xtpmed gdpg, treatment(fd) mediators(inv hc) controls(trade infl) seed(1)}{p_end}
-{phang2}{cmd:. xtpmed gdpg, treatment(fd) mediators(inv hc) controls(trade infl) estimator(fe) timefe vce(dk)}{p_end}
-{phang2}{cmd:. xtpmed gdpg, treatment(fd) mediators(inv hc) controls(trade infl) estimator(re)}{p_end}
-{phang2}{cmd:. xtpmed gdpg, treatment(fd) mediators(inv hc) estimator(pmg) break(2010)}{p_end}
-{phang2}{cmd:. xtpmed gdpg, treatment(fd) mediators(inv hc) estimator(csardl) bootstrap(199) seed(1)}{p_end}
-{phang2}{cmd:. matrix list e(effects)}{p_end}
-{phang2}{cmd:. matrix list e(diag)}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m1 m2) controls(x) estimator(fe)}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m1 m2) controls(x) estimator(fe) timefe vce(dk) nodiag}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m1 m2) controls(x) estimator(re) nodiag}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m1 m2) controls(x) seed(1) nodiag}{p_end}
+{phang2}{cmd:. use mediation_dynpanel, clear}{p_end}
+{phang2}{cmd:. xtset id year}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m) controls(x) estimator(pmg) ic(bic)}{p_end}
+{phang2}{cmd:. matrix list e(ardllags)}{p_end}
+{phang2}{cmd:. matrix list e(sr)}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m) controls(x) estimator(mg) ardllags(2 2) nodiag}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m) controls(x) estimator(csardl) ardllags(2 2) nodiag}{p_end}
+{phang2}{cmd:. xtpmed y, treatment(d) mediators(m) controls(x) estimator(dfe) ic(aic) bootstrap(199) seed(1) nodiag}{p_end}
 
 
 {marker results}{...}
@@ -209,13 +259,17 @@ For the DML options, see the description in Wu and Xiao (2026) and {cmd:help xtd
 {synopt:{cmd:e(d1)}, {cmd:e(d0)}}treatment contrast{p_end}
 {synopt:{cmd:e(J)}, {cmd:e(J_df)}, {cmd:e(J_p)}}Hansen J ({cmd:dml}){p_end}
 {synopt:{cmd:e(dklag)}, {cmd:e(break_t)}}DK lag; break date{p_end}
+{synopt:{cmd:e(maxp)}, {cmd:e(maxq)}}largest orders searched with {opt ic()}{p_end}
 {p2col 5 20 24 2: Macros}{p_end}
 {synopt:{cmd:e(estimator)}, {cmd:e(vce)}, {cmd:e(treatment)}, {cmd:e(mediators)}, {cmd:e(controls)}}{p_end}
+{synopt:{cmd:e(ic)}}information criterion used for the lag orders{p_end}
 {p2col 5 20 24 2: Matrices}{p_end}
 {synopt:{cmd:e(b)}, {cmd:e(V)}}coefficients of all equations and their joint variance{p_end}
 {synopt:{cmd:e(effects)}}effects table (b, se, z, p, ll, ul){p_end}
 {synopt:{cmd:e(b_eff)}, {cmd:e(V_eff)}}effects and their covariance{p_end}
 {synopt:{cmd:e(diag)}}16 tests x (stat, df1, df2, p) for each equation{p_end}
+{synopt:{cmd:e(ardllags)}}ARDL orders (p, q) of each equation ({cmd:dfe}, {cmd:mg}, {cmd:pmg}, {cmd:csardl}){p_end}
+{synopt:{cmd:e(sr)}}short-run coefficients in error-correction form: b, se, z, p, ll, ul ({cmd:dfe}, {cmd:mg}, {cmd:pmg}, {cmd:csardl}){p_end}
 {synopt:{cmd:e(chow)}}joint Chow-type test (stat, df, p){p_end}
 {synopt:{cmd:e(eff_boot)}}bootstrap draws of the effects{p_end}
 

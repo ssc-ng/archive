@@ -1,5 +1,5 @@
 {smcl}
-{* 12jun2025}{...}
+{* 15nov2026}{...}
 {hi:help violinplot}{...}
 {right:{browse "https://github.com/benjann/violinplot/"}}
 {hline}
@@ -122,18 +122,18 @@
 {synopt :{cmd:mean}[{cmd:(}{it:{help violinplot##mean:options}}{cmd:)}]}add marker for mean;
     rendering of mean
     {p_end}
-{synopt :{cmd:rag}[{cmd:(}{it:{help violinplot##rag:options}}{cmd:)}]}add markers for data points;
-    rendering of the rag
+{synopt :{cmd:rug}[{cmd:(}{it:{help violinplot##rug:options}}{cmd:)}]}add markers for data points;
+    rendering of the rug
     {p_end}
 {synopt :{cmdab:out:sides}[{cmd:(}{it:{help violinplot##outsides:options}}{cmd:)}]}display outside values;
-    wrapper for {cmd:rag()}
+    wrapper for {cmd:rug()}
     {p_end}
 {synopt :{cmdab:ord:er(}{it:{help violinplot##order:list}}{cmd:)}}change order in which
     elements are printed
     {p_end}
 {synopt :{opt bind}}bind elements together within plot
     {p_end}
-{synopt :{opth off:set(numlist)}}shift position of box plot (and rag)
+{synopt :{opth off:set(numlist)}}shift position of box plot (and rug)
     {p_end}
 {synopt :{opth doff:set(numlist)}}shift position of PDF
     {p_end}
@@ -154,7 +154,7 @@
     {p_end}
 {synopt :{opt meanc:olors(spec)}}like {helpb violinplot##colors:colors()}, but only affecting mean
     {p_end}
-{synopt :{opt ragc:olors(spec)}}like {helpb violinplot##colors:colors()}, but only affecting rag
+{synopt :{opt rugc:olors(spec)}}like {helpb violinplot##colors:colors()}, but only affecting rug
     {p_end}
 
 {syntab :{help violinplot##other:Other}}
@@ -473,7 +473,7 @@
     keys. This is only relevant in cases in which a legend is
     displayed. Depending on context, {it:element} is one of {cmdab:l:ine},
     {cmdab:f:ill}, {cmdab:w:hiskers}, {cmdab:b:ox}, {cmdab:med:ian}, {cmd:mean},
-    or {cmd:rag} (elements that are not plotted will not be available). If
+    or {cmd:rug} (elements that are not plotted will not be available). If
     element {cmd:line} is plotted the default is {cmd:key(line)}, else if
     element {cmd:fill} is plotted the default is {cmd:key(fill)}, else if
     element {cmd:box} is plotted the default is {cmd:key(box)}, else the
@@ -666,9 +666,9 @@
     depending on context, {cmd:msangle(90)} are applied, else the default marker
     is {cmd:msymbol(X)}.
 
-{marker rag}{...}
+{marker rug}{...}
 {phang}
-    {cmd:rag}[{cmd:(}{it:options}{cmd:)}] prints a rag of markers, one marker for each
+    {cmd:rug}[{cmd:(}{it:options}{cmd:)}] prints a rug of markers, one marker for each
     data point. {it:options} are as follows.
 
 {phang2}
@@ -697,17 +697,17 @@
     {opt noweight} if you want to use the same size for each marker.
 
 {phang2}
-    {opth off:set(numlist)} shifts the position of the rag(s) by the specified
-    value(s). The default is to shift the rag(s) as set by the global
+    {opth off:set(numlist)} shifts the position of the rug(s) by the specified
+    value(s). The default is to shift the rug(s) as set by the global
     {helpb violinplot##offset:offset()} option. Use suboption {opt offset()}
     to override this default (i.e., if you want to use different offsets for
-    box plots and rags).
+    box plots and rugs).
 
 {phang2}
     {opt sp:read}[{cmd:(}{it:#1} [{it:#2}]{cmd:)}] spreads out the markers by
     adding beta distributed random errors to their positions. At each level of
     the data, the error distribution will be scaled in proportion
-    to the density estimate at that level (such that the rag mimics the shape of the
+    to the density estimate at that level (such that the rug mimics the shape of the
     violin). Set the random-number seed if you want results to be
     reproducible; see {helpb set seed}.
 
@@ -720,11 +720,11 @@
 {pmore2}
     Optional argument {it:#2} sets the width of the spread to a fixed value
     rather than making the spread proportional to the density estimate. Specify
-    {it:#2} if you want to generate a uniform rag rather than a rag that mimics
+    {it:#2} if you want to generate a uniform rug rather than a rug that mimics
     the shape of the violin. Unless {cmd:dscale(.)} is specified, argument
     {it:#2} is in units of the space allocated to each violin
-    (or half-violin). For example, type {cmd:rag(spread(100 0.2))} to generate
-    a uniform rag that has a width of 20 percent (argument {it:#1} is set to
+    (or half-violin). For example, type {cmd:rug(spread(100 0.2))} to generate
+    a uniform rug that has a width of 20 percent (argument {it:#1} is set to
     100 in this example so that the markers are spread out uniformly across
     the width). If {cmd:dscale(.)} is specified, argument {it:#2} is in
     absolute units (or half-units).
@@ -738,13 +738,13 @@
     one of {cmd:stack()} and {cmd:spread()} is allowed.
 
 {phang2}
-    {opt l:eft} spreads the rag in direction of the left half of the violin. The
+    {opt l:eft} spreads the rug in direction of the left half of the violin. The
     default is to spread in both directions. Suboption {cmd:left} is implied if
     global option {cmd:left} or global option {cmd:split()} is specified. Specify
     suboption {cmd:right}, or both {cmd:left} and {cmd:right}, to override this behavior.
 
 {phang2}
-    {opt r:ight} spreads the rag in direction of the right half of the violin. The
+    {opt r:ight} spreads the rug in direction of the right half of the violin. The
     default is to spread in both directions. Suboption {cmd:right} is implied if
     global option {cmd:right} is specified. Specify suboption
     {cmd:left}, or both {cmd:left} and {cmd:right}, to override this behavior.
@@ -753,16 +753,16 @@
     {it:marker_options} are graph options affecting the rendering of the
     markers; see help {it:{help marker_options}}. By default, options
     {cmd:msymbol(pipe)} and, depending on context, {cmd:msangle(90)} are
-    applied. For example, type {cmd:rag(msymbol(o))} to use filled circles as
+    applied. For example, type {cmd:rug(msymbol(o))} to use filled circles as
     markers.
 
 {marker outsides}{...}
 {phang}
     {cmd:outsides}[{cmd:(}{it:options}{cmd:)}] displays markers for
     outside values (values outside of the whiskers). Option {cmd:outsides()} is
-    implemented as a wrapper for {helpb violinplot##rag:rag()}; it is equivalent to typing
-    {cmd:rag(outsides msymbol(o)} {it:options}{cmd:)}. Only one of {cmd:outsides()}
-    and {cmd:rag()} is allowed.
+    implemented as a wrapper for {helpb violinplot##rug:rug()}; it is equivalent to typing
+    {cmd:rug(outsides msymbol(o)} {it:options}{cmd:)}. Only one of {cmd:outsides()}
+    and {cmd:rug()} is allowed.
 
 {marker order}{...}
 {phang}
@@ -770,7 +770,7 @@
     plot (determining whether an element is in the foreground or in the
     background). {it:list} is a space separated list of elements, where an element
     is one of {cmdab:l:ine}, {cmdab:f:ill}, {cmdab:w:hiskers}, {cmdab:b:ox}, {cmdab:med:ian},
-    {cmd:mean}, and {cmd:rag} (each element can only be listed once; only elements that are
+    {cmd:mean}, and {cmd:rug} (each element can only be listed once; only elements that are
     included in the plot are allowed). Elements not included in the list will be
     added last (in their default order). The default order depends on context.
 
@@ -850,7 +850,7 @@
     {opt meancolors(spec)} is like {helpb violinplot##colors:colors()}, but only affects the mean.
 
 {phang}
-    {opt ragcolors(spec)} is like {helpb violinplot##colors:colors()}, but only affects the rag.
+    {opt rugcolors(spec)} is like {helpb violinplot##colors:colors()}, but only affects the rug.
 
 {marker other}{...}
 {dlgtab:Other}
@@ -904,7 +904,7 @@
     through to element {it:el} of the #th physical plot. Depending on context,
     {it:el} is one of {cmd:l} (PDF lines),
     {cmd:f} (shading of PDF), {cmd:w} (whiskers), {cmd:b} (box), {cmd:med} (median),
-    {cmd:mean}, and {cmd:rag} (only elements that are included in the plots are
+    {cmd:mean}, and {cmd:rug} (only elements that are included in the plots are
     allowed). For example, type {cmd:p2med(mcolor(red))} to print the median
     marker of each 2nd result per group in red.
 
@@ -1037,18 +1037,18 @@
         {p_end}
 
 {pstd}
-    Print data points using option {cmd:rag()}:
+    Print data points using option {cmd:rug()}:
 
 {p 8 12 2}
-        . {stata violinplot wage, left rag(offset(-.005) mlcolor(%20)) dscale(.)}
+        . {stata violinplot wage, left rug(offset(-.005) mlcolor(%20)) dscale(.)}
         {p_end}
 {p 8 12 2}
-        . {stata violinplot wage, left rag(offset(-.005) spread right) dscale(.) ylabel(0(.05).15)}
+        . {stata violinplot wage, left rug(offset(-.005) spread right) dscale(.) ylabel(0(.05).15)}
         {p_end}
 
         . {stata sysuse auto, clear}
 {p 8 12 2}
-        . {stata violinplot price, over(foreign) vertical fill rag(spread(5) msymbol(o) mcolor(maroon%50) mlcolor(%0))}
+        . {stata violinplot price, over(foreign) vertical fill rug(spread(5) msymbol(o) mcolor(maroon%50) mlcolor(%0))}
         {p_end}
 
 {pstd}

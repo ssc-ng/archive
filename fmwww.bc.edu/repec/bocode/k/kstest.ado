@@ -1,3 +1,4 @@
+*! 2.1.0 Ariel Linden 14Nov2026		// allow graph options; dropped "pooled" from graph if k=2
 *! 2.0.0 Ariel Linden 24Jul2026		// generalization of kstest to k-samples; added posthoc option
 *! 1.0.0 Ariel Linden 12Jul2026
 
@@ -10,7 +11,13 @@ program define kstest, rclass
 		SEED(string) ///
 		DOts ///
 		GRaph ///
-		POSThoc]
+		POSThoc ///
+		*]
+
+	if `"`options'"' != "" & "`graph'" == "" {
+		di as error "option {bf:`options'} not allowed"
+		exit 198
+	}
 
 	tempvar touse
 	marksample touse, novarlist
@@ -160,8 +167,16 @@ program define kstest, rclass
 		quietly gen byte atmax = (val == r(max)) if !missing(val)
 		quietly summarize x if atmax, meanonly
 		local Tx = r(mean)
-		quietly summarize Sbar if atmax, meanonly
-		local Tmidy = r(mean)
+		if `num_groups' == 2 {
+			quietly summarize S1 if atmax, meanonly
+			local Ta = r(mean)
+			quietly summarize S2 if atmax, meanonly
+			local Tmidy = (`Ta' + r(mean)) / 2
+		}
+		else {
+			quietly summarize Sbar if atmax, meanonly
+			local Tmidy = r(mean)
+		}
 		quietly summarize x, meanonly
 		local Ttextx = `Tx' + 0.035 * (r(max) - r(min))
 		local statlbl = cond(`num_groups' == 2, "D", "T")
@@ -172,13 +187,20 @@ program define kstest, rclass
 			local plotcmd `"`plotcmd' (line S`j' x, sort connect(stairstep))"'
 			local legendorder `"`legendorder' `j' "`grouplabel`j''""'
 		}
-		local plotcmd `"`plotcmd' (line Sbar x, sort connect(stairstep) lpattern(dash) lcolor(black) lwidth(medthick))"'
-		local sbarnum = `num_groups' + 1
-		local legendorder `"`legendorder' `sbarnum' "Pooled""'
+		if `num_groups' > 2 {
+			local plotcmd `"`plotcmd' (line Sbar x, sort connect(stairstep) lpattern(dash) lcolor(black) lwidth(medthick))"'
+			local sbarnum = `num_groups' + 1
+			local legendorder `"`legendorder' `sbarnum' "Pooled""'
+		}
 
 		// one spike representing the max distance to the pooled curve
-		forvalues j = 1/`num_groups' {
-			local plotcmd `"`plotcmd' (pcspike Sbar x S`j' x if atmax, lcolor(black) lwidth(medium) mcolor(black) msymbol(O) msize(small))"'
+		if `num_groups' == 2 {
+			local plotcmd `"`plotcmd' (pcspike S1 x S2 x if atmax, lcolor(black) lwidth(medium) mcolor(black) msymbol(O) msize(small))"'
+		}
+		else {
+			forvalues j = 1/`num_groups' {
+				local plotcmd `"`plotcmd' (pcspike Sbar x S`j' x if atmax, lcolor(black) lwidth(medium) mcolor(black) msymbol(O) msize(small))"'
+			}
 		}
 
 		local cdftitle "Empirical CDFs"
@@ -195,7 +217,8 @@ program define kstest, rclass
 			title("`cdftitle'")                       ///
 			subtitle("`num_groups'-sample Kolmogorov-Smirnov test") ///
 			text(`Tmidy' `Ttextx' "`statlbl' = `: display %5.3f `Tstat''", place(e) size(small)) ///
-			name(kstestk_ecdf, replace)
+			name(kstestk_ecdf, replace) ///
+			`options'
 		restore
 	}
 

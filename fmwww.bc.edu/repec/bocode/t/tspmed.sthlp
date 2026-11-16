@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.1.0  11nov2026}{...}
+{* *! version 1.2.0  15nov2026}{...}
 {vieweralsosee "xtpmed" "help xtpmed"}{...}
 {vieweralsosee "cspmed" "help cspmed"}{...}
 {title:Title}
@@ -72,11 +72,16 @@ the joint covariance used for the indirect effects.
 {p2col:{cmd:ardl}}ARDL(p,q) for each equation; effects use long-run coefficients
 (sum of distributed-lag coefficients divided by one minus the sum of autoregressive
 coefficients); {cmd:ec} is the speed of adjustment.  Bounds-test F and t statistics
-(Pesaran, Shin and Smith 2001) are reported.{p_end}
+(Pesaran, Shin and Smith 2001) are reported.  A second table gives the short-run
+coefficients of each equation in error-correction form: {cmd:ec}, {cmd:D.}x, {cmd:LD.}x,
+..., {cmd:L}(q-1){cmd:D.}x for every regressor, {cmd:LD.}y, ..., {cmd:L}(p-1){cmd:D.}y,
+{cmd:_cons} (and {cmd:trend}).  They are an exact reparameterization of the estimated
+levels ARDL, and their standard errors use the same long-run variance estimator as the
+long-run coefficients (the {opt vce()} choice); stored in {cmd:e(sr)}.{p_end}
 {p2col:{cmd:fmols}}fully modified OLS (Phillips and Hansen 1990) for I(1) variables.{p_end}
 {p2col:{cmd:dols}}dynamic OLS (Saikkonen 1991; Stock and Watson 1993) with leads and lags of differences.{p_end}
 {p2col:{cmd:dml}}partially linear model; treatment, mediators and outcome are
-residualised on a polynomial series in the controls with blocked cross-fitting
+residualized on a polynomial series in the controls with blocked cross-fitting
 (blocks separated by {opt gap()} periods), then regressed on each other.{p_end}
 {p2colreset}{...}
 
@@ -128,19 +133,26 @@ with T = 200-400 the default prewhitened QS variance gave 95% interval coverage 
 
 {title:Examples}
 
-{phang2}{cmd:. tsset year}{p_end}
-{phang2}{cmd:. tspmed gdpg, treatment(credit) mediators(inv tfp) controls(open infl)}{p_end}
-{phang2}{cmd:. tspmed gdpg, treatment(credit) mediators(inv tfp) controls(open infl) estimator(ardl) ic(bic)}{p_end}
-{phang2}{cmd:. tspmed lgdp, treatment(lcredit) mediators(linv) controls(lopen) estimator(dols) leads(2) dlags(2)}{p_end}
-{phang2}{cmd:. tspmed gdpg, treatment(credit) mediators(inv) controls(open infl) bootstrap(499) seed(1)}{p_end}
-{phang2}{cmd:. tspmed lgdp, treatment(lcredit) mediators(linv) controls(lopen) estimator(fmols) bootstrap(499) seed(1)}{p_end}
+{pstd}The dataset is installed with the package ({cmd:net get tspmed}); it is simulated
+with AR(1) errors and known effects (NDE = 1.5, NIE = 0.5 via m1 0.8 and m2 -0.3).
+The example do-file {cmd:tspmed_example.do} also illustrates {cmd:fmols} and {cmd:dols}
+with simulated cointegrated series and {cmd:dml} with nonlinear confounding.{p_end}
+
+{phang2}{cmd:. use mediation_ts, clear}{p_end}
+{phang2}{cmd:. tsset t}{p_end}
+{phang2}{cmd:. tspmed y, treatment(d) mediators(m1 m2) controls(x)}{p_end}
+{phang2}{cmd:. tspmed y, treatment(d) mediators(m1 m2) controls(x) estimator(ardl) ic(bic)}{p_end}
+{phang2}{cmd:. matrix list e(sr)}{p_end}
+{phang2}{cmd:. tspmed y, treatment(d) mediators(m1 m2) controls(x) vce(hac) haclag(4) nodiag}{p_end}
+{phang2}{cmd:. tspmed y, treatment(d) mediators(m1 m2) controls(x) bootstrap(499) seed(1) nodiag}{p_end}
 
 
 {title:Stored results}
 
 {pstd}
 {cmd:e(b)}, {cmd:e(V)} (coefficients of all equations and their joint HAC variance),
-{cmd:e(effects)} (b, se, z, p, ll, ul), {cmd:e(V_eff)}, {cmd:e(diag)} (17 tests by
+{cmd:e(effects)} (b, se, z, p, ll, ul), {cmd:e(V_eff)}, {cmd:e(sr)} (short-run
+coefficients of {cmd:ardl}: b, se, z, p, ll, ul), {cmd:e(diag)} (17 tests by
 stat, df1, df2, p for each equation), {cmd:e(eff_boot)}; scalars {cmd:e(N)},
 {cmd:e(T)}, {cmd:e(km)}, {cmd:e(haclag)}, {cmd:e(break_t)}; macros
 {cmd:e(estimator)}, {cmd:e(treatment)}, {cmd:e(mediators)}, {cmd:e(controls)}.

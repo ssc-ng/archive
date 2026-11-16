@@ -85,3 +85,51 @@ xtpmed y, treatment(d) mediators(m) controls(x) estimator(dfe)
 xtpmed y, treatment(d) mediators(m) controls(x) estimator(mg)
 xtpmed y, treatment(d) mediators(m) controls(x) estimator(pmg)
 xtpmed y, treatment(d) mediators(m) controls(x) estimator(csardl)
+
+* ---------------------------------------------------------------
+* Higher-order dynamics: ARDL(2,2) for both equations, lag orders chosen by
+* information criteria (dfe / mg / pmg / csardl)
+*   m: m_t = 0.5 m_t-1 + 0.2 m_t-2 + 0.12 d_t + 0.08 d_t-1 + 0.04 d_t-2 + ...
+*      long run d -> m = 0.24 / (1 - 0.7) = 0.8
+*   y: y_t = 0.6 y_t-1 - 0.2 y_t-2 + (0.5, 0.3, 0.1) d_t..t-2 + (0.3, 0.2, 0.1) m_t..t-2 + ...
+*      long run d -> y = 0.9 / 0.6 = 1.5,  m -> y = 0.6 / 0.6 = 1.0
+*   True long-run effects: NDE = 1.5, NIE = 0.8, TE = 2.3, PM = 0.35
+clear
+set seed 11
+local N 50
+local T 70
+set obs `N'
+gen id = _n
+gen double mu = rnormal()
+expand `T'
+bysort id: gen t = _n
+xtset id t
+gen double x = rnormal()
+gen double d = 0
+gen double m = 0
+gen double y = 0
+by id: replace d = mu + 0.5*d[_n-1] + 0.3*x + rnormal() if _n > 2
+by id: replace m = 0.5*m[_n-1] + 0.2*m[_n-2] + 0.12*d + 0.08*d[_n-1] + 0.04*d[_n-2] + 0.2*x + rnormal() if _n > 2
+by id: replace y = mu + 0.6*y[_n-1] - 0.2*y[_n-2] + 0.5*d + 0.3*d[_n-1] + 0.1*d[_n-2] ///
+    + 0.3*m + 0.2*m[_n-1] + 0.1*m[_n-2] + 0.2*x + rnormal() if _n > 2
+drop if t <= 15
+
+* 8. PMG with lag orders (p, q) chosen by the Schwarz criterion for each equation
+*    (the second table shows the short-run coefficients: ec, D.d, LD.d, ..., LD.y, _cons)
+xtpmed y, treatment(d) mediators(m) controls(x) estimator(pmg) ic(bic) maxp(3) maxq(3)
+matrix list e(ardllags)
+matrix list e(sr)
+
+* 9. PMG with fixed ARDL(2,2) orders
+xtpmed y, treatment(d) mediators(m) controls(x) estimator(pmg) ardllags(2 2) nodiag
+
+* 10. For comparison: the default ARDL(1,1) is too short for this design
+*     (see the serial-correlation tests)
+xtpmed y, treatment(d) mediators(m) controls(x) estimator(pmg)
+
+* 11. Mean group with AIC, dynamic fixed effects with Hannan-Quinn
+xtpmed y, treatment(d) mediators(m) controls(x) estimator(mg) ic(aic) nodiag
+xtpmed y, treatment(d) mediators(m) controls(x) estimator(dfe) ic(hqic) nodiag
+
+* 12. CS-ARDL(2,2)
+xtpmed y, treatment(d) mediators(m) controls(x) estimator(csardl) ardllags(2 2) nodiag

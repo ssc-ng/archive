@@ -1,4 +1,5 @@
 {smcl}
+{* *! version 1.3.0  14nov2026}{...}
 {* *! version 1.2.0  24jul2026}{...}
 
 {title:Title}
@@ -19,7 +20,8 @@
 {opt seed(#)}
 {opt do:ts}
 {opt gr:aph}
-{opt post:hoc}]
+{opt post:hoc}
+{it:twoway_options}]
 
 {pstd}
 {it:{help varlist:groupvar}} must take on
@@ -36,8 +38,9 @@ distribution.
 {synopt :{opt r:eps(#)}}perform # Monte Carlo permutations; default is {opt reps(1000)}{p_end}
 {synopt :{opt seed(#)}}set random-number seed to #{p_end}
 {synopt :{opt do:ts}}display permutation progress dots; default is off{p_end}
-{synopt :{opt gr:aph}}plot the empirical CDFs of the {it:k} groups against the pooled empirical CDF{p_end}
 {synopt :{opt post:hoc}}also report pairwise comparisons between every pair of groups, with Bonferroni, Holm, and FDR adjusted p-values{p_end}
+{synopt :{opt gr:aph}}plot the empirical CDFs of the {it:k} groups; for {it:k} > 2 the pooled empirical CDF is also plotted{p_end}
+{synopt :{it:twoway_options}}any options allowed with {helpb twoway}; {opt graph} must be specified{p_end}
 {synoptline}
 {p2colreset}{...}
 {p 4 6 2}* {opt Required}{p_end}
@@ -104,14 +107,18 @@ the default is {opt reps(1000)}.
 running count every 50; the default is to display no dots.
 
 {p 6 8 2}
-{opt graph} plots the (weighted) empirical CDFs of the {it:k} groups as
-step functions, together with the pooled empirical CDF Sbar(x) that the
-test statistic measures distance from.
-
-{p 6 8 2}
 {opt post:hoc} additionally reports pairwise comparisons between every pair
 of groups, with Bonferroni-, Sidak-, Holm-, and FDR-adjusted p-values; see
 {help kstest##posthoc:Post-hoc comparisons} above.
+
+{p 6 8 2}
+{opt graph} plots the (weighted) empirical CDFs of the {it:k} groups as
+step functions. When {it:k} > 2, the pooled empirical CDF Sbar(x) that the
+test statistic measures distance from is plotted as well.
+
+{p 6 8 2}
+{it:twoway_options} are any options allowed with {helpb twoway}. They may only be 
+specified with {opt graph}.
 
 
 
@@ -135,6 +142,9 @@ from a binary treatment model ({cmd:mbsmoke}: smoker vs. non-smoker){p_end}
 
 {pstd}add the diagnostic graph, with progress dots{p_end}
 {phang2}{cmd:. kstest mage [pweight=iptw], by(msmoke) reps(2000) seed(12345) dots graph}{p_end}
+
+{pstd}modify the graph with {cmd:twoway} options{p_end}
+{phang2}{cmd:. kstest mage [pweight=iptw], by(msmoke) reps(2000) seed(12345) graph title("Howdy") saving(mygraph, replace)}{p_end}
 
 {pstd}add post-hoc pairwise comparisons across all 6 group pairs{p_end}
 {phang2}{cmd:. kstest mage [pweight=iptw], by(msmoke) reps(2000) seed(12345) posthoc}{p_end}

@@ -1,5 +1,15 @@
-*! version 1.0.0  20260714  Eric A. Booth, Sr Researcher, Texas 2036
+*! version 1.0.2  09nov2026  Eric A. Booth and Elizabeth Teas
 *! datadictionary: enhanced, over-time-ready codebook generator (a modern descsave)
+*! 1.0.1: labels, notes, chars, value-label text, and string values that
+*!        contain $ or a backtick are carried verbatim (macval) instead of
+*!        being macro-expanded, and the relabel do-file escapes them.
+*! 1.0.2: works when the temp folder path has a space (tempfiles quoted);
+*!        the srctag column reads char[source], the stamp srctag, combineall
+*!        and projectbuilder write; the round-trip recipe exports with quote
+*!        and imports with bindquote(strict), so text with line breaks keeps
+*!        its rows; open links expand a leading ~ and treat \ paths as
+*!        absolute; wave and file basenames split on \ as well as /; an empty
+*!        dataset (0 observations) is refused with its own message.
 *
 *  version 16.0 is the floor the package is tested against; no feature above
 *  that baseline is required.  The caller's data are preserved and restored
@@ -14,7 +24,7 @@ program define datadictionary, rclass
         EXcel(string) SAVing(string) REPlace             ///
         DOfile(string) DICTionary(string) NORECast       ///
         EXAMples(integer 3) TOP(integer 5)               ///
-        NOCHars NONotes ]
+        NOCHars NONotes FLOW(string) ]
 
     * ---- option validation ---------------------------------------------------
     if `examples' < 1 {
@@ -99,6 +109,14 @@ program define datadictionary, rclass
         }
     }
 
+    if `"`flow'"' != "" {
+        capture confirm file `"`flow'"'
+        if _rc {
+            di as err `"flow file `flow' not found"'
+            exit 601
+        }
+    }
+
     * ---- resolve the file list (files mode) ------------------------------------
     local nfiles 0
     if `"`folder'"' != "" {
@@ -136,7 +154,7 @@ program define datadictionary, rclass
         gettoken w restwn : restwn
         while `"`w'"' != "" {
             local ++nwn
-            local wn`nwn' `"`w'"'
+            local wn`nwn' `"`macval(w)'"'
             gettoken w restwn : restwn
         }
         if `nwn' > 0 & `nwn' != `nfiles' {
@@ -146,7 +164,7 @@ program define datadictionary, rclass
         if `nwn' == 0 {
             forvalues i = 1/`nfiles' {
                 local bn `"`file`i''"'
-                local sl = strrpos(`"`bn'"', "/")
+                local sl = max(strrpos(`"`bn'"', "/"), strrpos(`"`bn'"', char(92)))
                 if `sl' > 0 local bn = substr(`"`bn'"', `sl' + 1, .)
                 local dt = strrpos(`"`bn'"', ".")
                 if `dt' > 0 local bn = substr(`"`bn'"', 1, `dt' - 1)
@@ -164,6 +182,11 @@ program define datadictionary, rclass
                 exit 2000
             }
             unab varlist : _all
+        }
+        if _N == 0 {
+            di as err "no observations: the dataset in memory has variables but 0 observations;"
+            di as err "    datadictionary needs at least one observation to document"
+            exit 2000
         }
         marksample touse, novarlist strok
         quietly count if `touse'
@@ -184,8 +207,8 @@ program define datadictionary, rclass
         str80 varlab str32 vallab double n double pctmiss double distinct   ///
         double mean double sd double min double p50 double max              ///
         str2000 examples str2000 notes str2000 srctag str2000 chars         ///
-        using `MAIN'
-    postfile `VH' int wavenum str32 lname double value str2000 label using `VLAB'
+        using `"`MAIN'"'
+    postfile `VH' int wavenum str32 lname double value str2000 label using `"`VLAB'"'
 
     local totnotes 0
     local lbls ""
@@ -195,19 +218,13 @@ program define datadictionary, rclass
         forvalues i = 1/`nfiles' {
             quietly use `"`file`i''"', clear
             local N`i' = _N
-            _dd_rows, mh(`MH') wavenum(`i') wave(`"`wn`i''"')  ///
+            _dd_rows, mh(`MH') wavenum(`i') wave(`"`macval(wn`i')'"')  ///
                 examples(`examples') top(`top') `nochars' `nonotes'
             local k`i' = r(k)
             local totnotes = `totnotes' + r(nnotes)
             local flbl `"`r(lblnames)'"'
             if `"`flbl'"' != "" {
-                quietly uselabel `flbl', clear
-                forvalues r = 1/`=_N' {
-                    local ln = lname[`r']
-                    local vv = value[`r']
-                    local lt = substr(label[`r'], 1, 2000)
-                    post `VH' (`i') ("`ln'") (`vv') (`"`lt'"')
-                }
+                _dd_postvl, vh(`VH') waves(`i') labels(`flbl')
             }
         }
         local nw = `nfiles'
@@ -239,13 +256,7 @@ program define datadictionary, rclass
             local lbls `"`r(lblnames)'"'
             local nw 0
             if `"`lbls'"' != "" {
-                quietly uselabel `lbls', clear
-                forvalues r = 1/`=_N' {
-                    local ln = lname[`r']
-                    local vv = value[`r']
-                    local lt = substr(label[`r'], 1, 2000)
-                    post `VH' (0) ("`ln'") (`vv') (`"`lt'"')
-                }
+                _dd_postvl, vh(`VH') waves(0) labels(`lbls')
             }
         }
         else {
@@ -254,28 +265,40 @@ program define datadictionary, rclass
             * ---- value labels and label-change detection are not available here
             * ---- (use files mode for those); per-wave statistics and missingness
             * ---- are.  A variable all-missing within a wave shows 100% missing. -
+            * Waves are numbered by egen group() (numeric order, or sorted
+            * strings; missing waves left out, as levelsof does) and each
+            * wave's name is read straight from the data, so a $ or a
+            * backtick in a string wave value is never macro-expanded.
             capture confirm string variable `wave'
             local strwave = (_rc == 0)
-            quietly levelsof `wave', local(wlevs)
             local wvallab : value label `wave'
-            local nw 0
-            foreach L of local wlevs {
-                local ++nw
-                if `strwave' local wn`nw' `"`L'"'
-                else if "`wvallab'" != "" local wn`nw' : label (`wave') `L'
-                else local wn`nw' `"`L'"'
-                local wlev`nw' `"`L'"'
+            tempvar wg wrow
+            quietly egen long `wg' = group(`wave')
+            quietly summarize `wg', meanonly
+            local nw = cond(r(N) > 0, r(max), 0)
+            quietly gen long `wrow' = _n
+            forvalues w = 1/`nw' {
+                quietly summarize `wrow' if `wg' == `w', meanonly
+                local o = r(min)
+                if `strwave' {
+                    local wn`w' = `wave'[`o']
+                }
+                else if "`wvallab'" != "" {
+                    local wv = `wave'[`o']
+                    local wn`w' : label (`wave') `wv'
+                }
+                else local wn`w' = strtrim(string(`wave'[`o'], "%18.0g"))
             }
+            quietly drop `wrow'
             local gvars : list keepvars - wave
             tempfile MEMALL
-            quietly save `MEMALL'
+            quietly save `"`MEMALL'"'
             forvalues w = 1/`nw' {
-                quietly use `MEMALL', clear
-                if `strwave' quietly keep if `wave' == `"`wlev`w''"'
-                else quietly keep if `wave' == `wlev`w''
+                quietly use `"`MEMALL'"', clear
+                quietly keep if `wg' == `w'
                 local N`w' = _N
                 quietly keep `gvars'
-                _dd_rows, mh(`MH') wavenum(`w') wave(`"`wn`w''"') vars(`gvars') ///
+                _dd_rows, mh(`MH') wavenum(`w') wave(`"`macval(wn`w')'"') vars(`gvars') ///
                     examples(`examples') top(`top') `nochars' `nonotes'
                 local k`w' = r(k)
                 local totnotes = `totnotes' + r(nnotes)
@@ -284,18 +307,9 @@ program define datadictionary, rclass
             local lbls : list uniq lbls
             * surviving value labels (one set per variable in a stitched file);
             * repeated per wave so the ValueLabels sheet lines up with Variables
-            quietly use `MEMALL', clear
-            if `"`lbls'"' != "" {
-                quietly uselabel `lbls', clear
-                local nvl = _N
-                forvalues r = 1/`nvl' {
-                    local ln = lname[`r']
-                    local vv = value[`r']
-                    local lt = substr(label[`r'], 1, 2000)
-                    forvalues w = 1/`nw' {
-                        post `VH' (`w') ("`ln'") (`vv') (`"`lt'"')
-                    }
-                }
+            quietly use `"`MEMALL'"', clear
+            if `"`lbls'"' != "" & `nw' > 0 {
+                _dd_postvl, vh(`VH') waves(1/`nw') labels(`lbls')
             }
         }
     }
@@ -303,7 +317,7 @@ program define datadictionary, rclass
     postclose `MH'
     postclose `VH'
 
-    quietly use `MAIN', clear
+    quietly use `"`MAIN'"', clear
     local nvars = _N
 
     * ---- change detection across waves (files mode only: stitching waves into
@@ -313,7 +327,7 @@ program define datadictionary, rclass
     if `filesmode' {
         * one signature string per (wave, value-label set): "v=label | v=label"
         local havesig 0
-        quietly use `VLAB', clear
+        quietly use `"`VLAB'"', clear
         if _N > 0 {
             sort wavenum lname value
             quietly gen strL _p = string(value, "%13.0g") + "=" + label
@@ -323,55 +337,55 @@ program define datadictionary, rclass
             quietly gen str2000 vsig = substr(_s, 1, 2000)
             keep wavenum lname vsig
             rename lname vallab
-            quietly save `SIG'
+            quietly save `"`SIG'"'
             local havesig 1
         }
-        quietly use `MAIN', clear
+        quietly use `"`MAIN'"', clear
         if `havesig' {
-            quietly merge m:1 wavenum vallab using `SIG', keep(1 3) ///
+            quietly merge m:1 wavenum vallab using `"`SIG'"', keep(1 3) ///
                 keepusing(vsig) nogenerate
             quietly replace vsig = "" if vallab == ""
         }
         else quietly gen str1 vsig = ""
         tempfile MAINS
-        quietly save `MAINS'
+        quietly save `"`MAINS'"'
 
         postfile `CH' str80 wavepair str32 name str40 change ///
-            str2000 before str2000 after using `CHG'
-        postfile `FF' int wavenum str32 name str24 kind using `CHGF'
+            str2000 before str2000 after using `"`CHG'"'
+        postfile `FF' int wavenum str32 name str24 kind using `"`CHGF'"'
         forvalues i = 1/`= `nfiles' - 1' {
             local j = `i' + 1
-            local wp `"`wn`i'' -> `wn`j''"'
-            quietly use `MAINS', clear
+            local wp `"`macval(wn`i')' -> `macval(wn`j')'"'
+            quietly use `"`MAINS'"', clear
             quietly keep if wavenum == `i'
             keep name type format varlab vallab vsig
             foreach x in type format varlab vallab vsig {
                 rename `x' `x'0
             }
             tempfile A
-            quietly save `A'
-            quietly use `MAINS', clear
+            quietly save `"`A'"'
+            quietly use `"`MAINS'"', clear
             quietly keep if wavenum == `j'
             keep name type format varlab vallab vsig
-            quietly merge 1:1 name using `A'
+            quietly merge 1:1 name using `"`A'"'
             sort name
             forvalues r = 1/`=_N' {
                 local nm = name[`r']
                 if _merge[`r'] == 2 {
-                    post `CH' (`"`wp'"') ("`nm'") ("variable dropped") ("") ("")
+                    post `CH' (`"`macval(wp)'"') ("`nm'") ("variable dropped") ("") ("")
                 }
                 else if _merge[`r'] == 1 {
-                    post `CH' (`"`wp'"') ("`nm'") ("variable added") ("") ("")
+                    post `CH' (`"`macval(wp)'"') ("`nm'") ("variable added") ("") ("")
                 }
                 else {
                     foreach x in type format varlab {
                         local b = `x'0[`r']
                         local a = `x'[`r']
-                        if `"`b'"' != `"`a'"' {
+                        if `"`macval(b)'"' != `"`macval(a)'"' {
                             if "`x'" == "type"   local ct "storage type changed"
                             if "`x'" == "format" local ct "display format changed"
                             if "`x'" == "varlab" local ct "variable label changed"
-                            post `CH' (`"`wp'"') ("`nm'") ("`ct'") (`"`b'"') (`"`a'"')
+                            post `CH' (`"`macval(wp)'"') ("`nm'") ("`ct'") (`"`macval(b)'"') (`"`macval(a)'"')
                             if "`x'" == "varlab" post `FF' (`j') ("`nm'") ("label")
                         }
                     }
@@ -379,13 +393,13 @@ program define datadictionary, rclass
                     local la = vallab[`r']
                     local sb = vsig0[`r']
                     local sa = vsig[`r']
-                    if `"`lb'"' != `"`la'"' | `"`sb'"' != `"`sa'"' {
-                        local btxt = cond(`"`lb'"' == "", "(none)", `"`lb': `sb'"')
-                        local atxt = cond(`"`la'"' == "", "(none)", `"`la': `sa'"')
-                        local btxt = substr(`"`btxt'"', 1, 2000)
-                        local atxt = substr(`"`atxt'"', 1, 2000)
-                        post `CH' (`"`wp'"') ("`nm'") ("value label set changed") ///
-                            (`"`btxt'"') (`"`atxt'"')
+                    if `"`lb'"' != `"`la'"' | `"`macval(sb)'"' != `"`macval(sa)'"' {
+                        local btxt = cond(`"`lb'"' == "", "(none)", `"`lb': `macval(sb)'"')
+                        local atxt = cond(`"`la'"' == "", "(none)", `"`la': `macval(sa)'"')
+                        local btxt = substr(`"`macval(btxt)'"', 1, 2000)
+                        local atxt = substr(`"`macval(atxt)'"', 1, 2000)
+                        post `CH' (`"`macval(wp)'"') ("`nm'") ("value label set changed") ///
+                            (`"`macval(btxt)'"') (`"`macval(atxt)'"')
                         post `FF' (`j') ("`nm'") ("categories")
                     }
                 }
@@ -393,7 +407,7 @@ program define datadictionary, rclass
         }
         postclose `CH'
         postclose `FF'
-        quietly use `CHG', clear
+        quietly use `"`CHG'"', clear
         local nchanges = _N
     }
 
@@ -403,7 +417,7 @@ program define datadictionary, rclass
     * ---- flag marks a variable whose meaning may have shifted between waves. --
     local haveflags 0
     if `filesmode' {
-        quietly use `CHGF', clear
+        quietly use `"`CHGF'"', clear
         if _N > 0 {
             quietly gen byte _lab = (kind == "label")
             quietly gen byte _cat = (kind == "categories")
@@ -412,25 +426,32 @@ program define datadictionary, rclass
                 cond(_lab == 1, "label", "categories"))
             keep wavenum name changed
             tempfile FLAGS
-            quietly save `FLAGS'
+            quietly save `"`FLAGS'"'
             local haveflags 1
         }
     }
-    quietly use `MAIN', clear
+    quietly use `"`MAIN'"', clear
     quietly gen long _seq = _n
     if `haveflags' {
-        quietly merge 1:1 wavenum name using `FLAGS', keep(1 3) nogenerate
+        quietly merge 1:1 wavenum name using `"`FLAGS'"', keep(1 3) nogenerate
     }
     sort _seq
     quietly drop _seq
     capture confirm variable changed
     if _rc quietly gen str24 changed = ""
     quietly replace changed = "" if changed == "."
-    quietly save `MAIN', replace
+    quietly save `"`MAIN'"', replace
+
+    * ---- flow(): append surveymap's pct_answered_sm and skipped_by_sm to the
+    * ---- codebook rows, matched on variable name.  Applied to `MAIN' here so
+    * ---- both the Variables sheet and the saving() dataset carry the columns.
+    if `"`flow'"' != "" {
+        _dd_flow, flow(`"`flow'"') main(`"`MAIN'"')
+    }
 
     * ---- display ---------------------------------------------------------------------
     local overtime = (`nw' > 0)
-    di as txt _n "datadictionary 1.0.0"
+    di as txt _n "datadictionary 1.0.2"
     if `filesmode' {
         di as txt "  mode: " as res "files" as txt "    files: " as res `nfiles' ///
             as txt "    codebook rows: " as res `nvars'
@@ -442,14 +463,14 @@ program define datadictionary, rclass
         if `overtime' di as txt "  stitched waves (" as res "`wave'" as txt "): " as res `nw'
     }
 
-    quietly use `MAIN', clear
+    quietly use `"`MAIN'"', clear
     local lastw = -1
     forvalues r = 1/`=_N' {
         if wavenum[`r'] != `lastw' {
             local lastw = wavenum[`r']
             if `overtime' {
                 di as txt _n "{hline 80}"
-                di as txt "wave " as res `"`wn`lastw''"' as txt ///
+                di as txt "wave " as res `"`macval(wn`lastw')'"' as txt ///
                     "  (N = " as res `N`lastw'' as txt ", variables = " as res `k`lastw'' as txt ")"
             }
             di as txt "{hline 80}"
@@ -465,7 +486,7 @@ program define datadictionary, rclass
         local cf = changed[`r']
         di as res %-13s abbrev("`nm'", 12) as txt %-8s "`ty'" ///
             %-9s abbrev("`fm'", 8) as res %8.0f n[`r'] %7.1f pctmiss[`r'] ///
-            %6.0f distinct[`r'] as txt "  " %-24s abbrev(`"`vl'"', 24) _c
+            %6.0f distinct[`r'] as txt "  " %-24s abbrev(`"`macval(vl)'"', 24) _c
         if `overtime' & "`cf'" != "" di as err "  <- `cf'"
         else di ""
     }
@@ -473,17 +494,17 @@ program define datadictionary, rclass
 
     if `filesmode' & `nchanges' > 0 {
         di as txt _n "Changes detected across waves:"
-        quietly use `CHG', clear
+        quietly use `"`CHG'"', clear
         forvalues r = 1/`=_N' {
             local wp = wavepair[`r']
             local nm = name[`r']
             local ct = change[`r']
             local b  = before[`r']
             local a  = after[`r']
-            di as txt "  " %-16s `"`wp'"' as res %-13s abbrev("`nm'", 12) ///
+            di as txt "  " %-16s `"`macval(wp)'"' as res %-13s abbrev("`nm'", 12) ///
                 as txt %-26s "`ct'" _c
-            if `"`b'`a'"' != "" {
-                di as txt "  " abbrev(`"`b'"', 24) " -> " abbrev(`"`a'"', 24)
+            if `"`macval(b)'`macval(a)'"' != "" {
+                di as txt "  " abbrev(`"`macval(b)'"', 24) " -> " abbrev(`"`macval(a)'"', 24)
             }
             else di ""
         }
@@ -491,7 +512,7 @@ program define datadictionary, rclass
 
     * ---- saving(): the machine-readable codebook -----------------------------------
     if `"`saving'"' != "" {
-        quietly use `MAIN', clear
+        quietly use `"`MAIN'"', clear
         if !`overtime' quietly drop wave wavenum changed
         else order wave name, first
         label variable name     "variable name"
@@ -509,7 +530,7 @@ program define datadictionary, rclass
         label variable max      "maximum"
         label variable examples "example values / top categories"
         label variable notes    "stored notes"
-        label variable srctag   "char [source] (written by srctag/combineall)"
+        label variable srctag   "char [source] (srctag/combineall/projectbuilder)"
         label variable chars    "other characteristics"
         if `overtime' {
             label variable wave    "wave"
@@ -559,7 +580,7 @@ program define datadictionary, rclass
             putexcel C`rr' = "Variables", bold
             forvalues w = 1/`nw' {
                 local ++rr
-                putexcel A`rr' = `"`wn`w''"'
+                putexcel A`rr' = `"`macval(wn`w')'"'
                 putexcel B`rr' = `N`w''
                 putexcel C`rr' = `k`w''
             }
@@ -577,7 +598,7 @@ program define datadictionary, rclass
         * common values, labels, and notes; over-time modes add a wave column
         * and a "changed vs previous wave" flag.  (No separate Missingness sheet:
         * pctmiss is a column here.)
-        quietly use `MAIN', clear
+        quietly use `"`MAIN'"', clear
         quietly drop wavenum
         if !`overtime' quietly drop wave changed
         else order wave name, first
@@ -588,11 +609,11 @@ program define datadictionary, rclass
         _dd_bold, file(`"`excel'"') sheet("Variables")
 
         * ValueLabels sheet
-        quietly use `VLAB', clear
+        quietly use `"`VLAB'"', clear
         if `overtime' {
             quietly gen str80 wave = ""
             forvalues w = 1/`nw' {
-                quietly replace wave = `"`wn`w''"' if wavenum == `w'
+                quietly replace wave = `"`macval(wn`w')'"' if wavenum == `w'
             }
             order wave lname value label
         }
@@ -605,7 +626,7 @@ program define datadictionary, rclass
 
         * Changes sheet (files mode only: see the change-detection note above)
         if `filesmode' {
-            quietly use `CHG', clear
+            quietly use `"`CHG'"', clear
             if _N > 0 {
                 quietly export excel using `"`excel'"', sheet("Changes") ///
                     sheetreplace firstrow(variables)
@@ -622,6 +643,7 @@ program define datadictionary, rclass
     * ---- clickable links to open the outputs and their folder --------------------------
     if `"`excel'`saving'`dofile'`dictionary'"' != "" {
         di as txt _n "Open:"
+        global DD_NLINK ""
         if `"`excel'"'      != "" _dd_link, path(`"`excel'"')      tag("codebook (Excel)")
         if `"`saving'"'     != "" _dd_link, path(`"`saving'"')     tag("codebook (.dta)")
         if `"`dofile'"'     != "" _dd_link, path(`"`dofile'"')     tag("relabel do-file")
@@ -647,18 +669,96 @@ end
 program define _dd_link
     version 16.0
     syntax , PATH(string) TAG(string) [ FOLDER ]
-    * absolute path
+    * absolute path.  A leading ~ is expanded the way Stata's own file
+    * commands expand it (HOME; on Windows USERPROFILE, then HOMEDRIVE +
+    * HOMEPATH, then HOME), and a path starting with / or \ (including a
+    * \\server share) or a drive letter is already absolute.
     local p `"`path'"'
-    if substr(`"`p'"', 1, 1) != "/" & substr(`"`p'"', 2, 1) != ":" {
+    if substr(`"`p'"', 1, 1) == "~" & inlist(substr(`"`p'"', 2, 1), "", "/", char(92)) {
+        local hm : environment HOME
+        if "`c(os)'" == "Windows" {
+            local up : environment USERPROFILE
+            local hd : environment HOMEDRIVE
+            local hp : environment HOMEPATH
+            if `"`up'"' != "" local hm `"`up'"'
+            else if `"`hd'`hp'"' != "" local hm `"`hd'`hp'"'
+        }
+        local rest = substr(`"`p'"', 2, .)
+        if `"`hm'"' != "" local p `"`hm'`rest'"'
+    }
+    if !inlist(substr(`"`p'"', 1, 1), "/", char(92)) & substr(`"`p'"', 2, 1) != ":" {
         local p `"`c(pwd)'/`p'"'
     }
     if "`folder'" != "" {
         * strip to the directory
-        local sl = strrpos(`"`p'"', "/")
+        local sl = max(strrpos(`"`p'"', "/"), strrpos(`"`p'"', char(92)))
         if `sl' > 1 local p = substr(`"`p'"', 1, `sl' - 1)
     }
-    local q = char(34)
-    di as txt `"  {browse `q'`p'`q':`tag'}"'
+    * The link runs a command rather than handing a path to {browse}: SMCL
+    * gives a {browse} target to the platform URL parser, and on macOS that
+    * can abort Stata outright.  The OS opener also picks the right
+    * application for a .xlsx or a folder, which a browser does not.
+    * The path travels in a global so the directive itself carries no quote,
+    * space, or colon (a Windows path starts "C:", and a colon inside
+    * {stata ...} would split the command from its label).
+    global DD_NLINK = cond("$DD_NLINK" == "", 1, $DD_NLINK + 1)
+    global DD_OPEN${DD_NLINK} `"`p'"'
+    di as txt `"  {stata _dd_open ${DD_NLINK}:`tag'}"'
+end
+
+
+* ---------------------------------------------------------------------------
+* _dd_flow: merge the item rows of a surveymap journal into the codebook
+* tempfile, adding pct_answered_sm (percent of respondents in scope who
+* answered the item) and skipped_by_sm (the skip logic that routes
+* respondents around it, e.g. "voted==0").  The journal is a tab-separated
+* file read by column name; it must carry class, var, pct_answered, and
+* gated_by columns or the command stops with error 459.  Codebook rows keep
+* their order and their key column "name"; unmatched codebook rows get
+* missing/empty values; journal items absent from the codebook are dropped
+* and counted in one note line.  The _sm suffix keeps the new columns clear
+* of the codebook's own.  Runs on scratch data; callers reload `MAIN' after.
+* ---------------------------------------------------------------------------
+program define _dd_flow
+    version 16.0
+    syntax , FLOW(string) MAIN(string)
+
+    quietly import delimited `"`flow'"', delimiter(tab) varnames(1) ///
+        stringcols(_all) clear
+    foreach c in class var pct_answered gated_by {
+        capture confirm variable `c'
+        if _rc {
+            di as err `"flow(): `flow' is not a surveymap journal (no `c' column)"'
+            exit 459
+        }
+    }
+    quietly keep if class == "item"
+    quietly gen name = var
+    quietly gen double pct_answered_sm = real(pct_answered)
+    quietly gen skipped_by_sm = gated_by
+    quietly replace skipped_by_sm = "" if skipped_by_sm == "."
+    quietly keep name pct_answered_sm skipped_by_sm
+    quietly duplicates drop name, force
+    tempfile FJ
+    quietly save `"`FJ'"'
+
+    quietly use `"`main'"', clear
+    quietly gen long _seq = _n
+    quietly merge m:1 name using `"`FJ'"'
+    quietly count if _merge == 2
+    local nun = r(N)
+    quietly drop if _merge == 2
+    quietly drop _merge
+    sort _seq
+    quietly drop _seq
+    label variable pct_answered_sm "% answered (surveymap journal)"
+    label variable skipped_by_sm   "routed around by (surveymap journal)"
+    order pct_answered_sm skipped_by_sm, last
+    quietly save `"`main'"', replace
+    if `nun' > 0 {
+        di as txt "flow(): " as res `nun' as txt ///
+            " journal item(s) have no codebook row and were skipped"
+    }
 end
 
 
@@ -676,7 +776,7 @@ program define _dd_rows, rclass
 
     if `"`vars'"' == "" unab vars : _all
     local NT = _N
-    local wavelab = substr(`"`wave'"', 1, 80)
+    local wavelab = substr(`"`macval(wave)'"', 1, 80)
     local nnotes 0
     local lblnames ""
     local k 0
@@ -730,15 +830,18 @@ program define _dd_rows, rclass
         if `isstr' & `nn' > 0 {
             sort `v'
             local ct 0
-            local last ""
             local o 1
+            * the data are sorted, so a new distinct value differs from the
+            * row above; comparing in the data (not in macros) keeps $ and
+            * backticks in a value from being expanded
             while `ct' < `examples' & `o' <= `NT' {
-                local cur = `v'[`o']
-                if `"`cur'"' != "" & `"`cur'"' != `"`last'"' {
+                if `v'[`o'] != "" & (`o' == 1 | `v'[`o'] != `v'[`o' - 1]) {
+                    local cur = `v'[`o']
                     local ++ct
-                    if `ct' == 1 local ex `"`cur'"'
-                    else local ex `"`ex', `cur'"'
-                    local last `"`cur'"'
+                    if `ct' == 1 {
+                        local ex `"`macval(cur)'"'
+                    }
+                    else local ex `"`macval(ex)', `macval(cur)'"'
                 }
                 local ++o
             }
@@ -755,12 +858,14 @@ program define _dd_rows, rclass
                     local pc = strtrim(string(100 * `ff' / `tot', "%5.1f"))
                     capture local lb : label (`v') `vv'
                     if _rc local lb "`vv'"
-                    if `j' == 1 local ex `"`lb' (`ff', `pc'%)"'
-                    else local ex `"`ex', `lb' (`ff', `pc'%)"'
+                    if `j' == 1 {
+                        local ex `"`macval(lb)' (`ff', `pc'%)"'
+                    }
+                    else local ex `"`macval(ex)', `macval(lb)' (`ff', `pc'%)"'
                 }
             }
         }
-        local ex = substr(`"`ex'"', 1, 2000)
+        local ex = substr(`"`macval(ex)'"', 1, 2000)
 
         * stored notes
         local ntxt ""
@@ -770,43 +875,77 @@ program define _dd_rows, rclass
             if "`k0'" == "" | "`k0'" == "." local k0 0
             forvalues j = 1/`k0' {
                 local t : char `v'[note`j']
-                if `j' == 1 local ntxt `"`j'. `t'"'
-                else local ntxt `"`ntxt' | `j'. `t'"'
+                if `j' == 1 {
+                    local ntxt `"`j'. `macval(t)'"'
+                }
+                else local ntxt `"`macval(ntxt)' | `j'. `macval(t)'"'
             }
             local nnotes = `nnotes' + `k0'
-            local ntxt = substr(`"`ntxt'"', 1, 2000)
+            local ntxt = substr(`"`macval(ntxt)'"', 1, 2000)
         }
 
-        * Characteristics: the provenance stamp in its own column, all others
-        * concatenated.  The stamp is char[source] -- that is what -srctag- and
-        * -combineall- both write.  This used to read char[srctag], which
-        * nothing writes, so the column came back empty every time.
+        * characteristics: the provenance stamp in the srctag column, all
+        * others concatenated.  The stamp is char[source], which srctag,
+        * combineall and projectbuilder write (1.0.2; 1.0.1 and earlier read
+        * char[srctag], which none of them writes, so the column was empty).
+        * A variable with no char[source] but a char[srctag] still has that
+        * one shown in the column.
         local st ""
         local ch ""
         if "`nochars'" == "" {
+            local stc "source"
             local st : char `v'[source]
-            local st = substr(`"`st'"', 1, 2000)
+            if `"`macval(st)'"' == "" {
+                local stc "srctag"
+                local st : char `v'[srctag]
+            }
+            local st = substr(`"`macval(st)'"', 1, 2000)
             local allc : char `v'[]
             foreach c of local allc {
-                if "`c'" == "source" continue
+                if "`c'" == "`stc'" continue
                 if regexm("`c'", "^note[0-9]+$") | "`c'" == "note0" continue
                 local cv : char `v'[`c']
-                if `"`ch'"' == "" local ch `"`c'=`cv'"'
-                else local ch `"`ch'; `c'=`cv'"'
+                if `"`macval(ch)'"' == "" {
+                    local ch `"`c'=`macval(cv)'"'
+                }
+                else local ch `"`macval(ch)'; `c'=`macval(cv)'"'
             }
-            local ch = substr(`"`ch'"', 1, 2000)
+            local ch = substr(`"`macval(ch)'"', 1, 2000)
         }
 
-        post `mh' (`wavenum') (`"`wavelab'"') ("`v'") ("`ty'") ("`fm'")   ///
-            (`"`vl'"') ("`ll'") (`nn') (`pctm') (`dist')                  ///
+        post `mh' (`wavenum') (`"`macval(wavelab)'"') ("`v'") ("`ty'") ("`fm'") ///
+            (`"`macval(vl)'"') ("`ll'") (`nn') (`pctm') (`dist')          ///
             (`mn') (`sd') (`mi') (`md') (`mx')                            ///
-            (`"`ex'"') (`"`ntxt'"') (`"`st'"') (`"`ch'"')
+            (`"`macval(ex)'"') (`"`macval(ntxt)'"') (`"`macval(st)'"')    ///
+            (`"`macval(ch)'"')
     }
 
     local lblnames : list uniq lblnames
     return local lblnames `lblnames'
     return scalar nnotes = `nnotes'
     return scalar k = `k'
+end
+
+
+* ---------------------------------------------------------------------------
+* _dd_postvl: post every value of the named value labels to the value-label
+* postfile, once per wave in waves().  Reads the labels with st_vlload rather
+* than -uselabel-, which runs -label save- output back through the macro
+* expander and so turns a $name in label text into the global's contents.
+* ---------------------------------------------------------------------------
+program define _dd_postvl
+    version 16.0
+    syntax , VH(name) WAVES(numlist integer >=0) LABELS(namelist)
+    * alphabetical by label name, the order -uselabel- produced
+    local labels : list sort labels
+    foreach lname of local labels {
+        mata: _dd_vlload("`lname'", 0)
+        forvalues j = 1/`__dd_nv' {
+            foreach w of local waves {
+                post `vh' (`w') ("`lname'") (`__dd_v`j'') (`"`macval(__dd_t`j')'"')
+            }
+        }
+    }
 end
 
 
@@ -831,7 +970,7 @@ program define _dd_bold
         else local h "`v'"
         if `c' <= 26 local L = char(64 + `c')
         else local L = char(64 + int((`c' - 1) / 26)) + char(65 + mod(`c' - 1, 26))
-        putexcel `L'1 = `"`h'"', bold
+        putexcel `L'1 = `"`macval(h)'"', bold
     }
     putexcel save
 end
@@ -857,17 +996,15 @@ program define _dd_dofile
         if "`ll'" != "" local lblnames `lblnames' `ll'
     }
     local lblnames : list uniq lblnames
-    tempfile lbldo
-    if "`lblnames'" != "" quietly label save `lblnames' using `"`lbldo'"', replace
 
     * basename for the -do- hint in the header
     local base `"`dofile'"'
-    local sl = strrpos(`"`base'"', "/")
+    local sl = max(strrpos(`"`base'"', "/"), strrpos(`"`base'"', char(92)))
     if `sl' > 0 local base = substr(`"`base'"', `sl' + 1, .)
 
     tempname fh
     file open `fh' using `"`dofile'"', write text replace
-    file write `fh' `"*! Relabel do-file written by datadictionary 1.0.0"' _n
+    file write `fh' `"*! Relabel do-file written by datadictionary 1.0.2"' _n
     file write `fh' `"*! Source: `srcname'"' _n
     file write `fh' `"*! Generated: `c(current_date)' `c(current_time)'"' _n
     file write `fh' `"*!"' _n
@@ -875,15 +1012,16 @@ program define _dd_dofile
     file write `fh' `"*! notes, and characteristics after a CSV/Excel round-trip (e.g. a file sent"' _n
     file write `fh' `"*! to a collaborator working in R, Python, or Excel and returned as data)."' _n
     file write `fh' `"*! Typical round-trip:"' _n
-    file write `fh' `"*!     export delimited using "share.csv", nolabel replace"' _n
+    file write `fh' `"*!     export delimited using "share.csv", nolabel quote replace"' _n
     file write `fh' `"*!     * ...collaborator edits share.csv in R/Python/Excel and returns it..."' _n
-    file write `fh' `"*!     import delimited using "share.csv", varnames(1) case(preserve) clear"' _n
+    file write `fh' `"*!     import delimited using "share.csv", varnames(1) case(preserve) bindquote(strict) clear"' _n
     file write `fh' `"*!     do `base'"' _n
     file write `fh' `"*! Export with -nolabel- so value-labeled variables travel as their numeric"' _n
     file write `fh' `"*! codes; this file reattaches the code-to-label mappings.  Every command below"' _n
     file write `fh' `"*! is -capture-d, so a column the collaborator renamed or dropped is skipped"' _n
     file write `fh' `"*! rather than stopping the run; the receipt at the foot reports what did not"' _n
-    file write `fh' `"*! match."' _n
+    file write `fh' `"*! match.  -quote- on export and -bindquote(strict)- on import keep a text"' _n
+    file write `fh' `"*! value that holds a line break (a free-text answer) in one row."' _n
     file write `fh' "" _n
 
     * match column names exactly (not by abbreviation), so a renamed column is
@@ -892,17 +1030,18 @@ program define _dd_dofile
     file write `fh' `"set varabbrev off"' _n
     file write `fh' "" _n
 
-    * value-label definitions, inlined verbatim from -label save-
+    * value-label definitions, one -label define ..., modify- line per value
+    * (the form -label save- writes), with $ and backticks in the label text
+    * escaped so that running the do-file does not macro-expand them
     if "`lblnames'" != "" {
         file write `fh' `"* ---- value-label definitions ----"' _n
-        tempname lh
-        file open `lh' using `"`lbldo'"', read text
-        file read `lh' line
-        while r(eof) == 0 {
-            file write `fh' `"`macval(line)'"' _n
-            file read `lh' line
+        foreach lname of local lblnames {
+            mata: _dd_vlload("`lname'", 1)
+            forvalues j = 1/`__dd_nv' {
+                local L `"label define `lname' `__dd_v`j'' `"`macval(__dd_t`j')'"', modify"'
+                file write `fh' `"`macval(L)'"' _n
+            }
         }
-        file close `lh'
         file write `fh' "" _n
     }
 
@@ -914,8 +1053,9 @@ program define _dd_dofile
         local vl : variable label `v'
         local ll : value label `v'
         if "`norecast'" == "" file write `fh' `"capture recast `ty' `v'"' _n
-        if `"`vl'"' != "" {
-            local L `"capture label variable `v' `"`vl'"'"'
+        if `"`macval(vl)'"' != "" {
+            mata: st_local("vl", _dd_esc(st_local("vl")))
+            local L `"capture label variable `v' `"`macval(vl)'"'"'
             file write `fh' `"`macval(L)'"' _n
         }
         file write `fh' `"capture format `v' `fm'"' _n
@@ -936,8 +1076,23 @@ program define _dd_dofile
                     local wrotehdr 1
                 }
                 local t : char `v'[note`j']
-                local L `"capture note `v' : `t'"'
-                file write `fh' `"`macval(L)'"' _n
+                mata: st_local("t", _dd_esc(st_local("t")))
+                * -note- expands its text a second time, so no escaping
+                * survives it; the note is appended through the note0 and
+                * noteN characteristics instead.  nref holds a literal
+                * reference to the local __dd_n, built from char() so that
+                * it is written to the do-file unexpanded
+                local nref = char(96) + "__dd_n" + char(39)
+                local L1 `"capture confirm variable `v', exact"'
+                local L2 `"if !_rc {"'
+                local L3 `"    local __dd_n : char `v'[note0]"'
+                local L4 `"    local __dd_n = cond(real("`macval(nref)'") < ., real("`macval(nref)'"), 0) + 1"'
+                local L5 `"    char define `v'[note`macval(nref)'] `"`macval(t)'"'"'
+                local L6 `"    char define `v'[note0] `macval(nref)'"'
+                local L7 `"}"'
+                forvalues q = 1/7 {
+                    file write `fh' `"`macval(L`q')'"' _n
+                }
             }
         }
         if `wrotehdr' file write `fh' "" _n
@@ -951,11 +1106,12 @@ program define _dd_dofile
             foreach c of local allc {
                 if regexm("`c'", "^note[0-9]+$") | "`c'" == "note0" continue
                 local cv : char `v'[`c']
+                mata: st_local("cv", _dd_esc(st_local("cv")))
                 if !`wrotehdr' {
-                    file write `fh' `"* ---- characteristics (including char[source]) ----"' _n
+                    file write `fh' `"* ---- characteristics (including the char[source] stamp) ----"' _n
                     local wrotehdr 1
                 }
-                local L `"capture char define `v'[`c'] `"`cv'"'"'
+                local L `"capture char define `v'[`c'] `"`macval(cv)'"'"'
                 file write `fh' `"`macval(L)'"' _n
             }
         }
@@ -1016,7 +1172,7 @@ program define _dd_dict
 
     * default data-file reference: same basename as the dictionary, .txt
     local dbase `"`dictionary'"'
-    local sl = strrpos(`"`dbase'"', "/")
+    local sl = max(strrpos(`"`dbase'"', "/"), strrpos(`"`dbase'"', char(92)))
     if `sl' > 0 local dbase = substr(`"`dbase'"', `sl' + 1, .)
     local dt = strrpos(`"`dbase'"', ".")
     if `dt' > 0 local dbase = substr(`"`dbase'"', 1, `dt' - 1)
@@ -1042,12 +1198,44 @@ program define _dd_dict
         local vl : variable label `v'
         * a dictionary quotes labels with "; embedded double quotes would break
         * the line, so soften them to single quotes (the do-file keeps them exact)
-        local vl = subinstr(`"`vl'"', char(34), "'", .)
-        if `"`vl'"' != "" {
-            file write `fh' `"    `ty' `v' "`vl'""' _n
+        local vl = subinstr(`"`macval(vl)'"', char(34), "'", .)
+        if `"`macval(vl)'"' != "" {
+            file write `fh' `"    `ty' `v' "`macval(vl)'""' _n
         }
         else file write `fh' `"    `ty' `v'"' _n
     }
     file write `fh' `"}"' _n
     file close `fh'
+end
+
+
+* ---------------------------------------------------------------------------
+* Mata helpers for the relabel do-file.  Text written into a do-file is
+* macro-expanded when that do-file runs, so a $ or a backtick in a label,
+* note, or characteristic must be written as \$ or \` to survive.
+* ---------------------------------------------------------------------------
+version 16.0
+mata:
+string scalar _dd_esc(string scalar s)
+{
+    s = subinstr(s, char(96), char(92) + char(96))
+    return(subinstr(s, char(36), char(92) + char(36)))
+}
+
+// load value label lname into locals __dd_nv, __dd_v#, __dd_t# (text cut
+// to 2,000 characters; escaped for a do-file when esc != 0)
+void _dd_vlload(string scalar lname, real scalar esc)
+{
+    real colvector    v
+    string colvector  t
+    real scalar       j
+
+    st_vlload(lname, v, t)
+    st_local("__dd_nv", strofreal(rows(v)))
+    for (j = 1; j <= rows(v); j++) {
+        st_local("__dd_v" + strofreal(j), strofreal(v[j], "%21.0g"))
+        if (esc) st_local("__dd_t" + strofreal(j), _dd_esc(t[j]))
+        else     st_local("__dd_t" + strofreal(j), substr(t[j], 1, 2000))
+    }
+}
 end

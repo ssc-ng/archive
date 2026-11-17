@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0  2026-07-30}{...}
+{* *! version 1.0.2  2026-11-09}{...}
 {viewerjumpto "Syntax" "datadictionary##syntax"}{...}
 {viewerjumpto "Description" "datadictionary##description"}{...}
 {viewerjumpto "Options" "datadictionary##options"}{...}
@@ -26,19 +26,21 @@
 {cmd:wave(}{varname}{cmd:)}
 {cmd:dofile(}{it:filename}{cmd:)}
 {cmd:dictionary(}{it:filename}{cmd:)}
-{cmd:norecast} {it:shared_options}]
+{cmd:norecast}
+{cmd:flow(}{it:filename}{cmd:)} {it:shared_options}]
 
 {pstd}Files mode (documents a set of wave files and detects changes across
 waves):{p_end}
 
 {p 8 16 2}
 {cmd:datadictionary}{cmd:,} {cmd:files(}{it:"w1.dta w2.dta ..."}{cmd:)}
-[{cmd:wavenames(}{it:"name1 name2 ..."}{cmd:)} {it:shared_options}]
+[{cmd:wavenames(}{it:"name1 name2 ..."}{cmd:)}
+{cmd:flow(}{it:filename}{cmd:)} {it:shared_options}]
 
 {p 8 16 2}
 {cmd:datadictionary}{cmd:,} {cmd:folder(}{it:dirpath}{cmd:)}
 [{cmd:pattern(}{it:str}{cmd:)} {cmd:wavenames(}{it:"name1 name2 ..."}{cmd:)}
-{it:shared_options}]
+{cmd:flow(}{it:filename}{cmd:)} {it:shared_options}]
 
 {synoptset 24 tabbed}{...}
 {synopthdr}
@@ -58,6 +60,7 @@ waves):{p_end}
 {syntab :Shared}
 {synopt :{opth ex:cel(filename)}}write a multi-sheet .xlsx codebook{p_end}
 {synopt :{opth sav:ing(filename)}}save the codebook itself as a .dta, one row per variable (per variable-wave in over-time modes){p_end}
+{synopt :{opt flow(filename)}}append {cmd:pct_answered_sm} and {cmd:skipped_by_sm} from a {cmd:surveymap} journal, matched on variable name{p_end}
 {synopt :{opt rep:lace}}overwrite existing {cmd:excel()} and {cmd:saving()} files{p_end}
 {synopt :{opt exam:ples(#)}}distinct example values shown for string variables; default {cmd:examples(3)}{p_end}
 {synopt :{opt top(#)}}top categories by frequency shown for value-labeled variables; default {cmd:top(5)}{p_end}
@@ -84,8 +87,9 @@ in files mode) holding the variable's name, storage type, display format,
 variable label, value-label name, N nonmissing, % missing, number of distinct
 values, numeric summary statistics (mean, sd, min, median, max; blank for
 strings), example values, stored {help notes}, and characteristics
-({help char}), including the {cmd:srctag} characteristic written by the
-author's {cmd:combineall}/{cmd:projectbuilder} tools.  Results are displayed
+({help char}), including the {cmd:char} {it:varname}{cmd:[source]} provenance
+stamp written by the authors' {cmd:srctag}, {cmd:combineall}, and
+{cmd:projectbuilder} tools.  Results are displayed
 compactly in the Results window and can be written to a machine-readable
 .dta ({cmd:saving()}) and a multi-sheet Excel workbook ({cmd:excel()}).
 
@@ -129,24 +133,32 @@ original wave files to detect and flag those.{p_end}
 
 {phang}{cmd:dofile(}{it:filename}{cmd:)} writes a do-file that re-applies the
 current metadata - variable labels, value labels, display formats, storage
-types, {help notes}, and characteristics (including {cmd:srctag}) - to a
+types, {help notes}, and characteristics (including {cmd:char[source]}) - to a
 dataset after it has been exported to CSV/Excel and re-imported.  This is the
 portability tool: export the data with {help export_delimited:export delimited},
-{cmd:nolabel} (so value-labeled variables travel as their numeric codes), hand
+{cmd:nolabel} and {cmd:quote} (so value-labeled variables travel as their numeric
+codes and text with line breaks stays in one row), hand
 it to a collaborator working in R, Python, or Excel, and when the edited file
-comes back, {help import_delimited:import delimited} it and {cmd:do} the
+comes back, {help import_delimited:import delimited} it with
+{cmd:bindquote(strict)} and {cmd:do} the
 generated file to restore everything Stata knew.  Each command is prefixed with
 {help capture}, and the file sets {cmd:varabbrev off}, so a column the
-collaborator renamed or dropped is skipped rather than fuzzily relabeled; a
+collaborator renamed or dropped is skipped instead of being fuzzily
+relabeled; a
 {it:receipt} at the foot of the file reports which expected variables were not
-found and which extra columns appeared.  {cmd:.do} is appended when no
-extension is given.  In-memory mode only.{p_end}
+found and which extra columns appeared.  A {cmd:$} or a backtick in a label,
+note, or characteristic is written escaped ({cmd:\$}, {cmd:\`}), so running
+the file restores the text exactly instead of expanding it as a macro; notes
+are restored through their {cmd:note}{it:#} characteristics rather than the
+{cmd:note} command, which would expand the text a second time.
+{cmd:.do} is appended when no extension is given.  In-memory mode
+only.{p_end}
 
 {phang}{cmd:dictionary(}{it:filename}{cmd:)} writes a free-format
 {help infile} dictionary ({cmd:.dct}) giving each variable's storage type and
 variable label.  A dictionary is legacy and narrower than {cmd:dofile()}:
 free-format {help infile} is {it:whitespace}- (not comma-) delimited, and a
-dictionary carries storage type and variable label only (no value labels,
+dictionary records storage type and variable label only (no value labels,
 notes, or chars).  Prepare the data file with {cmd:export delimited},
 {cmd:delimiter(tab)} {cmd:nolabel} {cmd:quote} and read it back with
 {cmd:infile using} {it:filename}.  For a general comma-delimited CSV round-trip
@@ -174,9 +186,9 @@ the right wave order.{p_end}
 
 {phang}{cmd:wavenames(}{it:"n1 n2 ..."}{cmd:)} supplies display names for the
 waves (for example {cmd:wavenames("2019 2021 2023")}), one per file, used in
-the display, the {cmd:wave} column, the {cmd:Changes} wave-pairs, and the
-{cmd:Missingness} column headers.  The default is each file's basename
-without the extension.{p_end}
+the display, the {cmd:wave} column, and the {cmd:Changes} wave-pairs.  The
+default is each file's basename without the folder and extension (the folder
+may be separated by {cmd:/} or {cmd:\}).{p_end}
 
 {dlgtab:Shared}
 
@@ -190,7 +202,7 @@ descsave-style machine-readable product.  In-memory cross-sectional runs write
 these 17 columns, in this order: {cmd:name}, {cmd:type}, {cmd:format},
 {cmd:varlab}, {cmd:vallab}, {cmd:n}, {cmd:pctmiss}, {cmd:distinct}, {cmd:mean},
 {cmd:sd}, {cmd:min}, {cmd:p50}, {cmd:max}, {cmd:examples}, {cmd:notes},
-{cmd:srctag}, {cmd:chars}.  Each carries a variable label naming what it holds.
+{cmd:srctag}, {cmd:chars}.  Each one has a variable label naming its contents.
 Over-time modes ({cmd:wave()}, {cmd:files()}, {cmd:folder()}) prepend
 {cmd:wave} and {cmd:wavenum} - the leading order is {cmd:wave}, {cmd:name},
 {cmd:wavenum}, then {cmd:type} onward - and append {cmd:changed}, for 20 columns;
@@ -200,6 +212,20 @@ its headers: {cmd:distinct} prints as {cmd:dist} and {cmd:pctmiss} prints as
 {cmd:miss%}, but the variables are named {cmd:distinct} and {cmd:pctmiss} (there
 is no {cmd:ndistinct}).  {cmd:.dta} is appended when no extension is
 given.{p_end}
+
+{phang}{cmd:flow(}{it:filename}{cmd:)} reads a journal written by the
+{cmd:surveymap} package (a tab-separated file, one row per survey
+event) and appends two columns to the codebook rows, matched on variable
+name: {cmd:pct_answered_sm}, the percent of respondents in scope who answered
+the item, and {cmd:skipped_by_sm}, the skip logic that routes respondents
+around the item (for example {cmd:voted==0}; empty for an item every
+respondent is asked).  The columns are appended at the end of the
+{cmd:Variables} sheet and of the {cmd:saving()} dataset; the {cmd:_sm} suffix
+keeps them clear of the codebook's own column names.  Codebook variables
+absent from the journal get missing/empty values.  Journal items absent from
+the codebook are skipped and counted in one note line.  A file that is not a
+surveymap journal stops the command with error 459.  Works in every
+mode.{p_end}
 
 {phang}{cmd:replace} permits overwriting; without it an existing
 {cmd:excel()} or {cmd:saving()} file stops the command with error 602.{p_end}
@@ -213,12 +239,12 @@ reported for value-labeled variables, each as {it:label (n, pct%)}; the
 default is 5.{p_end}
 
 {phang}{cmd:nochars} skips characteristics entirely: neither the
-{cmd:srctag} column (harvested from {cmd:char} {it:varname}{cmd:[source]}, the
-provenance stamp written by the author's {cmd:srctag} and {cmd:combineall}
-tools) nor the {cmd:chars} column (all other characteristics, concatenated as
-{it:name=value} pairs) is filled. The column is named for the tool that writes
-the stamp, not for the characteristic; nothing writes a characteristic called
-{cmd:srctag}.{p_end}
+{cmd:srctag} column (harvested from {cmd:char} {it:varname}{cmd:[source]},
+the provenance stamp written by the authors' {cmd:srctag}, {cmd:combineall},
+and {cmd:projectbuilder} tools; a variable with no {cmd:[source]} but a
+{cmd:[srctag]} characteristic shows that one) nor the
+{cmd:chars} column (all other characteristics, concatenated as
+{it:name=value} pairs) is filled.{p_end}
 
 {phang}{cmd:nonotes} skips stored {help notes}.{p_end}
 
@@ -229,7 +255,9 @@ the stamp, not for the characteristic; nothing writes a characteristic called
 {pstd}The default output is a compact formatted display: the per-variable
 codebook table (grouped by wave in over-time modes) and, in files mode, the
 list of detected changes.  When any output file is written, clickable links to
-open each file and its containing folder are printed at the end.
+open each file and its containing folder are printed at the end.  Clicking one
+asks your operating system to open that path with whatever application it
+normally uses, the same as double-clicking the file in Finder or Explorer.
 {cmd:excel(}{it:filename}{cmd:)} writes:{p_end}
 
 {p2colset 8 26 28 2}{...}
@@ -243,10 +271,10 @@ column and a {cmd:changed} flag (see below){p_end}
 {p2colreset}{...}
 
 {pstd}
-Missingness is not a separate sheet: the {cmd:% missing} column lives in the
+Missingness is not a separate sheet: you find the {cmd:% missing} column in the
 {cmd:Variables} codebook beside the statistics, and in over-time modes you read
-it down a variable's wave rows.  In {cmd:wave()} mode a variable that carries no
-data in a wave (dropped, or not yet fielded) shows 100% missing that wave.  In
+it down a variable's wave rows.  In {cmd:wave()} mode a variable with no data in
+a wave (dropped, or not yet fielded) shows 100% missing that wave.  In
 files mode a variable that is not in a wave's file has no row for that wave at
 all; the {cmd:Changes} sheet reports it as {cmd:variable added} or
 {cmd:variable dropped}.{p_end}
@@ -305,7 +333,7 @@ usual):{p_end}
 
 {pstd}An already-stitched panel (per-wave statistics and missingness; label
 changes are not detectable once stitched - use files mode for those).  Stack the
-same three waves, carry a wave identifier, and document the result:{p_end}
+same three waves, keep a wave identifier, and document the result:{p_end}
 
 {phang2}{cmd:. use staff_w1, clear}{p_end}
 {phang2}{cmd:. append using staff_w2 staff_w3, generate(src)}{p_end}
@@ -324,13 +352,13 @@ alongside the codebook:{p_end}
 share {cmd:staff.csv} plus {cmd:staff_codebook.xlsx}, and let a collaborator
 edit in R, Python, or Excel:{p_end}
 
-{phang2}{cmd:. export delimited using staff.csv, nolabel replace}{p_end}
+{phang2}{cmd:. export delimited using staff.csv, nolabel quote replace}{p_end}
 
 {pstd}When the edited file comes back, re-import it and run the relabel do-file
 to restore every label, format, note, and characteristic; read its receipt to
 see what did not line up:{p_end}
 
-{phang2}{cmd:. import delimited using staff.csv, varnames(1) case(preserve) clear}{p_end}
+{phang2}{cmd:. import delimited using staff.csv, varnames(1) case(preserve) bindquote(strict) clear}{p_end}
 {phang2}{cmd:. do staff_relabel}{p_end}
 
 {pstd}The optional dictionary reads a whitespace-delimited export in one typed
@@ -338,6 +366,13 @@ see what did not line up:{p_end}
 
 {phang2}{cmd:. export delimited using staff.txt, delimiter(tab) nolabel quote replace}{p_end}
 {phang2}{cmd:. infile using staff.dct, clear}{p_end}
+
+{pstd}Attach survey flow to the codebook.  {cmd:survey_journal.tsv} was
+written by the {cmd:surveymap} package over the same dataset; each
+codebook row gains the item's percent answered and its skip-logic
+summary:{p_end}
+
+{phang2}{cmd:. datadictionary, excel(survey_codebook) flow(survey_journal.tsv) replace}{p_end}
 
 
 {marker remarks}{...}
@@ -352,10 +387,19 @@ is no longer recoverable from the combined file.  Run {cmd:datadictionary} over 
 original wave files, before or alongside stitching, to keep that history.
 
 {pstd}
+{bf:Text is carried verbatim.}  Labels, value-label text, notes,
+characteristics, string example values, and string wave values that contain
+{cmd:$} or a backtick appear unchanged on screen, in {cmd:saving()}, in the
+workbook, and in {cmd:dofile()}.  (Version 1.0.0 expanded {cmd:$}{it:name} as
+a global, usually to nothing, and stopped with error 132 on a backtick in a
+string value.)  Stata's own {cmd:notes} listing still expands a {cmd:$} in a
+note when it displays it; the stored note is intact.
+
+{pstd}
 {bf:Not fielded or never answered.}  Missingness is reported as one number per
 codebook row, the {cmd:pctmiss} column ({cmd:miss%} on screen), and not as a
 separate grid or sheet.  A variable that is all-missing within a wave reads
-{cmd:100} there.  In a stitched file that 100 carries two meanings which cannot
+{cmd:100} there.  In a stitched file that 100 has two meanings which cannot
 be told apart: a variable that was not fielded that wave, and one that was
 fielded but never answered.  In files mode the distinction does not arise,
 because a variable that is not in a wave's file gets no row for that wave; it
@@ -379,28 +423,32 @@ longest text runs 17 characters to a 5-point set whose longest runs 26 moves the
 format from {cmd:%17.0g} to {cmd:%26.0g}, and {cmd:datadictionary} reports
 {cmd:display format changed} for that variable in the same wave-pair as
 {cmd:value label set changed}.  Read the two rows together: a format change
-sitting beside a value-label change is usually that side effect rather than an
-independent edit to the format.
+reported beside a value-label change is usually that side effect, not an
+independent edit you made to the format.
 
 {pstd}
 {bf:Sample restriction.}  In-memory mode documents the selected subsample:
 rows excluded by {cmd:if}/{cmd:in} do not contribute to N, missingness,
 statistics, or examples.  Selecting an empty sample stops the command with
-error 2000.
+error 2000, and so does a dataset with variables but 0 observations (an empty
+template file cannot be documented; add one placeholder row first).
 
 {pstd}
 {bf:Round-tripping through other packages.}  {cmd:dofile()} exists because a
-CSV or Excel file carries values but not the metadata Stata attaches to them:
+CSV or Excel file holds the values but none of the metadata Stata attaches to
+them:
 export a labeled dataset and the labels, formats, notes, and characteristics
 stay behind.  The relabel do-file is that metadata written as runnable code, so
 a dataset can leave Stata for R, Python, or a collaborator's spreadsheet and
-return fully re-dressed.  Two rules keep the round-trip honest.  Export with
+return fully re-dressed.  Three rules keep the round-trip honest.  Export with
 {cmd:nolabel} so value-labeled variables travel as their numeric codes, which
 the {cmd:label values} lines in the do-file reattach; exporting the text labels
-instead turns the column into a string the do-file cannot re-encode.  And leave
+instead turns the column into a string the do-file cannot re-encode.  Export
+with {cmd:quote} and import with {cmd:bindquote(strict)}, or a text value that
+holds a line break (a free-text answer) comes back split across rows.  And leave
 the {help capture} prefixes in place: they turn a renamed or dropped column
-into a skipped line and a receipt entry rather than a failed run, which is what
-lets the do-file survive a collaborator who reorganizes the file.
+into a skipped line and a receipt entry instead of a failed run, so the do-file
+still works after a collaborator reorganizes the file.
 
 
 {marker related}{...}
@@ -418,8 +466,11 @@ prints a rich per-variable report but stores no machine-readable product;
 tracks how the file changes across waves.
 
 
-{title:Author}
+{title:Authors}
 
 {pstd}
-Eric A. Booth, Sr Researcher, Texas 2036, 2026.
+Eric A. Booth, Sr Researcher, Texas 2036{break}
+Elizabeth Teas, Sr Research Scientist, Far Harbor, LLC{p_end}
+
+{pstd}
 Support: eric.a.booth@gmail.com.  MIT-licensed.

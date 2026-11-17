@@ -1,4 +1,4 @@
-*! version 4.0.12 30jan2016 E. Leuven, B. Sianesi
+*! version 4.1.0 11jun2026 E. Leuven, B. Sianesi
 program define psmatch2, sortpreserve
 	version 11.0
 	#delimit ;
@@ -16,8 +16,9 @@ program define psmatch2, sortpreserve
 	BWidth(string)
 	COMmon
 	AI(integer 0)
-	POPulation
+	SAMPLEVar
 	ALTVariance
+	DEBUG
 	TRIM(real 100)
 	ODDS
 	LOGIT
@@ -101,11 +102,12 @@ program define psmatch2, sortpreserve
 
 	//
 	if (`ai' > 0 & !("`method'" == "neighbor")) {
-		di as error "Option -ai- only allowed when doing nearest neighbor matching on the covariates (Mahalanobis)"
+		di as error "Option ai() is only allowed with nearest-neighbor matching"
 		exit 198
 	}
 
 	// set caliper to missing (infinity) if not requested
+	local caliper_orig = `caliper'
 	if (`caliper'==0) local caliper = .
 
 	// check kerneltype
@@ -125,17 +127,67 @@ program define psmatch2, sortpreserve
 	}
 	if ("`bwidth'"=="") local bwidth "0.06"
 
+	// AI variance convention:
+	// population/marginal variance is the default. samplevar requests
+	// the conditional/sample variance convention.
+	local use_population = ("`samplevar'" == "")
+
+	// AI(2016): internal pscore NN, population AI.
+	// This is a variance option. It must not depend on whether option ate is
+	// requested for reporting.
+	local do_pscorr = (`ai' > 0                                      ///
+		& `use_population'                                           ///
+		& "`method'" == "neighbor"                                   ///
+		& "`metric'" == "pscore"                                     ///
+		& "`varlist'" != ""                                          ///
+		& "`pscore'" == ""                                           ///
+		& "`index'`odds'`ties'`noreplacement'`altvariance'`common'" == "" ///
+		& `caliper_orig' <= 0                                        ///
+		& `trim' == 100                                              ///
+		& "`kernel'`llr'`radius'`spline'`mahalanobis'" == "")
+
+	local need_ate_work = ("`ate'" != "" | `do_pscorr')
+	local psfix_note = (`ai' > 0 & "`metric'" == "pscore" & !`do_pscorr')
+
 	// estimate propensity score
 	if ("`varlist'"!="") {
 		if ("`logit'"=="") {
 			local logit "probit"
 		}
 		`quietly' `logit' `treat' `varlist' if `touse', nolog
-		qui replace `touse' = e(sample) // XX with factor vars some obs may be dropped because they predict failure perfectly
+		qui replace `touse' = e(sample) // factor vars may drop obs
 		tempvar pscore
 		qui predict double `pscore', `index'
 		qui g double _pscore = `pscore' if `touse'
 		label var _pscore "psmatch2: Propensity Score"
+		// first-stage objects for AI(2016)
+		if (`do_pscorr') {
+			tempname Vgamma
+			matrix `Vgamma' = e(V)
+
+			// AI(2016) correction uses the actual first-stage design columns.
+			// Use coefficient names from e(b), not the raw user varlist.  This
+			// also handles factor-variable notation and interactions because
+			// Mata's st_view() can materialize columns such as 3.rep78 or
+			// 3.rep78#c.mpg from the dataset.  The constant is kept in Vgamma
+			// but excluded from psxvars because pscorr_ai2016() adds it
+			// internally.
+			local psxvars : colnames e(b)
+			local cons _cons
+			local psxvars : list psxvars - cons
+
+			if (`do_pscorr') {
+				matrix `Vgamma' = e(V)
+				tempvar xb_ps dP_ps
+				qui predict double `xb_ps', xb
+				if "`logit'" == "logit" {
+					qui gen double `dP_ps' = _pscore * (1 - _pscore) if `touse'
+				}
+				else {
+					qui gen double `dP_ps' = normalden(`xb_ps') if `touse'
+				}
+			}
+		}
 	}
 	else if ("`metric'"=="pscore") {
 		qui g double _pscore = `pscore' 
@@ -182,7 +234,7 @@ program define psmatch2, sortpreserve
 		foreach v of varlist `outcome' {
 			cap drop _s_`v'
 			qui lpoly `v' _pscore if _treated==0 & _support==1, nograph deg(1) at(_pscore) gen(_s_`v') `bwidth'
-			if ("`ate'"!="") {
+			if (`need_ate_work') {
 				tempvar s`v'
 				qui lpoly `v' _pscore if _treated==1 & _support==1, nograph deg(1) at(_pscore) gen(`s`v'') `bwidth'
 				qui replace _s_`v' = `s`v'' if _treated==1 & _support==1
@@ -208,9 +260,9 @@ program define psmatch2, sortpreserve
 		foreach v of varlist `outcome' {
 			cap drop _s_`v'
 			qui spline `v' _pscore if _treated==0 & _support==1, gen(_s_`v') nknots(`nknots') nograph
-			if ("`ate'"!="") {
+			if (`need_ate_work') {
 				if ("`nknots'"=="0") {
-					qui ount if _treated==1 & _support==1
+					qui count if _treated==1 & _support==1
 					local nknots = int(r(N)^0.25)
 				}
 				tempvar s`v'
@@ -225,7 +277,7 @@ program define psmatch2, sortpreserve
 	// create vars we will need
 	qui g double _weight = _treated if _support==1
 	char _weight[Type] "aweight"
-	if "`ate'"!="" {
+	if (`need_ate_work') {
 		qui replace _weight = 0 if _treated==1 & _support==1
 	}
 	label var _weight "psmatch2: weight of matched controls"
@@ -233,7 +285,7 @@ program define psmatch2, sortpreserve
 	// outcome of matches
 	if ("`outcome'"!="") {
 		foreach v of varlist `outcome'	 {
-			if ("`ate'"=="") {
+			if (!`need_ate_work') {
 				qui g double _`v' = 0 if _support==1 & _treated==1
 			}
 			else qui g double _`v' = 0 if _support==1
@@ -245,7 +297,7 @@ program define psmatch2, sortpreserve
 	if ("`warnings'"!="" & "`metric'"=="pscore") {
 		sort _treated _pscore
 		cap by _treated _pscore: assert _N==1 if _treated==0 & _support==1
-		if (!_rc & "`ate'"!="") {
+		if (!_rc & `need_ate_work') {
 			cap by _treated _pscore: assert _N==1 if _treated==1 & _support==1
 		}
 		if (_rc & "`method'"=="neighbor") {
@@ -302,7 +354,7 @@ program define psmatch2, sortpreserve
 		local matchon `mahalanobis'
 	}
 	else local matchon `pscore'
-	
+
 	/*
 Your -st_addvar()- specification actually creates a variable of type
 float. It is just that the variable index is not what you expected. The
@@ -319,7 +371,7 @@ a change to this behavior such that whenever a new view is created, the
 dataset. In your case, this new behavior has the unfortunate side effect
 that the index you are creating for the new temporary variable is now
 referring to the estimation sample indicator instead of your new
-variable (hence -st_vartype()- returns -byte- instead of -float-). 
+variable (hence -st_vartype()- returns -byte- instead of -float-).
 
 I think the most straightforward workaround to this would be to do a
 -ereturn clear- once you have grabbed the -e()- results you need prior
@@ -342,11 +394,13 @@ variable in the dataset and everything should work like before.
 		if ("`noreplacement'"!="") local noreplace 1
 		else local noreplace 0
 
-		if ("`ate'"!="") {
-			mata : match_`metric'(1, `N0', `=`N0'+1', `N', `neighbor', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "$OUTVAR", "`moutvar'", "`ate'")
+		local match_ate_arg = cond(`need_ate_work', "ate", "")
+
+		if (`need_ate_work') {
+			mata : match_`metric'(1, `N0', `=`N0'+1', `N', `neighbor', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "$OUTVAR", "`moutvar'", "`match_ate_arg'")
 			qui replace _support = 0 if _n1>=. & _treated==0
 		}
-		mata : match_`metric'(`=`N0'+1', `N', 1, `N0', `neighbor', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "$OUTVAR", "`moutvar'", "`ate'")
+		mata : match_`metric'(`=`N0'+1', `N', 1, `N0', `neighbor', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "$OUTVAR", "`moutvar'", "`match_ate_arg'")
 		qui replace _support = 0 if _n1>=. & _treated==1
 
 		// difference pscore between treat obs and nearest match
@@ -364,10 +418,25 @@ variable in the dataset and everything should work like before.
 					local soutvar `soutvar' _self_`v'
 				}
 			}
+			// same-arm matched X means for AI(2016)
+			local self_outvar  "$OUTVAR"
+			local self_moutvar "`soutvar'"
+			local selfxvars ""
+			if (`do_pscorr') {
+				local xi = 0
+				foreach x of local psxvars {
+					local ++xi
+					tempvar selfx`xi'
+					qui gen double `selfx`xi'' = 0 if _support==1
+					local selfxvars `selfxvars' `selfx`xi''
+				}
+				local self_outvar  "`self_outvar' `psxvars'"
+				local self_moutvar "`self_moutvar' `selfxvars'"
+			}
 			// match controls to controls
-			mata : match_`metric'(1, `N0', 1, `N0', `ai', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "$OUTVAR", "`soutvar'", "`ate'")
+			mata : match_`metric'(1, `N0', 1, `N0', `ai', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "`self_outvar'", "`self_moutvar'", "`match_ate_arg'")
 			// match treated to treated
-			mata : match_`metric'(`=`N0' + 1', `N', `=`N0' + 1', `N', `ai', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "$OUTVAR", "`soutvar'", "`ate'")
+			mata : match_`metric'(`=`N0' + 1', `N', `=`N0' + 1', `N', `ai', `caliper', `noreplace', `ties', "`w'", "`mahalanobis'", "`n1'", "`self_outvar'", "`self_moutvar'", "`match_ate_arg'")
 		}
 	}
 	else { // llr and kernel
@@ -378,7 +447,30 @@ variable in the dataset and everything should work like before.
 	qui replace _weight = . if _weight==0 | _support==0
 
 	// generate output
-	_mktab `outcome', `ate' `spline' `llr' k(`kerneltype') ai(`ai') n(`neighbor') `population' `altvariance' exog(`varlist')
+	local _psc_obj ""
+	if (`do_pscorr') {
+		local _psc_obj "dp(`dP_ps') xvars(`psxvars') selfxvars(`selfxvars') vgamma(`Vgamma')"
+	}
+	local debugflag = ("`debug'" != "")
+
+	_mktab `outcome', `ate' `spline' `llr' k(`kerneltype') ai(`ai') n(`neighbor') ///
+		`samplevar' `altvariance' exog(`varlist') ///
+		pscorr(`do_pscorr') psfixnote(`psfix_note') debug(`debugflag') `_psc_obj'
+
+	// If AI(2016) was computed for ATT-only output, the control-to-treated
+	// matches were needed internally for the variance correction. Do not leave
+	// those ATE-style generated objects behind in an ATT-only call.
+	if (`do_pscorr' & "`ate'"=="") {
+		foreach v of varlist `outcome' {
+			capture replace _`v' = . if _treated==0
+		}
+		forvalues j = 1/`neighbor' {
+			capture replace _n`j' = . if _treated==0
+		}
+		capture replace _nn = . if _treated==0
+		capture replace _weight = 1 if _treated==1 & _support==1
+		capture replace _weight = . if _support==0 | _weight==0
+	}
 
 	// get rid of evil global
 	macro drop OUTVAR
@@ -388,10 +480,21 @@ end
 
 // FORMAT OUTPUT TABLE
 program define _mktab, rclass
-syntax [varlist(default=none)] [, ate spline llr Kerneltype(string) ai(integer 0) Neighbor(integer 1) population altvariance exog(varlist fv)]
+syntax [varlist(default=none)] [, ate spline llr Kerneltype(string) ai(integer 0) ///
+	Neighbor(integer 1) samplevar altvariance exog(varlist fv) ///
+	pscorr(integer 0) psfixnote(integer 0) dp(varname) xvars(string asis) ///
+	selfxvars(varlist) vgamma(name) debug(integer 0)]
+
+if (`pscorr') unab _n1list : _n1-_n`neighbor'
 
 // return model info
 if ("`exog'"!="") return local exog = "`exog'"
+return scalar ai = `ai'
+if (`ai' > 0) {
+	return local ai_vartype = cond("`samplevar'" != "", "sample", "population")
+	return scalar ai_pscorr = `pscorr'
+	if (`pscorr') return local ai_pscorr_method "AI2016_ps_decomposition"
+}
 
 if ("`varlist'"!="") {
 	return local depvar = "`varlist'"
@@ -405,13 +508,22 @@ di as text "{hline 28}{c TT}{hline 59}"
 di as text "        Variable     Sample {c |}    Treated     Controls   Difference         S.E.   T-stat"
 di as text "{hline 28}{c +}{hline 59}"
 
+// r(table) setup
+tempname RTAB C
+local coleq ""
+local colnm ""
+local _level = c(level)
+local _crit  = invnormal(1 - (100 - `_level') / 200)
+
 // create body and return results
 qui foreach v of varlist `varlist' {
+	local need_ate_stats = ("`ate'" != "" | `pscorr')
+
 	// no matched outcome for obs off support
 	replace _`v' = . if _support==0
 	cap replace _self_`v' = . if _support==0
 
-	tempname m1t m0t u0u u1u m0u m1u att atu seatt seatu seate
+	tempname m1t m0t u0u u1u m0u m1u att atu ateval seatt seatu seate
 
 	sum `v' if _treated==1, mean
 	scalar `u1u' = r(mean)
@@ -425,14 +537,14 @@ qui foreach v of varlist `varlist' {
 	scalar `m0t' = r(mean)
 	scalar `att' = `m1t' - `m0t'
 
-	if ("`ate'"!="") {
+	if (`need_ate_stats') {
 		sum _`v' if _treated==0 & _support==1, mean
 		scalar `m1u' = r(mean)
 		sum `v' if _treated==0 & _support==1, mean
 		scalar `m0u' = r(mean)
 		local N0 = r(N)
 		scalar `atu' = `m1u' - `m0u'
-		scalar `ate' = `att'*`N1'/(`N0'+`N1') + `atu'*`N0'/(`N0'+`N1')
+		scalar `ateval' = `att'*`N1'/(`N0'+`N1') + `atu'*`N0'/(`N0'+`N1')
 	}
 
 	if (`ai' != 0) {
@@ -440,26 +552,26 @@ qui foreach v of varlist `varlist' {
 		g `w' = max(_weight, 0)
 		// AI (2006, eq14 p. 250), or Aetal (2004, p303)
 		g `shat' = cond("`altvariance'" == "", (`ai' / (`ai' + 1)) * (`v' - _self_`v')^2, _self_`v')
-		if ("`population'" == "") { // AI. p.245-246
+		if ("`samplevar'" != "") { // AI (2006) Theorem 6 p.250: conditional/sample variance
 			g `VhatEt' = `shat' * (_treated - (1 - _treated) * `w')^2
-			if ("`ate'" != "") {
+			if (`need_ate_stats') {
 				g `VhatEu' = `shat' * ((1 - _treated) - _treated * `w')^2
 				g `VhatE'  = `shat' * (1 + `w')^2
 			}
 		}
-		else {  // AI p.251
+		else {  // AI (2006) Theorem 7 p.251: marginal variance
 			g `VhatEt' = max(0, _treated * (`v' - _`v' - `att')^2) ///
 				+ (1 - _treated) * (`w'^2 - `w' / `neighbor') * `shat'
-			if ("`ate'" != "") {
+			if (`need_ate_stats') {
 				g `VhatEu' = max(0, (1 - _treated) * (_`v' - `v' - `atu')^2) ///
 					+ _treated * (`w'^2 - `w' / `neighbor') * `shat'
-				g `VhatE'  = max(0, (_treated * (`v' - _`v') + (1 - _treated) * (_`v' - `v') - `ate')^2) ///
+				g `VhatE'  = max(0, (_treated * (`v' - _`v') + (1 - _treated) * (_`v' - `v') - `ateval')^2) ///
 					+ (`w'^2 + 2 * `w' - `w' / `neighbor') * `shat'
 				}
 		}
 		sum `VhatEt' if _support==1, mean
 		scalar `seatt' = sqrt(r(sum)) / `N1'
-		if ("`ate'"!="") {
+		if (`need_ate_stats') {
 			sum `VhatEu' if _support==1, mean
 			scalar `seatu' = sqrt(r(sum)) / `N0'
 			sum `VhatE'  if _support==1, mean
@@ -467,25 +579,142 @@ qui foreach v of varlist `varlist' {
 		}
 	}
 	else { // calculate approx s.e.'s
-		tempname wtot var1 var0 number
-		tempvar w2
-		
-		sum `v' if _treated==1 & _support==1  
+		tempname wtot var1 var0 wtot_t wtot_ate_t wtot_ate_c
+		tempvar w2 w2_t w2_ate
+
+		sum `v' if _treated==1 & _support==1
 		scalar `var1'   = r(Var)
-		sum `v' if _treated==0 & _weight<.
+		sum `v' if _treated==0 & _support==1
 		scalar `var0'   = r(Var)
-		gen `w2' = _weight^2 if _treated==0
-		sum `w2'
+
+		gen double `w2' = _weight^2 if _treated==0 & _support==1
+		sum `w2', meanonly
 		scalar `wtot' = r(sum)
+
 		if ("`spline'"!="") | ("`llr'"!="" & "`kerneltype'"=="tricube")   {
 			scalar `seatt' = .
 		}
 		else scalar `seatt' = sqrt(`var1'/`N1' + `var0'*`wtot'/`N1'^2)
-		scalar `seatu' = .
-		scalar `seate' = .
+
+		if ("`ate'"!="") {
+			gen double `w2_t' = _weight^2 if _treated==1 & _support==1
+			sum `w2_t', meanonly
+			scalar `wtot_t' = r(sum)
+
+			gen double `w2_ate' = (1 + _weight)^2 if _support==1
+			sum `w2_ate' if _treated==1 & _support==1, meanonly
+			scalar `wtot_ate_t' = r(sum)
+			sum `w2_ate' if _treated==0 & _support==1, meanonly
+			scalar `wtot_ate_c' = r(sum)
+
+			if ("`spline'"!="") | ("`llr'"!="" & "`kerneltype'"=="tricube") {
+				scalar `seatu' = .
+				scalar `seate' = .
+			}
+			else {
+				scalar `seatu' = sqrt(`var0'/`N0' + `var1'*`wtot_t'/`N0'^2)
+				scalar `seate' = sqrt((`var1'*`wtot_ate_t' + `var0'*`wtot_ate_c') / (`N0' + `N1')^2)
+			}
+		}
+		else {
+			scalar `seatu' = .
+			scalar `seate' = .
+		}
 	}
 
-	tempname ols seols	 
+	if (`pscorr') {
+		tempname seate_ai seatt_ai seatu_ai vv _psr
+		scalar `seate_ai' = `seate'
+		scalar `seatt_ai' = `seatt'
+		scalar `seatu_ai' = `seatu'
+		local _att_v = `att'
+		local _atu_v = `atu'
+		local _ate_v = `ateval'
+		mata: st_matrix("`_psr'", pscorr_ai2016("`v'", "_self_`v'", "_`v'", ///
+			"`xvars'", "`selfxvars'", "`dp'", "`vgamma'", "`_n1list'", ///
+			`ai', `neighbor', `N0', `N1', `_att_v', `_atu_v', `_ate_v'))
+		// ATE
+		scalar `vv' = `seate_ai'^2 - `_psr'[1,1]
+		if (`vv' >= -1e-10 & `vv' < 0) scalar `vv' = 0
+		if (`vv' >= 0) {
+			scalar `seate' = sqrt(`vv')
+		}
+		else {
+			noi di as text "Warning: corrected ATE variance < -1e-10 for `v'; SE set to missing."
+			scalar `seate' = .
+		}
+		// ATT
+		scalar `vv' = `seatt_ai'^2 - `_psr'[1,2] + `_psr'[1,3]
+		if (`vv' >= -1e-10 & `vv' < 0) scalar `vv' = 0
+		if (`vv' >= 0) {
+			scalar `seatt' = sqrt(`vv')
+		}
+		else {
+			noi di as text "Warning: corrected ATT variance < -1e-10 for `v'; SE set to missing."
+			scalar `seatt' = .
+		}
+		// ATU
+		scalar `vv' = `seatu_ai'^2 - `_psr'[1,4] + `_psr'[1,5]
+		if (`vv' >= -1e-10 & `vv' < 0) scalar `vv' = 0
+		if (`vv' >= 0) {
+			scalar `seatu' = sqrt(`vv')
+		}
+		else {
+			noi di as text "Warning: corrected ATU variance < -1e-10 for `v'; SE set to missing."
+			scalar `seatu' = .
+		}
+	}
+
+	// build r(table) columns for this outcome
+	matrix `C' = J(9, 1, .)
+	matrix `C'[1,1] = `att'
+	matrix `C'[2,1] = `seatt'
+	if (`seatt' < . & `seatt' > 0) {
+		local _z = `att' / `seatt'
+		matrix `C'[3,1] = `_z'
+		matrix `C'[4,1] = 2 * normal(-abs(`_z'))
+		matrix `C'[5,1] = `att' - `_crit' * `seatt'
+		matrix `C'[6,1] = `att' + `_crit' * `seatt'
+	}
+	matrix `C'[8,1] = `_crit'
+	matrix `C'[9,1] = 0
+	matrix `RTAB' = nullmat(`RTAB'), `C'
+	local coleq "`coleq' `v'"
+	local colnm "`colnm' ATT"
+	if ("`ate'" != "") {
+		matrix `C' = J(9, 1, .)
+		matrix `C'[1,1] = `atu'
+		matrix `C'[2,1] = `seatu'
+		if (`seatu' < . & `seatu' > 0) {
+			local _z = `atu' / `seatu'
+			matrix `C'[3,1] = `_z'
+			matrix `C'[4,1] = 2 * normal(-abs(`_z'))
+			matrix `C'[5,1] = `atu' - `_crit' * `seatu'
+			matrix `C'[6,1] = `atu' + `_crit' * `seatu'
+		}
+		matrix `C'[8,1] = `_crit'
+		matrix `C'[9,1] = 0
+		matrix `RTAB' = nullmat(`RTAB'), `C'
+		local coleq "`coleq' `v'"
+		local colnm "`colnm' ATU"
+		matrix `C' = J(9, 1, .)
+		matrix `C'[1,1] = `ateval'
+		matrix `C'[2,1] = `seate'
+		if (`seate' < . & `seate' > 0) {
+			local _z = `ateval' / `seate'
+			matrix `C'[3,1] = `_z'
+			matrix `C'[4,1] = 2 * normal(-abs(`_z'))
+			matrix `C'[5,1] = `ateval' - `_crit' * `seate'
+			matrix `C'[6,1] = `ateval' + `_crit' * `seate'
+		}
+		matrix `C'[8,1] = `_crit'
+		matrix `C'[9,1] = 0
+		matrix `RTAB' = nullmat(`RTAB'), `C'
+		local coleq "`coleq' `v'"
+		local colnm "`colnm' ATE"
+	}
+
+	tempname ols seols
 	qui regress `v' _treated
 	scalar `ols' = _b[_treated]
 	scalar `seols' = _se[_treated]
@@ -495,7 +724,7 @@ qui foreach v of varlist `varlist' {
 
 	if ("`ate'"!="") {
 		noi di as text _col(17) "        ATU {c |}" as result %11.0g `m0u' "  " %11.0g `m1u' "  " %11.0g `atu'	"  " %11.0g `seatu' "  " %7.2f `atu'/`seatu'
-		noi di as text _col(17) "        ATE {c |}" _col(56) as result %11.0g `ate'	"  " %11.0g `seate' "  " %7.2f `ate'/`seate' 
+		noi di as text _col(17) "        ATE {c |}" _col(56) as result %11.0g `ateval'	"  " %11.0g `seate' "  " %7.2f `ateval'/`seate'
 	}
 	noi di as text "{hline 28}{c +}{hline 59}"
 
@@ -504,25 +733,57 @@ qui foreach v of varlist `varlist' {
 	return scalar att_`v' = `att'
 	return scalar seatt = `seatt'
 	return scalar seatt_`v' = `seatt'
+
+	if (`pscorr') {
+		if (`debug') {
+			return scalar seatt_ai_fixed_`v' = `seatt_ai'
+			return scalar qTminus_`v' = `_psr'[1,2]
+			return scalar qTplus_`v'  = `_psr'[1,3]
+		}
+	}
+
 	if ("`ate'"!="") {
 		return scalar atu = `atu'
 		return scalar atu_`v' = `atu'
-		return scalar ate = `ate'
-		return scalar ate_`v' = `ate'
+		return scalar ate = `ateval'
+		return scalar ate_`v' = `ateval'
 		return scalar seatu = `seatu'
 		return scalar seatu_`v' = `seatu'
 		return scalar seate = `seate'
 		return scalar seate_`v' = `seate'
+		if (`pscorr') {
+			if (`debug') {
+				return scalar seate_ai_fixed_`v' = `seate_ai'
+				return scalar seatu_ai_fixed_`v' = `seatu_ai'
+				return scalar qA_`v'      = `_psr'[1,1]
+				return scalar qUminus_`v' = `_psr'[1,4]
+				return scalar qUplus_`v'  = `_psr'[1,5]
+			}
+		}
 	}
-	
+
 }
 
-if (`ai'==0) { 
-	if (`seatt' != .) di as text "Note: S.E. does not take into account that the propensity score is estimated."
+matrix rownames `RTAB' = b se z pvalue ll ul df crit eform
+matrix coleq    `RTAB' = `coleq'
+matrix colnames `RTAB' = `colnm'
+return matrix table = `RTAB'
+
+if (`ai'==0) {
+	if (`seatt' != .) {
+		di as text "Note: S.E. does not take into account that the propensity score is estimated."
+		di as text "      Use ai(#) for Abadie-Imbens analytical matching standard errors."
+	}
+}
+else if (`pscorr') {
+	di as text "Note: Population AI S.E. adjusted for estimated propensity scores."
 }
 else {
-	if ("`population'"=="") di as text "Note: Sample S.E."
-	else di as text "Note: Population S.E."
+	if ("`samplevar'"!="") di as text "Note: Sample AI S.E."
+	else di as text "Note: Population AI S.E."
+	if (`psfixnote') {
+		di as text "Note: AI S.E. does not take into account that the propensity score is estimated because the AI(2016) correction is not available for this specification."
+	}
 }
 
 tab _treated _support
@@ -679,8 +940,8 @@ mata:
 // calculates x'Wx used by mahalanobis metric, needs to be done only once
 real scalar _Dif_mbase(string xvars, string base, string wmatrix)
 {
-	real matrix W
-	real scalar j
+	real matrix W, X
+	real scalar i, j
 	j = st_addvar("double", base)
 	st_view(X=., ., tokens(xvars))
 	W = st_matrix(wmatrix)
@@ -693,10 +954,11 @@ void match_mahalanobis(real scalar t0, real scalar t1, real scalar c0, real scal
 	real scalar neighbors, real scalar caliper, real scalar noreplace, real scalar ties, 
 	string wmatrix, string xvars, string n1, string outvar, string moutvar, string ate)
 {
-	real scalar obs, nout, nmatch, self
-	real matrix W, dist, smallest, dist2
+	real scalar obs, nout, nmatch
+	real matrix W, dist, smallest
 	real vector id
 	
+	real scalar altvar
 	altvar = (st_local("altvariance") != "")
 
 	st_view(X=., ., tokens(xvars))
@@ -780,7 +1042,7 @@ void match_pscore(real scalar i0, real scalar i1, real scalar j0, real scalar j1
 	real scalar neighbors, real scalar caliper, real scalar noreplace, real scalar ties, 
 	string wmatrix, string xvars, string n1, string outvar, string moutvar, string ate)
 {
-	real scalar dif0, dif1, obs, i, jmatch, j, k, nmatch, nout, forward, idx_idlist, idx_ismatch
+	real scalar dif0, dif1, obs, i, jmatch, j, k, nmatch, nout, forward, idx_idlist, idx_ismatch, altvar
 
 	st_view(PSCORE=., ., "_pscore")
 	st_view(WEIGHT=., ., "_weight")
@@ -792,7 +1054,7 @@ void match_pscore(real scalar i0, real scalar i1, real scalar j0, real scalar j1
 
 	altvar = (st_local("altvariance") != "")
 
-	idx_idlist = st_addvar("float", st_tempname())
+	idx_idlist = st_addvar("long", st_tempname())
 	st_view(IDLIST=., ., idx_idlist)
 
 	idx_ismatch = st_addvar("byte", st_tempname())
@@ -809,7 +1071,6 @@ void match_pscore(real scalar i0, real scalar i1, real scalar j0, real scalar j1
 	forward = 1
 	i = i0
 	jmatch = j0
-	m=1
 	while (i<=i1 && (jmatch>=j0 && jmatch<=j1)) {
 		if (i==j0) ++jmatch
 		if (i==jmatch) --jmatch
@@ -882,7 +1143,7 @@ real scalar next_unmatched(real scalar obs, real scalar j0, real scalar forward,
 
 real scalar match2(real scalar obs, real scalar jm, real scalar j0, real scalar j1, real scalar neighbors, real scalar caliper, real scalar nmatch, real scalar idx_idlist)
 {
-	real scalar dif0, dif1, k, pos0, pos1, idx_id, jmatch
+	real scalar dif0, dif1, k, pos0, pos1, jmatch
 
 	st_view(PSCORE=., ., "_pscore")
 	st_view(ID=., ., "_id")
@@ -943,6 +1204,187 @@ real scalar match_ties(real scalar obs, real scalar jmatch, real scalar j0, real
 		dif = abs(PSCORE[obs] - PSCORE[i])
 	}
 	return(nmatch)
+}
+
+
+// Abadie-Imbens (2016) first-stage correction for propensity-score matching.
+//
+// For ATT/ATU, the published variance formula contains two score-estimation
+// terms.  The first is the c_t (or c_u) term in Theorem 2.  The second is the
+// derivative of the target parameter with respect to the propensity-score
+// parameter, d tau_t(theta)/d theta.
+//
+// Abadie and Imbens (2016, p. 799) estimate this derivative by matching on the
+// full covariate vector X:
+//
+//   E[p(X)]^{-1} E[ X f(X'theta) { mu(1,X) - mu(0,X) - tau_t } ].
+//
+// This implementation uses the equivalent conditional-on-propensity-score
+// population decomposition
+//
+//   E[p(X)]^{-1} E[ f { E[X|p] (mubar_1(p)-mubar_0(p)-tau_t)
+//      + cov(X,mu(1,X)|p) - cov(X,mu(0,X)|p) } ].
+//
+// Thus dT_vec and dU_vec are alternative plug-in estimators of the same
+// population derivative, not literal implementations of the full-X matching
+// estimator displayed on p. 799.  The same-arm local means used below are
+// leave-one-out through selfY/selfX.
+real rowvector pscorr_ai2016(
+	string scalar yvar,      string scalar selfy_var, string scalar matchy_var,
+	string scalar xvars_str, string scalar selfxvars_str,
+	string scalar dp_var,    string scalar vgamma_name,
+	string scalar n1vars_str,
+	real scalar ai_val,      real scalar M,
+	real scalar N0,          real scalar N1,
+	real scalar att_val,     real scalar atu_val,   real scalar ate_val)
+{
+	real matrix Y, selfY, matchY, X, selfX, dP, PS, TR, SP, N1mat, VG
+	string matrix cstripe
+	real scalar n_obs, K, K_x, cons_pos, factor, i, k, m, mid, n_matches
+	real scalar fi, pi, qi, tri, mu1_i, mu0_i, aT_i, aU_i
+	real matrix Cown, Cother, C1, C0, Cfull1, Cfull0, Xfull
+	real matrix cA, cT, dT_vec, cU, dU_vec
+	real scalar qA, qTminus, qTplus, qUminus, qUplus
+
+	st_view(Y=., .,      yvar)
+	st_view(selfY=., .,  selfy_var)
+	st_view(matchY=., ., matchy_var)
+	st_view(X=., .,      tokens(xvars_str))
+	st_view(selfX=., .,  tokens(selfxvars_str))
+	st_view(dP=., .,     dp_var)
+	st_view(PS=., .,     "_pscore")
+	st_view(TR=., .,     "_treated")
+	st_view(SP=., .,     "_support")
+	st_view(N1mat=., .,  tokens(n1vars_str))
+
+	VG    = st_matrix(vgamma_name)
+	K     = cols(VG)
+	K_x   = cols(tokens(xvars_str))
+	n_obs = rows(Y)
+
+	// locate _cons column in Vgamma
+	cstripe  = st_matrixcolstripe(vgamma_name)
+	cons_pos = 0
+	for (k = 1; k <= K; k++) {
+		if (cstripe[k, 2] == "_cons") {
+			cons_pos = k
+			break
+		}
+	}
+
+	if (K != K_x + (cons_pos > 0)) {
+		_error(3498, "pscorr_ai2016: X and Vgamma dimensions do not match")
+	}
+
+	// Cown_i = (ai/(ai+1)) * (X_i - selfX_i) * (Y_i - selfY_i)
+	factor = ai_val / (ai_val + 1)
+	Cown   = J(n_obs, K_x, 0)
+	for (i = 1; i <= n_obs; i++) {
+		if (SP[i,1] != 1) continue
+		Cown[i,.] = factor :* (X[i,.] - selfX[i,.]) :* (Y[i,1] - selfY[i,1])
+	}
+
+	cA     = J(1, K, 0)
+	cT     = J(1, K, 0)
+	dT_vec = J(1, K, 0)
+	cU     = J(1, K, 0)
+	dU_vec = J(1, K, 0)
+
+	for (i = 1; i <= n_obs; i++) {
+		if (SP[i,1] != 1) continue
+
+		fi  = dP[i,1]
+		pi  = PS[i,1]
+		qi  = 1 - pi
+		if (pi <= 0 | pi >= 1) {
+			_error(3498, "pscorr_ai2016: propensity score outside (0,1)")
+		}
+		tri = TR[i,1]
+
+		// average Cown over cross-arm matches (_n1..._nM)
+		n_matches = 0
+		Cother = J(1, K_x, 0)
+		for (m = 1; m <= M; m++) {
+			mid = N1mat[i, m]
+			if (mid >= .) continue
+			n_matches++
+			Cother = Cother + Cown[mid,.]
+		}
+		if (n_matches == 0) _error(3498, "pscorr_ai2016: no match IDs for obs " + strofreal(i))
+		Cother = Cother / n_matches
+
+		if (tri == 1) {
+			C1 = Cown[i,.]
+			C0 = Cother
+		}
+		else {
+			C0 = Cown[i,.]
+			C1 = Cother
+		}
+
+		// insert _cons slot: 0 in Cfull, 1 in Xfull
+		if (cons_pos == 0) {
+			Cfull1 = C1
+			Cfull0 = C0
+			Xfull  = X[i,.]
+		}
+		else if (cons_pos == 1) {
+			Cfull1 = (0, C1)
+			Cfull0 = (0, C0)
+			Xfull  = (1, X[i,.])
+		}
+		else if (cons_pos == K) {
+			Cfull1 = (C1, 0)
+			Cfull0 = (C0, 0)
+			Xfull  = (X[i,.], 1)
+		}
+		else {
+			Cfull1 = (C1[1,1..cons_pos-1], 0, C1[1,cons_pos..K_x])
+			Cfull0 = (C0[1,1..cons_pos-1], 0, C0[1,cons_pos..K_x])
+			Xfull  = (X[i,1..cons_pos-1],  1, X[i,cons_pos..K_x])
+		}
+
+		// ATE
+		cA = cA + fi :* (Cfull1 :/ pi + Cfull0 :/ qi)
+
+		// Local propensity-score means for ATT/ATU. selfY is leave-one-out.
+		if (tri == 1) {
+			mu1_i = selfY[i,1]
+			mu0_i = matchY[i,1]
+		}
+		else {
+			mu0_i = selfY[i,1]
+			mu1_i = matchY[i,1]
+		}
+
+		aT_i = mu1_i - mu0_i - att_val
+		aU_i = mu1_i - mu0_i - atu_val
+
+		// cT and cU implement the Abadie-Imbens (2016) c_t/c_u terms.
+		// dT_vec and dU_vec implement the derivative terms using the
+		// conditional-on-propensity decomposition documented above:
+		//   X*a + C1 - C0.
+		// This avoids a separate full-X matching pass for the derivative
+		// component but targets the same population derivative.
+		cT     = cT     + fi :* (Xfull :* aT_i + Cfull1 + (pi/qi) :* Cfull0)
+		dT_vec = dT_vec + fi :* (Xfull :* aT_i + Cfull1 - Cfull0)
+		cU     = cU     + fi :* (Xfull :* aU_i - Cfull0 - (qi/pi) :* Cfull1)
+		dU_vec = dU_vec + fi :* (Xfull :* aU_i + Cfull1 - Cfull0)
+	}
+
+	cA     = cA     :/ (N0 + N1)
+	cT     = cT     :/ N1
+	dT_vec = dT_vec :/ N1
+	cU     = cU     :/ N0
+	dU_vec = dU_vec :/ N0
+
+	qA      = (cA     * VG * cA')[1,1]
+	qTminus = (cT     * VG * cT')[1,1]
+	qTplus  = (dT_vec * VG * dT_vec')[1,1]
+	qUminus = (cU     * VG * cU')[1,1]
+	qUplus  = (dU_vec * VG * dU_vec')[1,1]
+
+	return((qA, qTminus, qTplus, qUminus, qUplus))
 }
 
 

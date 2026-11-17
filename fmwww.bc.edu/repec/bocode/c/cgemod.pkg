@@ -1,0 +1,62 @@
+d 'CGEMOD': module  for computable general equilibrium modelling, SAM balancing, microsimulation and scenario analysis
+d
+d  cgemod carries out a complete computable general equilibrium
+d (CGE) study in Stata. It imports, audits, balances
+d (sign-preserving cross-entropy/GRAS or RAS, with locked cells,
+d reliability weights and control totals) and monitors social
+d accounting matrices, and exports them to Excel, CSV or GAMS. It
+d calibrates a standard single-country open-economy CGE model (CES
+d value added, CET exports, Armington imports, multiproduct
+d activities, home consumption, trade margins, Cobb-Douglas or LES
+d demand) with alternative macro closures and factor-market
+d regimes, including a wage curve, carbon taxes, quotas and price
+d caps. It runs comparative-static and recursive-dynamic
+d simulations with public and human capital and public debt, links
+d results to household surveys for poverty and inequality analysis,
+d performs systematic sensitivity analysis (Gaussian quadrature or
+d Monte Carlo), and includes a scenario manager with Excel and HTML
+d dashboard export. It also offers model diagnostics, a validation
+d suite, Newton and Broyden solvers, and estimation of trade and
+d substitution elasticities with residual diagnostics and remedies. d
+d KW: computable general equilibrium
+d KW: CGE
+d KW: social accounting matrix
+d KW: SAM
+d KW: GRAS
+d KW: cross entropy
+d KW: Armington
+d KW: microsimulation
+d KW: poverty
+d KW: sensitivity analysis
+d KW: policy analysis
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261116
+d
+d Author:  Yusuf Toyin Yusuf,  Kwara State University
+d Support: email  YUSUF.YUSUF@@KWASU.EDU.NG
+d
+d Author: A. A. Kilishi, University of Ilorin, Ilorin, Nigeria
+d Support: email meetkilishi@@yahoo.com
+d
+f cgemod.ado
+f cgemod.sthlp
+f cgemod_cert.do
+f cgemod_example.do
+f cgemod_ext_reference.csv
+f cgemod_manual.pdf
+f cgemod_nigeria_reference.csv
+f cgemod_nigeria.do
+f cgemod_paneldata.dta
+f cgemod_runall.do
+f cgemod_sam_ext.csv
+f cgemod_sam_ext.dta
+f cgemod_sam3.dta
+f cgemod_sj_examples.do
+f cgemod_survey.dta
+f cgemod_tier2_reference.csv
+f cgemod_training.do
+f cgemod_tsdata.dta
+f cgemod_unittest.do
+f ../_/002_IFPRI_SAM_NGA_2018_SAM.tab

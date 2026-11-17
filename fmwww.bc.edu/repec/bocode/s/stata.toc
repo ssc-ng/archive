@@ -444,6 +444,7 @@ p survcollapse module to collapse surveillance data over a chosen time unit and 
 p surveybias module to compute the B and B_w multinomial accuracy measures for polling bias
 p surveycluster module to calculate sample size for cluster-based surveys to achieve desired precision
 p surveye module to create an interactive HTML dashboard from a Survey Solutions or SurveyCTO questionnaire and the corresponding Stata data
+p surveymap module to map how respondents moved through a survey
 p surveyspan module to analyze timestamp metadata from field surveys to monitor data quality.
 p survsim module to simulate complex survival data
 p survtime module to compute survival time for use in stset

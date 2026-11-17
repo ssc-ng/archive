@@ -1,0 +1,33 @@
+d 'XDTREE': module to display a directory's structure in a tree-like format
+d
+d  xdtree displays directory contents as a text tree in Stata's
+d Results window. It supports recursive traversal, a configurable
+d depth limit, and filename filtering using wildcard patterns or
+d regular expressions, with options to invert matches and ignore
+d case. Users can also request that the directory be opened in the
+d operating system's file browser. The command can be used
+d independently or by xproj to inspect a project's directory
+d structure. This utility was previously distributed on my personal
+d site under the name dirtree. It has been renamed to avoid
+d conflict with Maarten Buis's SSC package of that name. It is not
+d an update to, or a replacement for, his package. 
+d
+d KW: directory
+d KW: tree
+d KW: workflow
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261116
+d
+d Author: Yongyi Zeng,  School of Management, Xiamen University, China
+d Support: email  zzyy@@xmu.edu.cn
+d
+d Author: Yancheng Chen,   School of Management, Xiamen University, China
+d Support: email 25120242201569@@stu.xmu.edu.cn
+d
+d Author: Bowen Wang,    School of Management, Xiamen University, China
+d Support: email 34520232201140@@stu.xmu.edu.cn
+d
+f xdtree.ado
+f xdtree.sthlp

@@ -1,0 +1,26 @@
+d 'XMKDO': module to generate do-file scaffolds for replicable research workflows
+d
+d  xmkdo makes a do-file scaffold from the templates recommended by
+d Long(2009) and then open it in Stata's Do-file Editor for further
+d modification. It could be a springboard for you to set up your
+d own sensible do-files. 
+d
+d KW: do-files
+d KW: template
+d KW: workflow
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261116
+d
+d Author: Yongyi Zeng,  School of Management, Xiamen University, China
+d Support: email  zzyy@@xmu.edu.cn
+d
+d Author: Yancheng Chen,   School of Management, Xiamen University, China
+d Support: email 25120242201569@@stu.xmu.edu.cn
+d
+d Author: Jinle Yan,   School of Management, Xiamen University, China 
+d Support: email 17420242200903@@stu.xmu.edu.cn
+d
+f xmkdo.ado
+f xmkdo.sthlp

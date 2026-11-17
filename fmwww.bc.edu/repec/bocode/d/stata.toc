@@ -8,7 +8,7 @@ p dashboardbuilder module to build a self-contained interactive HTML dashboard f
 p dashgph module to construct dashed lines in scatterplots
 p dashln module to add dashed lines to graphs
 p datacheck module to perform data checks and produce informative output
-p datadictionary module to enhanced, over-time-ready codebook generator for multi-wave data
+p datadictionary module to generate an enhanced, over-time-ready codebook for multi-wave data
 p dataex module to generate a properly formatted data example for Statalist
 p datanet module to facilitate dataset organization for network analysis purposes
 p dataout module to export a dataset or tab-delimited file into various formats

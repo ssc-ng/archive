@@ -7,6 +7,7 @@ p xcontract module to make a data set of frequencies and percents on disk or in 
 p xcorplot module to calculate and graph cross-correlation function 
 p xdatelist module to create ascending numeric lists of dates
 p xdir module to create a resultsset with one observation per file in a directory
+p xdtree module to display a directory's structure in a tree-like format
 p xfrac module to produce tabulation using categories defined by fractions of a cut-off value
 p xframeappend module to append data frames to the end of the current data frame
 p xglm module to extend glm
@@ -19,8 +20,10 @@ p xlink module to provide extra link functions for use with glm
 p xls2dta module to save Excel files as Stata datasets
 p xls2stata module to provide Stata Dialog Box to Import Excel Files into Stata
 p xmiss module to perform cross-tabulation of missing data
+p xmkdo module to generate do-file scaffolds for replicable research workflows
 p xml_tab module to save results in Excel XML format 
 p xpredict module to extend predict command
+p xproj module to create, manage and build research project in Stata
 p xrewide module to extend reshape wide command
 p xrigls module to calculate reference intervals via generalised least squares
 p xriml module for estimation of reference intervals ('normal ranges') by maximum likelihood

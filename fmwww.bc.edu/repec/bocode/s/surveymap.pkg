@@ -1,0 +1,34 @@
+d 'SURVEYMAP': module to map how respondents moved through a survey
+d
+d  Map how respondents moved through a survey 
+d
+d KW: survey data
+d KW: skip logic
+d KW: item nonresponse
+d KW: questionnaire
+d KW: flow diagram
+d KW: alluvial
+d KW: codebook
+d
+d Requires: Stata version 16.0 and datadictionary from SSC (q.v.)
+d
+d Distribution-Date: 20261116
+d
+d Author: Eric Booth, Texas 2036
+d Support: email eric.a.booth@@gmail.com
+d
+f surveymap.ado
+f surveymap.sthlp
+f ../_/_sm_branch.ado
+f ../_/_sm_draw.ado
+f ../_/_sm_export.ado
+f ../_/_sm_isabs.ado
+f ../_/_sm_jprune.ado
+f ../_/_sm_open.ado
+f ../_/_sm_paths.ado
+f ../_/_sm_profile.ado
+f ../_/_sm_renderband.ado
+f ../_/_sm_renderflow.ado
+f ../_/_sm_renderhtml.ado
+f ../_/_sm_rendertext.ado
+f ../_/_sm_rendertw.ado

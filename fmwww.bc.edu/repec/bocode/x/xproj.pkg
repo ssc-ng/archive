@@ -1,0 +1,31 @@
+d 'XPROJ': module to create, manage and build research project in Stata
+d
+d  xproj creates project directory structures with configurable
+d subdirectories and an optional README file. It maintains a
+d persistent lookup table associating project names with directory
+d paths and optional notes. Subcommands allow users to register
+d existing directories, list projects, change the working directory
+d to a selected project, and remove entries from the lookup table
+d without deleting project files. The make subcommand uses xdtree
+d to display the created directory structure unless that display is
+d disabled. 
+d
+d KW: project
+d KW: directory
+d KW: workflow
+d
+d Requires: Stata version 14 and xdtree from SSC (q.vb.)
+d
+d Distribution-Date: 20261116
+d
+d Author: Yongyi Zeng,  School of Management, Xiamen University, China
+d Support: email  zzyy@@xmu.edu.cn
+d
+d Author: Yancheng Chen,   School of Management, Xiamen University, China
+d Support: email 25120242201569@@stu.xmu.edu.cn
+d
+d Author: Shangqi Jin,    School of Management, Xiamen University, China
+d Support: email 37620242205372@@stu.xmu.edu.cn
+d
+f xproj.ado
+f xproj.sthlp

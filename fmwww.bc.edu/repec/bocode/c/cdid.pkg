@@ -1,0 +1,81 @@
+d 'CDID': module to perform chained difference-in-differences for complete and incomplete panels
+d
+d      cdid estimates group-time average treatment effects on the
+d treated, ATT(g,t): the average effect at date t on the units
+d first    treated at date g, in designs where units adopt the
+d treatment at different dates and remain treated. It implements
+d the chained	 difference-in-differences estimator of Bellégo,
+d Benatia, and Dortet-Bernadet (2025) within the framework of
+d Callaway and	  Sant'Anna (2021).    In chained mode, the
+d default, each unit contributes the changes of its outcome between
+d the dates at which it is observed, so    the panel need not be
+d complete.  These comparisons are combined by the generalized
+d method of moments (GMM). The targets remain	 the effects on the
+d cohorts of the study population, including units whose outcomes
+d are missing at some dates (except that,    under the default
+d missingreference(exclude), a cohort whose treated units lack a
+d required reference covariate is estimated for    its eligible
+d treated units); the assumptions concern the missing changes
+d rather than the missing levels. An effect that the	observed
+d comparisons cannot recover is reported as unavailable, with a
+d reason, and is never set to zero. 
+d
+d KW: difference in differences
+d KW: DiD
+d KW: chained
+d KW: ATE
+d
+d Requires: Stata version 19.5 and csdid from SSC (q.v.)
+d
+d Distribution-Date: 20261117
+d
+d Author: David Benatia,  HEC Montréal
+d Support: email david.benatia@@hec.ca
+d
+f cdid.ado
+f cdid.sthlp
+f cdid_chain.ado
+f cdid_chain.sthlp
+f cdid_custom_estimators.do
+f cdid_custom.sthlp
+f cdid_diagnostics.ado
+f cdid_diagnostics.sthlp
+f cdid_dvar.sthlp
+f cdid_estat.ado
+f cdid_export.ado
+f cdid_export.sthlp
+f cdid_hands_on.do
+f cdid_load.ado
+f cdid_load.sthlp
+f cdid_nuisance.ado
+f cdid_nuisance.sthlp
+f cdid_plot.ado
+f cdid_plot.sthlp
+f cdid_postestimation.sthlp
+f cdid_pretest_load.ado
+f cdid_pretest_load.sthlp
+f cdid_pretest.ado
+f cdid_pretest.sthlp
+f ../l/lcdid_native.mlib
+f ../_/_cdid_aug_reference_prepare.ado
+f ../_/_cdid_baseline_reference_prepare.ado
+f ../_/_cdid_chained_aggregate.ado
+f ../_/_cdid_imp_reference_prepare.ado
+f ../_/_cdid_ordinary_aggregate.ado
+f ../_/_cdid_ordinary_frontend.ado
+f ../_/_cdid_ordinary_post.ado
+f ../_/_cdid_ordinary_pretest.ado
+f ../_/_cdid_ordinary.ado
+f ../_/_cdid_post_finish.ado
+f ../_/_cdid_post.ado
+f ../_/_cdid_pretest_chained.ado
+f ../_/_cdid_pretest_display.ado
+f ../_/_cdid_pretest_grid.ado
+f ../_/_cdid_public_post.ado
+f ../_/_cdid_reference_encode.ado
+f ../_/_cdid_reference_prepare.ado
+f ../_/_cdid_request_prepare_mref.ado
+f ../_/_cdid_request_prepare.ado
+f ../_/_cdid_selected_reference_prepare.ado
+f ../_/_cdid_static.ado
+f ../_/_cdid_ur_target.ado

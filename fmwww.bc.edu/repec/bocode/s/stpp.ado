@@ -1,4 +1,4 @@
-*! version 1.5.0 2026-05-09
+*! version 1.5.1 2026-11-18
   
 program define stpp, rclass sortpreserve
   version 16.0
@@ -342,7 +342,7 @@ program define stpp, rclass sortpreserve
 
   if "`list'" != ""  {
   	quietly {
-  	  matrix colnames PP=`by' time PP Nrisk PP_lci PP_uci	
+  	  matrix colnames PP=`by' time Nrisk PP PP_lci PP_uci	
   	  return matrix PP=PP
   	  if "`allcause'"  != "" {
   	  	matrix colnames AC=`by' time Nrisk AC AC_lci AC_uci	
@@ -1409,7 +1409,9 @@ void function PP_Gen_estimates(struct stpp_info scalar   S)
         if(cols(tmpselect)) S.attyear[tmpselect] = J(rows(tmpselect),1,S.pmmaxyear) 
         S.attyear = S.attyear :+ S.yearplus
 
+timer_on(1)
         exprates = PP_gen_exprates(S,1,S.pm,S.attyear):*S.yj  
+timer_off(1)
 
         expcumhaz[S.atrisk_all_index] = expcumhaz[S.atrisk_all_index] + exprates
         expsurv_tj = exp(-(expcumhaz[atrisk_index]))
@@ -1665,7 +1667,6 @@ void function PP_Gen_cumulative_indweights(struct stpp_info scalar S)
   
 
   for(k=1;k<=S.Nbylevels;k++) {
-    //asarray(S.Nrisk,k,asarray(S.Nrisk_s_t,(1,S.bylevels[k,])))
     asarray(S.RS_PP_var,k,quadrunningsum(asarray(S.lambda_e_t_var,(1,S.bylevels[k,]))))
     beforeevent_index = selectindex(asarray(S.unique_t_k,k):<asarray(S.mineventtime_sk,(1,k)))
     
@@ -1734,7 +1735,7 @@ void function PP_Gen_cumulative_indweights(struct stpp_info scalar S)
       if(S.haspopmort2) lambda_c = asarray(S.lambda_all_t,(1,S.bylevels[k,])) :- asarray(S.lambda_pop1_t,(1,S.bylevels[k,]))
       else lambda_c = asarray(S.lambda_all_t,(1,S.bylevels[k,])) :- asarray(S.lambda_pop1_t,(1,S.bylevels[k,]))
 
-      
+
    	  tmpmat   = quadrunningsum(allcause_lag:*lambda_c)
       Nuniq  = S.Nunique_t_k[k]
       lambda_all_t_var=asarray(S.lambda_all_t_var,(1,S.bylevels[k,])) 
@@ -2063,7 +2064,7 @@ void function PP_calc_return_matrices(struct stpp_info scalar S)
   real matrix tempPP, tempAC, tempCP_can, tempCP_oth
   real matrix tempPP_contrast, tempAC_contrast, 
               tempCP_can_contrast, tempCP_oth_contrast,
-              temp_Ndeaths
+              temp_Ndeaths, addgrp
   
   real scalar k
   
@@ -2087,9 +2088,10 @@ void function PP_calc_return_matrices(struct stpp_info scalar S)
 // temppPP_con etc do the same for contrasts for frames
   for(k=1;k<=S.Nbylevels;k++) {
     if(S.hasby) {
-      tempPP = tempPP \ (J(rows(asarray(S.RS_list_matrix,k)),1,S.bylevels[k,]),asarray(S.RS_list_matrix,k))
+      addgrp = (J(rows(asarray(S.RS_list_matrix,k)),1,S.bylevels[k,]),asarray(S.RS_list_matrix,k))
+      tempPP = tempPP \ addgrp
       rmatname = "r(PP" + strofreal(k) + ")"
-      st_matrix(rmatname,tempPP)
+      st_matrix(rmatname,addgrp)
       if(S.hascontrast) tempPP_contrast = tempPP_contrast \ asarray(S.RS_list_contrast,k)
     }
     else {
@@ -2099,9 +2101,10 @@ void function PP_calc_return_matrices(struct stpp_info scalar S)
 
     if(S.hasallcause) {
       if(S.hasby) {
-        tempAC = tempAC \ (J(rows(asarray(S.AC_list_matrix,k)),1,S.bylevels[k,]),asarray(S.AC_list_matrix,k))
+        addgrp = (J(rows(asarray(S.AC_list_matrix,k)),1,S.bylevels[k,]),asarray(S.AC_list_matrix,k))
+        tempAC = tempAC \ addgrp
         rmatname = "r(AC" + strofreal(k) + ")"
-        st_matrix(rmatname,tempAC)
+        st_matrix(rmatname,addgrp)
         if(S.hascontrast) tempAC_contrast = tempAC_contrast \ asarray(S.AC_list_contrast,k)
       }
       else tempAC = asarray(S.AC_list_matrix,k)
@@ -2111,21 +2114,23 @@ void function PP_calc_return_matrices(struct stpp_info scalar S)
     	if(!S.hasby) rmatname = "r(CP_can)"
       else rmatname = "r(CP_can" + strofreal(k) + ")"
       if(S.hasby) {
-         tempCP_can = tempCP_can \ (J(rows(asarray(S.CP_can_list_matrix,k)),1,S.bylevels[k,]),asarray(S.CP_can_list_matrix,k))
+         addgrp = (J(rows(asarray(S.CP_can_list_matrix,k)),1,S.bylevels[k,]),asarray(S.CP_can_list_matrix,k))
+         tempCP_can = tempCP_can \ addgrp
          if(S.hascontrast) tempCP_can_contrast = tempCP_can_contrast \ asarray(S.CP_can_list_contrast,k)
       }
       else tempCP_can = asarray(S.CP_can_list_matrix,k) 
-      st_matrix(rmatname,tempCP_can)
+      st_matrix(rmatname,addgrp)
      
       if(S.CP_calcother) {
     	  if(!S.hasby) rmatname = "r(CP_oth)"
         else rmatname = "r(CP_oth" + strofreal(k) + ")"
         if(S.hasby) {
-           tempCP_oth = tempCP_oth \ (J(rows(asarray(S.CP_oth_list_matrix,k)),1,S.bylevels[k,]),asarray(S.CP_oth_list_matrix,k))
+           addgrp = (J(rows(asarray(S.CP_oth_list_matrix,k)),1,S.bylevels[k,]),asarray(S.CP_oth_list_matrix,k))
+           tempCP_oth = tempCP_oth \ addgrp
            if(S.hascontrast) tempCP_oth_contrast = tempCP_oth_contrast \ asarray(S.CP_oth_list_contrast,k)
         }        	
         else tempCP_oth = asarray(S.CP_oth_list_matrix,k) 
-        st_matrix(rmatname,tempCP_oth)
+        st_matrix(rmatname,addgrp)
       }
     }
     

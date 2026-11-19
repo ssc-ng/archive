@@ -1,4 +1,4 @@
-*! version 1.34 by Justin Wiltshire. Updated 07/14/2026 - Wrapper adding functionality to -synth- package
+*! version 1.35 by Justin Wiltshire. Updated 11/16/2026 - Wrapper adding functionality to -synth- package
 
 program allsynth, eclass sortpreserve byable(recall)
 	version 15.1 // Not tested on earlier versions
@@ -72,6 +72,12 @@ program allsynth, eclass sortpreserve byable(recall)
 			]
 			;
 		#delimit cr
+	
+	* Break if options are misspecified or specified in the wrong place
+	if `"`options'"' != "" {
+		di as err `"option(s) `options' not allowed. Note: donorcond(), donorif(), unique_w, etc. must be specified inside stacked(..., [options])"'
+		exit 198
+	}
 
 	* Define tempvars
 	tempvar Xco Xcotemp Xtr Xtrtemp Zco Ztr Yco Ytr subsample misscheck conlabel _trU _trP
@@ -588,7 +594,7 @@ program allsynth, eclass sortpreserve byable(recall)
 		
 		* Keep donor pool units specified in donorif, if donorif() is specified
 		quietly {
-			if "`_stDonorCond1'" != "" | "`_stDonorCond3'" != "" {
+			if "`_stDonorCond1'" != "" | "`_stDonorCond3'" != "" | "`_stDonorCond5'" != "" | "`_stDonorCond7'" != "" {
 				`_stDonorCond1'
 				`_stDonorCond2'
 				`_stDonorCond3'
@@ -2037,7 +2043,6 @@ program allsynth, eclass sortpreserve byable(recall)
 				if "`bcorrect'" == "" {
 					drop *_bc*
 				}
-				di "flag"
 				
 				* Drop trunit, trperiod and avgweights from display
 				capture assert trunit
@@ -2412,7 +2417,7 @@ program allsynth, eclass sortpreserve byable(recall)
 	di
 	di as smcl "{cmd:allsynth is a user-written command made freely-available to the research community. Please cite the paper:}"
 	di
-	di as smcl `"{browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire, Justin C., Forthcoming.  allsynth: (Stacked) Synthetic Control Bias-Correction Utilities for Stata. The Stata Journal.}"'
+	di as smcl `"{browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire, J. C. 2026. allsynth: (Stacked) Synthetic control bias-correction utilities for Stata. Stata Journal 26: 584-627.}"'
 	di
 	di "{hline}"
 end

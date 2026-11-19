@@ -84,7 +84,11 @@ In addition {cmd:stpp} will calculate all-cause and crude probabilities of death
 The data must be {cmd:stset} before using {cmd:stpp}. There should only be 1 row of data per subject before using {cmd:stpp}. The time units should be years.
 
 {pstd}
-{cmd:using} {it:filename} specifies a file containing general-population mortality rates typically stratified by age, sex, calendar year and potentially other variables. In the {cmd:using} file, age must be specified in one-year increments and calendar year in one-year intervals.
+{cmd:using} {it:filename} specifies a file containing general-population mortality rates 
+typically stratified by age, sex, calendar year and potentially other variables. 
+In the {cmd:using} file, age must be specified in one year increments and
+calendar year in one-year intervals.
+
 
 {pstd}
 The {cmd:popmort2({it:filename})} option specifies a second file containing general-population mortality rates, 

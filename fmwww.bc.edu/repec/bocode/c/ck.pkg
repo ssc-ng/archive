@@ -1,0 +1,17 @@
+d 'CK': module to describe, install, uninstall packages from SSC Archive 
+d
+d  This utility routine describes, installs, and uninstalls a SSC
+d Archive package/ 
+d
+d KW: SSC Archive
+d
+d Requires: Stata version 14 
+d
+d Distribution-Date: 20261118
+d
+d Author: Christopher F Baum, Boston College 
+d Support: email baum@@bc.edu
+d
+f ck.ado
+f ck.sthlp
+f ck.zip

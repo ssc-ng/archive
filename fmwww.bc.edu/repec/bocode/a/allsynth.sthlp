@@ -1,15 +1,15 @@
 {smcl}
-{* July14,2026}{...}
+{* November16,2026}{...}
 {cmd:help allsynth} 
 {hline}
 
-{title:Title} {p 19 20 0} {cmd:Version 1.34} - Release date: July 14, 2026. Tested on Stata 15.1 and above. 
+{title:Title} {p 19 20 0} {cmd:Version 1.35} - Release date: November 16, 2026. Tested on Stata 15.1 and above. 
 
 {p2colset 5 20 20 2}{...}
 {p2col :{hi:allsynth} {hline 2}}Automates estimation of (i) bias-corrected synthetic control gaps ("treatment effects"); (ii) RMSPE-ranked {it:p}-values and 
 placebo-variance-based {it:p}-values and 95% confidence intervals from "in-space" treatment permutations; and (iii) "stacked" synthetic controls 
 (with many treated units and potentially staggered treatment timing); and also provides heavily-automated graphing functionality. See 
-{browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire (Forthcoming)} for a thorough review of {cmd:allsynth} {p_end}
+{browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire (2026b)} for a thorough review of {cmd:allsynth} {p_end}
 {p2colreset}{...}
 
 
@@ -68,7 +68,7 @@ Informative warnings are returned if the specified options need to be changed. P
 {p 8 8 2}{it:At least one} of {cmd:rmspe} or {cmd:variance} is required, and both are permitted, though {cmd:variance} may {it:only} be specified when the {cmd:stacked()} option is also specified. 
 {cmd:rmspe} will calculate RMSPE-ranked {it:p}-values for each post-treatment period. {cmd:variance} will calculate {it:p}-values and 95% confidence intervals for each post 
 treatment period based on the variance of the sample distribution of placebo average gaps, but may only be specified if the {cmd:stacked()} option is also specified (see 
-{browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire (Forthcoming)} for further discussion).
+{browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire (2026b)} for further discussion).
 
 {p 8 8 2}If the {cmd:bcorrect()} option is specified, then the bias-corrected placebo gaps and {it:p}-values
 will also be calculated. {cmd:pvalues()} must be specified for the placebos to be estimated and for the placebo gaps to be plotted (see the entry on the {cmd:gapfigure()} option, below). 
@@ -355,7 +355,7 @@ Declare the dataset as a panel:{p_end}
 {p 8 8 2}{stata "tsset cty_fips year":tsset cty_fips year}{p_end}
 
 {p 4 8 2}
-See {browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire (Forthcoming)} for discussion of the following examples without defining or calling
+See {browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf":Wiltshire (2026b)} for discussion of the following examples without defining or calling
 the macros (which is done to shorten the commands so that Stata's help file language (SMCL) will recognize them as interactive (clickable on a Windows system).
 
 {p 4 8 2}
@@ -466,7 +466,7 @@ Ben-Michael, E., Feller, A. and J. Rothstein, 2022. Synthetic Controls with Stag
 Wiltshire, J.C., 2026a. Walmart Supercenters and Monopsony Power: How a Large, Low-Wage Employer Impacts Local Labor Markets. {it:Working paper}.
 
 {p 4 8 2}
-Wiltshire, J.C., Forthcoming. allsynth: (Stacked) Synthetic Control Bias-Correction Utilities for Stata. {it:The Stata Journal}.
+Wiltshire, J.C., 2026b. allsynth: (Stacked) Synthetic control bias-correction utilities for Stata. {it:Stata Journal} 26: 584-627.
 
 
 {marker citation}{...}
@@ -474,8 +474,9 @@ Wiltshire, J.C., Forthcoming. allsynth: (Stacked) Synthetic Control Bias-Correct
 
 {pstd}{opt allsynth} is user-written command made freely-available to the research community. Please cite the associated paper: {p_end}
 
-{phang}Wiltshire, J.C., Forthcoming.
-allsynth: (Stacked) Synthetic Control Bias-Correction Utilities for Stata. {it:The Stata Journal}.
+{phang}Wiltshire, J. C. 2026. 
+allsynth: (Stacked) Synthetic control bias-correction utilities for Stata. 
+{it:Stata Journal} 26: 584-627.
 {browse "https://justinwiltshire.com/s/allsynth_Wiltshire.pdf"}.
 
 

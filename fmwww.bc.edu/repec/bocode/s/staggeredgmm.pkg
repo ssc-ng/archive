@@ -1,0 +1,32 @@
+d 'STAGGEREDGMM': module to perform Generalised Method of Moments Estimation of Treatment Effects under Staggered Adoption
+d
+d    staggeredgmm estimates cohort-by-time average treatment
+d effects (CATTs) under staggered treatment adoption by the
+d generalized	 method of moments, following Arora and Bijani
+d (2026). Each CATT is identified by every clean 2x2
+d difference-in-differences    comparison available for it: against
+d never-treated units and against cohorts that are not yet treated.
+d The clean comparisons are    stacked into an over-identified
+d moment system and combined by iterated optimal GMM, with the
+d weight built from a model of the    serial correlation of the
+d errors. 
+d
+d KW: GMM
+d KW: staggered adoption
+d KW: cohort ATT
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261119
+d
+d Author:  Parush Arora,   Ashoka University
+d Support: email parush.arora@@ashoka.edu.in
+d
+d Author:  Rishabh Bijani,   Ashoka University
+d Support: email rishabhbijani@@gmail.com
+d
+f staggeredgmm.ado
+f staggeredgmm_estat.ado
+f staggeredgmm_postestimation.sthlp
+f staggeredgmm.sthlp
+f sgmm_sim_panel.dta

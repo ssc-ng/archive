@@ -1019,6 +1019,7 @@ fmwww.bc.edu/repec/bocode/s/smfit.pkg
 fmwww.bc.edu/repec/bocode/s/ScoreContributions.ox
 fmwww.bc.edu/repec/bocode/s/soreg.ado
 fmwww.bc.edu/repec/bocode/s/svm_class_probability_example.do
+fmwww.bc.edu/repec/bocode/s/staggeredgmm.ado
 fmwww.bc.edu/repec/bocode/s/survtime.ado
 fmwww.bc.edu/repec/bocode/s/stockcapit.pkg
 fmwww.bc.edu/repec/bocode/s/splinefit.pkg
@@ -2056,6 +2057,7 @@ fmwww.bc.edu/repec/bocode/s/scheme-black_jet.scheme
 fmwww.bc.edu/repec/bocode/s/statflow.sthlp
 fmwww.bc.edu/repec/bocode/s/stata_linter_correct.py
 fmwww.bc.edu/repec/bocode/s/scheme-ie2.scheme
+fmwww.bc.edu/repec/bocode/s/staggeredgmm_postestimation.sthlp
 fmwww.bc.edu/repec/bocode/s/subinfile.sthlp
 fmwww.bc.edu/repec/bocode/s/seqcountdata.dta
 fmwww.bc.edu/repec/bocode/s/stcoxgof_example.ado
@@ -2508,6 +2510,7 @@ fmwww.bc.edu/repec/bocode/s/splitpopsurv_d0_ggamma.ado
 fmwww.bc.edu/repec/bocode/s/sample09s.dta
 fmwww.bc.edu/repec/bocode/s/stataid.pkg
 fmwww.bc.edu/repec/bocode/s/spregsdm.sthlp
+fmwww.bc.edu/repec/bocode/s/staggeredgmm.sthlp
 fmwww.bc.edu/repec/bocode/s/sqstatlist.hlp
 fmwww.bc.edu/repec/bocode/s/SPWmstarxt1.dta
 fmwww.bc.edu/repec/bocode/s/stpm3_hazard_numint.py
@@ -2560,6 +2563,7 @@ fmwww.bc.edu/repec/bocode/s/sdtesti.ado
 fmwww.bc.edu/repec/bocode/s/SPWcs3.dta
 fmwww.bc.edu/repec/bocode/s/stacktab.ado
 fmwww.bc.edu/repec/bocode/s/sptobitmstardh.sthlp
+fmwww.bc.edu/repec/bocode/s/sgmm_sim_panel.dta
 fmwww.bc.edu/repec/bocode/s/ssizebi.html
 fmwww.bc.edu/repec/bocode/s/scat3.pkg
 fmwww.bc.edu/repec/bocode/s/stataplugininterface.jl
@@ -2959,6 +2963,7 @@ fmwww.bc.edu/repec/bocode/s/splitpopsurv_p.ado
 fmwww.bc.edu/repec/bocode/s/stpiece.hlp
 fmwww.bc.edu/repec/bocode/s/sdid.sthlp
 fmwww.bc.edu/repec/bocode/s/sumqi.sthlp
+fmwww.bc.edu/repec/bocode/s/staggeredgmm_estat.ado
 fmwww.bc.edu/repec/bocode/s/stjm11.html
 fmwww.bc.edu/repec/bocode/s/ssm.html
 fmwww.bc.edu/repec/bocode/s/sortobs.hlp
@@ -3747,6 +3752,7 @@ fmwww.bc.edu/repec/bocode/s/statplot_pkgtest.do
 fmwww.bc.edu/repec/bocode/s/spundir.ado
 fmwww.bc.edu/repec/bocode/s/sizefx.pkg
 fmwww.bc.edu/repec/bocode/s/safedrop.html
+fmwww.bc.edu/repec/bocode/s/staggeredgmm.pkg
 fmwww.bc.edu/repec/bocode/s/seqlogit10_sensitivity.hlp
 fmwww.bc.edu/repec/bocode/s/scheme-white_tableau.scheme
 fmwww.bc.edu/repec/bocode/s/spregsemxt.dta

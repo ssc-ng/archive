@@ -12,13 +12,16 @@ d value x [sexovar value])    combination, and accumulates one row
 d per year in a frame that is ready to reshape wide and export --
 d so the point-estimate    table and the F/Bonferroni/CLD test come
 d from the very same call, with no separate pass to keep aligned by
-d hand. 
+d hand.     tsvyexport exports the accumulator frame built by tsvy
+d to Excel (.xlsx) or Word (.docx). The original frame is never
+d modified.    It can write the frame as is (one row per
+d level/year) or in a wide layout (one column per year). 
 d
 d KW: complex survey data
 d KW: taabulations
 d KW: export
 d
-d Requires: Stata version 14 and svylet from SSC (q.v.)
+d Requires: Stata version 16 and svylet, frameappend from SSC (q.v.)
 d
 d Distribution-Date: 20260925
 d
@@ -28,3 +31,6 @@ d
 f tsvy.ado
 f tsvy.sthlp
 f tsvy_es.sthlp
+f tsvyexport.ado
+f tsvyexport.sthlp
+f tsvyexport_es.sthlp

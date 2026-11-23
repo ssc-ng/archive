@@ -1,9 +1,251 @@
-*! tsvy.ado v1.20 - 24sep2026
+*! tsvy.ado v1.29 - 19nov2026
+*!
+*! v1.29 -- guarda char _dta[tsvy_alpha] y _dta[tsvy_cldmetodo] en el frame
+*! acumulador (tsvyexport ya leia tsvy_cldmetodo, pero ninguna version de
+*! tsvy lo escribia). Columnas nuevas por bloque: CLD_METODO (metodo de
+*! CLD realmente usado -- con cldmetodo(auto) puede variar por bloque) y
+*! CLD_INCONS (1 = F omnibus significativo al alpha pero todos los anios
+*! con la misma letra: el test global rechaza, ningun par ajustado lo
+*! hace). cldmetodo() pasa a tener default auto (antes bonferroni): las
+*! letras solo cambian en bloques con F significativo y una sola letra
+*! bajo Bonferroni; ahi se escala holm -> fdr -> lsd y CLD_METODO dice
+*! cual se uso. cldmetodo(bonferroni) recupera el comportamiento previo.
+*! Estimaciones, F y p sin cambios.
+*!
+*! v1.28 -- opcion nueva dfmode(): grados de libertad POR BLOQUE para F_WALD,
+*! P_WALD, GRUPO y P_VS_REF. Hasta v1.27 tsvy corria UN svy: over(combo)
+*! conjunto y usaba su e(df_r) (df del DISENO COMPLETO, n-L de toda la
+*! muestra) para todos los bloques, mientras que "svy, subpop(if bloque):"
+*! (y la literatura, Korn y Graubard 1999 p.209; West, Berglund y Heeringa
+*! 2008, Stata Journal 8:520-531) usan el df del subdominio. Con bloques
+*! chicos (departamentos) el df completo (p.ej. 15149) sobrestima el df
+*! efectivo (p.ej. 365) y puede cambiar la significancia de pares/omnibus
+*! cercanos a alpha. ESTIMA, ERROR_ST, CV y LIM_* NO cambian (b y V siguen
+*! saliendo del mismo svy: over() conjunto; solo cambia el df del test).
+*!   dfmode(subpop) [DEFAULT] = n-L como "svy, subpop(if bloque):": estratos
+*!                    con observaciones del bloque; cuenta TODAS las UPM de
+*!                    esos estratos dentro de la muestra de estimacion.
+*!   dfmode(kg)     = Korn-Graubard: n_S-L_S, solo UPM y estratos con
+*!                    observaciones del bloque (equivale a dofsubpop).
+*!   dfmode(full)   = comportamiento de v1.27 y anteriores (df del diseno).
+*! CAMBIO DE COMPORTAMIENTO: el default pasa de full a subpop. Para
+*! reproducir salidas antiguas use dfmode(full).
+*!
+*! v1.27 -- opcion nueva ksmmd (opt-in): test k-muestral KS (Kiefer) + MMD (RFF)
+*! con DISENO MUESTRAL, via el comando ksmmd (v0.8+), que reemplaza en la practica
+*! a mmd (mmd_2s). Motivo (auditoria v1.26): mmd_2s solo recibe un peso (aweight)
+*! -- sin estratos ni UPM -- y su p-valor es un bootstrap de unidades
+*! independientes, demasiado optimista con conglomerados. ksmmd permuta la
+*! etiqueta de ANIO a nivel de UPM (el UPM viaja entero con los pesos de sus
+*! unidades), restringido a estratos cuando estos mezclan anios.
+*!   - PSU, estrato y peso se leen de e() tras el "svy: ..., over(combo)" del
+*!     bloque (mismo criterio que kwallis: nunca de _dta[_svy_*]); no hay
+*!     mmdweight() aparte -- el peso es SIEMPRE el de svyset.
+*!   - Compara TODOS los anios del bloque (k-muestral, como F_WALD/kwallis) o
+*!     solo los de ksmmdyears(). Columnas nuevas: P_KSMMD_KS (KS de Kiefer) y
+*!     P_KSMMD_MMD (MMD). Opciones: ksmmdreps(1000) ksmmdseed(12345)
+*!     ksmmdtype(vspool|maxpairwise|fuse) ksmmdfeat(200).
+*!   - Si ningun estrato del bloque mezcla anios (estratos redefinidos cada
+*!     anio, p.ej. ESTRATO_ANIO), tsvy pasa nostratperm automaticamente a ksmmd
+*!     (de lo contrario ksmmd corta con error 459).
+*!   - LIMITES heredados de ksmmd: solo el primer nivel de muestreo (UPM), sin
+*!     fpc, y subpop() se aplica como [if] (los UPM sin observaciones se
+*!     descartan -- no es un subpop nativo). Requiere boot()==0.
+*!   - mmd/mmd_2s se conserva sin cambios, pero ahora avisa que no usa el diseno.
+*!   - NOTA: escrito sin Stata disponible en la sesion -- correr un caso real y
+*!     comparar con "ksmmd y [pw=w], by(ANIO_) psu() strata()" a mano.
+*!
+*! tsvy.ado v1.26 - 06oct2026
 *! Motor generico de estimacion + test (F de Wald + Bonferroni + Compact
 *! Letter Display) con encuestas complejas, usando svylet como unico motor.
 *! Requiere Stata 16 o superior EN LA INSTALACION (usa frame create/
 *! frame ...: ...); el "version 14" de las lineas de abajo NO es sobre
 *! eso, ver la nota v1.6 (revertida) inmediatamente debajo.
+*!
+*! v1.26 -- BUG REAL (4to bug de kwallis(), encontrado al correr
+*! ejemplo_kwallis.do contra Stata real ya con v1.25 cargando bien):
+*! `_tsvy_hajek_rank()' tiraba "subscript invalid" (r(3301)) en
+*! EJECUCION (no al cargar) apenas procesaba el primer grupo con algun
+*! empate en `varname' (auto.dta: mpg tiene varios autos con el mismo
+*! valor). Causa: `while (jj < ni & ysi[jj+1,1] == ysi[ii,1])' -- a
+*! diferencia de C/Stata, el operador `&' de Mata NO hace short-circuit
+*! (siempre evalua LOS DOS lados, nunca se salta el derecho aunque el
+*! izquierdo ya sea falso -- documentado asi en el manual de Mata
+*! precisamente porque es la trampa mas comun al portar codigo estilo
+*! C/Stata). Con jj==ni, Mata igual evaluaba ysi[ni+1,1], fuera de
+*! rango. Fix: `while (jj < ni) { if (ysi[jj+1,1] != ysi[ii,1]) break;
+*! jj++ }' -- el limite se chequea SOLO en el while, el acceso a
+*! ysi[jj+1,1] queda adentro del cuerpo, donde jj<ni ya esta
+*! garantizado. Tambien se revisaron todos los demas usos de `&'/`|'
+*! del archivo (incluido tsvy_core()) -- ningun otro depende de
+*! short-circuit para estar en rango. De paso, fix cosmetico: el aviso
+*! de peso citaba `` `svyset' '' como si fuera un macro local (no lo
+*! es, evaluaba vacio, el aviso terminaba en "revise ."); ahora dice
+*! "revise su svyset." en texto plano. Logica matematica del mid-rank
+*! de Hajek SIN CAMBIOS.
+*!
+*! v1.25 -- BUG REAL (3er bug de kwallis(), encontrado en la primera
+*! corrida real contra Stata de v1.24, cargando el .ado): dentro de
+*! `_tsvy_hajek_rank()' (mata), varios comentarios usaban `*' al estilo
+*! Stata CON SANGRIA (espacios antes del `*'). En Mata, a diferencia de
+*! Stata, un comentario con `*' SOLO es valido si el `*' es el primer
+*! caracter literal de la linea -- con cualquier espacio o tab antes,
+*! deja de ser comentario y Mata intenta parsear el texto como codigo.
+*! Esas lineas contenian "--" (guiones dobles, estilo de este archivo
+*! para separar clausulas), que Mata tokeniza como el operador de
+*! decremento `--', y tirtaba "invalid use of ++ or --" al CARGAR
+*! tsvy.ado (no al correrlo) -- afectaba a CUALQUIER llamada a tsvy,
+*! con o sin kwallis, porque el error ocurre al compilar el archivo
+*! entero. Fix: esos comentarios pasan a `//' (igual que el resto de
+*! los comentarios dentro de bloques mata: de este archivo, que nunca
+*! tuvo este problema). Confirmado el bug contra Stata real por el
+*! usuario (ejemplo_kwallis.do Y ejemplo_cldmetodo.do, mismo error en
+*! los dos, consistente con que el error es de CARGA, no de kwallis()
+*! ni de cldmetodo() en si). Logica matematica SIN CAMBIOS.
+*!
+*! v1.25 -- cldmetodo(auto) + chequeo de consistencia omnibus/CLD. Si F
+*! omnibus es significativo y todas las categorias quedan con la misma
+*! letra, tsvy_core avisa (r(cld_inconsistente)=1, r(n_letras)) y, con
+*! auto, escala bonferroni -> holm -> fdr -> lsd hasta separar letras
+*! (r(metodo_usado)). Default sin cambios (bonferroni).
+*!
+*! v1.24 -- Opcion nueva cldmetodo(string), opt-in: elige QUE ajuste de
+*! multiplicidad usa `tsvy_core' para pasar de p-valores pareados crudos
+*! a la matriz de la que sale GRUPO (y GRUPO_KW si kwallis esta activo --
+*! mismo motor `tsvy_core' reusado para las dos ramas, ver el comentario
+*! junto a su definicion mas abajo). Nunca toca el F omnibus ni el
+*! algoritmo de letras en si (subconjuntos maximales, validado contra
+*! Piepho 2004), solo el criterio de "no significativamente distinto"
+*! entre cada par. Default "bonferroni": retrocompatible por
+*! construccion, identico a siempre si no se pasa esta opcion.
+*!   - "holm": Holm, S. (1979), "A simple sequentially rejective multiple
+*!     test procedure", Scandinavian Journal of Statistics 6(2):65-70 --
+*!     mismo control de FWER que Bonferroni, pero domina en potencia
+*!     (nunca rechaza menos). Step-down con multiplicador (n-rango+1).
+*!   - "fdr": Benjamini, Y. y Hochberg, Y. (1995), "Controlling the false
+*!     discovery rate", JRSS-B 57(1):289-300 -- controla la tasa de FALSOS
+*!     DESCUBRIMIENTOS (proporcion esperada entre los rechazos), no la
+*!     probabilidad de al menos un error en toda la familia -- pregunta
+*!     distinta, mas potente, no un simple reemplazo. Step-up con
+*!     multiplicador (n/rango).
+*!   - "lsd": LSD "protegido" de Fisher -- metodo de Fisher, R.A. (1935/
+*!     1937), "The Design of Experiments" (comparar pares SOLO si el F
+*!     omnibus del bloque ya fue significativo); la etiqueta "protegido"
+*!     y su evaluacion empirica son de Carmer, S.G. y Swanson, M.R.
+*!     (1973), "An evaluation of ten pairwise multiple comparison
+*!     procedures by Monte Carlo methods", JASA 68(341):66-74, defendida
+*!     explicitamente en Saville, D.J. (1990), "Multiple comparison
+*!     procedures: the practical solution", The American Statistician
+*!     44(2):174-180. Sin ningun ajuste de multiplicidad (p crudo contra
+*!     alpha) -- mucho mas probable que GRUPO muestre letras distintas
+*!     cuando F_WALD es significativo, a costa de NO controlar la tasa
+*!     familywise -- documentado asi de explicito en el help, no es
+*!     "mejor" que bonferroni/holm, es un criterio de error mas debil a
+*!     cambio de mas potencia.
+*!
+*! v1.23 -- 2 BUGS REALES de kwallis (v1.22), los dos encontrados en la
+*! PRIMERA corrida real (3 escenarios, los 3 fallaron):
+*!   1. La deteccion de la variable de peso via `_dta[_svy_wexp]' daba
+*!      SIEMPRE vacio, incluso con un pweight() activo en svyset -- el
+*!      aviso decia "svyset no registra variable de peso" en una corrida
+*!      con "svyset psu_id [pweight=weight]" puesto. Esa characteristic
+*!      no trae lo que se asumia. Fix: la variable de peso ahora se lee
+*!      de `e(wexp)' (e-class real y documentado, poblado por CUALQUIER
+*!      `svy:') DESPUES del primer "svy: `stat' ..., over(`combo')" de
+*!      cada `a' -- nunca antes de haber corrido un svy: en esta llamada.
+*!   2. `_tsvy_hajek_rank()' (mata) tiraba "subscript invalid" (r(3301))
+*!      en los 3 escenarios, con o sin peso -- el indexado vectorizado
+*!      de un solo subindice (`A[idx]', `A[idx]=B') que usaba para
+*!      juntar/dispersar valores por grupo no es seguro ahi. Reescrita
+*!      por completo con subindices explicitos de 2 partes (`A[i,1]') y
+*!      loops, sin ningun indexado vectorizado -- mas lenta, pero cada
+*!      paso queda inambiguo. Logica matematica SIN CAMBIOS (mismo
+*!      mid-rank de Hajek, Lumley y Scott 2013 seccion 2.1).
+*! SIN CONFIRMAR TODAVIA que estos 2 fixes alcancen -- ver
+*! ejemplo_kwallis.do, correrlo de nuevo con esta version.
+*!
+*! v1.22 -- Opcion nueva kwallis (opt-in, k-muestral): cuarto test por
+*! bloque, ADEMAS de F_WALD/Bonferroni/CLD y de mmd() -- nunca los
+*! reemplaza, mismo criterio que mmd() desde v1.16 (columnas propias,
+*! F_KW/P_KW/GRUPO_KW). Base metodologica: Lumley, T. y Scott, A.J.
+*! (2013), "Two-sample rank tests under complex sampling", Biometrika
+*! 100(4):831-842 -- implementado en R como `survey::svyranktest()'/
+*! `multiranktest()' (Lumley es el autor del paquete `survey'; el test
+*! de k grupos ahi se llama literalmente "KruskalWallis", sinonimo del
+*! de Wilcoxon cuando el grupo de comparacion tiene mas de 2 niveles).
+*! Investigado a pedido del usuario tras una revision metodologica de
+*! Kruskal-Wallis vs. F de Wald para datos de encuesta compleja (ver
+*! conversacion -- 3 rondas de busqueda con agentes, sin encontrar nada
+*! equivalente ya implementado en Stata/SSC/Stata Journal).
+*!
+*! DIFERENCIA DE FONDO con F_WALD, para no confundirlos: F_WALD testea
+*! H0: mu_1=...=mu_k (igualdad de MEDIAS estimadas). El test de rangos,
+*! aun siendo design-based, sigue testeando la H0 CLASICA de
+*! Kruskal-Wallis/Wilcoxon: H0: F_1=...=F_k (igualdad de DISTRIBUCION/
+*! dominancia estocastica) -- lo que cambia con el diseno NO es la
+*! hipotesis, es COMO se calcula el estadistico (ver mas abajo). No
+*! reemplaza a F_WALD, no es "mas robusto" para la misma pregunta: es
+*! una pregunta distinta, con menos potencia que F_WALD si las medias
+*! realmente difieren en forma simple, pero que no depende de que la
+*! diferencia sea exactamente en la media (detecta corrimientos de
+*! localizacion en general). Tampoco es un sustituto de mmd() (v1.16):
+*! mmd_2s es OMNIBUS de verdad (detecta cualquier diferencia de forma/
+*! escala/localizacion, no solo localizacion), pero es 2-muestral nada
+*! mas; kwallis es k-muestral (como F_WALD) pero, como cualquier test de
+*! rangos, tiene poca o nula potencia contra diferencias de pura escala/
+*! forma con la misma mediana -- un tercer test, a medio camino entre
+*! los otros dos, ninguno de los 3 sustituye a los otros 2.
+*!
+*! MECANICA (ver _tsvy_hajek_rank(), junto a tsvy_core() mas abajo, y la
+*! seccion 2.1 del paper): para cada bloque (NIVEL x [CRUCE], los anios
+*! de ESE bloque agrupados juntos), se calcula el rango poblacional
+*! ponderado (Hajek) de `varname' -- R_i-hat = {F_n-hat(Y_i)+F_n-hat(Y_i-)}
+*! / 2, con F_n-hat la CDF empirica ponderada por el MISMO peso que
+*! `svyset' (leido de las characteristics _dta[], no un peso aparte
+*! como pide mmdweight()) -- y ese rango se trata como una variable
+*! CUALQUIERA para el resto del motor: "svy: mean RANGO, over(combo)"
+*! (el mismo `combo' -- nivel x cruce x ANIO_ -- que ya usa `varname'),
+*! y el resultado (b/V) se pasa TAL CUAL a tsvy_core() (reusado sin
+*! cambios) para el F/p omnibus + Bonferroni + CLD. Esto no es un ajuste
+*! ad-hoc: es exactamente lo que el paper demuestra (su Teorema 1,
+*! equivalencia asintotica T_n~T_n) -- una vez que el rango esta
+*! estimado, la varianza de diseno se calcula IGUAL que para cualquier
+*! otra variable, sin necesitar una formula de varianza nueva.
+*!
+*! LIMITACIONES de esta primera version (documentadas, no descubiertas
+*! por accidente): (1) requiere boot()==0 (mismo motivo que subpop()/
+*! mmd() -- necesita el `combo' conjunto del camino nuevo); (2) requiere
+*! stat(mean) -- proportion/total/ratio quedan para un seguimiento, no
+*! estan implementados; (3) no calcula tamanos de efecto (eta2/epsilon2
+*! ordinal): esas formulas (ver ejemplo_kwallis_efecto.do, Fiel Peres
+*! 2026, Eq. 12-13) son del H CLASICO sin ponderar, no del F Wald-sobre-
+*! rangos que arma este test -- aplicarlas aca seria incorrecto, asi que
+*! se omiten en vez de inventar una conversion sin respaldo; (4) SIN
+*! CONFIRMAR CONTRA STATA REAL -- no hay forma de ejecutar Stata en este
+*! entorno; antes de confiar en kwallis con datos de produccion, probar
+*! primero con un ejemplo chico (ver help) y revisar que F_KW/P_KW/
+*! GRUPO_KW salgan razonables.
+*!
+*! v1.21 -- CATEGORIA_LBL / CRUCE_LBL (columnas nuevas, ADITIVAS): texto
+*! de la etiqueta de valor de la variable de nivel()/cruce(), si tiene
+*! una definida (ej. NIVEL="departamento" CATEGORIA=1 CATEGORIA_LBL=
+*! "Puno") -- hasta ahora CATEGORIA/CRUCE solo guardaban el codigo
+*! numerico puro, nunca el texto, y no habia forma de recuperarlo
+*! despues desde el frame acumulador (el dataset original, con el value
+*! label todavia adjunto a la variable, ya no esta accesible en ese
+*! punto). Se calcula en el UNICO lugar donde todavia es posible: justo
+*! antes de armar cada bloque FILAS_TMP, con "`a'"/"`cruce'" (los
+*! nombres de las variables originales) todavia en foco -- `` : value
+*! label `a' '' + `` : label <label> <codigo> ''; si la variable no
+*! tiene value label, o el codigo puntual no tiene texto asignado
+*! dentro de esa label, la columna queda en blanco ("") para esa fila,
+*! nunca en missing (asi un `if CATEGORIA_LBL != ""` alcanza para
+*! decidir si hay texto o hay que usar el codigo). Pedido del usuario
+*! tras comparar la salida de tsvyexport contra un cuadro real del INEI
+*! con nombres de departamento -- tsvyexport v1.16 ya sabe usar estas
+*! columnas cuando estan presentes, y sigue funcionando igual (con el
+*! codigo numerico) en frames armados con una version anterior de tsvy,
+*! donde estas columnas no existen.
 *!
 *! v1.20 -- BREAKING CHANGE: renombra la COLUMNA de salida CAIDA a
 *! CATEGORIA (columna, no opcion -- no hay opcion caida()/categoria(),
@@ -740,31 +982,36 @@
 *!
 *! El frame que deja tsvy trae: NIVEL CATEGORIA [CRUCE] var VARNAME ANIO
 *! ESTIMA ERROR_ST CV LIM_INF LIM_SUP N_SIN_PON N_PONDERA REF_ F_WALD
-*! P_WALD GRUPO P_MMD EFFECT_MMD -- mismo esquema de columnas que deja
-*! tabsvy (compatible con tabsvyexport para el bloque ESTIMA/REF_), mas
-*! VARNAME (v1.14 -- el nombre, string, de la variable pasada en
-*! varname() en esta llamada, constante en TODAS las filas de esta
-*! llamada -- lo que distingue, en un frame que acumula varias llamadas
-*! de tsvy, que bloque de filas vino de que variable; `var' en cambio
-*! queda fijo en 1, solo por compatibilidad de columnas con tabsvy) y
-*! F_WALD/P_WALD (constantes dentro de cada bloque nivel-valor-[cruce],
-*! repetidas por anio) y GRUPO (la letra CLD de ESE anio dentro de su
-*! bloque). Si se paso refyear(), ademas trae P_VS_REF/SIG_VS_REF
-*! (Bonferroni de ESE anio contra el anio base, k-1 comparaciones -- ver
-*! Remarks en svylet.sthlp sobre la diferencia con GRUPO/CLD); si no se
-*! paso, esas dos columnas quedan en missing/vacias. P_MMD/EFFECT_MMD
-*! (v1.16) siguen el mismo criterio: missing si no se paso mmd, o si el
-*! bloque puntual no lo pudo calcular (ver nota de cabecera v1.16). Para
-*! exportar TODAS las columnas (como hace
-*! especies_varestruc_svylet.do a mano), el patron es:
+*! P_WALD GRUPO P_MMD EFFECT_MMD F_KW P_KW GRUPO_KW -- mismo esquema de
+*! columnas que deja tabsvy (compatible con tabsvyexport para el bloque
+*! ESTIMA/REF_), mas VARNAME (v1.14 -- el nombre, string, de la variable
+*! pasada en varname() en esta llamada, constante en TODAS las filas de
+*! esta llamada -- lo que distingue, en un frame que acumula varias
+*! llamadas de tsvy, que bloque de filas vino de que variable; `var' en
+*! cambio queda fijo en 1, solo por compatibilidad de columnas con
+*! tabsvy) y F_WALD/P_WALD (constantes dentro de cada bloque
+*! nivel-valor-[cruce], repetidas por anio) y GRUPO (la letra CLD de ESE
+*! anio dentro de su bloque). Si se paso refyear(), ademas trae
+*! P_VS_REF/SIG_VS_REF (Bonferroni de ESE anio contra el anio base, k-1
+*! comparaciones -- ver Remarks en svylet.sthlp sobre la diferencia con
+*! GRUPO/CLD); si no se paso, esas dos columnas quedan en missing/vacias.
+*! P_MMD/EFFECT_MMD (v1.16) siguen el mismo criterio: missing si no se
+*! paso mmd, o si el bloque puntual no lo pudo calcular (ver nota de
+*! cabecera v1.16). F_KW/P_KW/GRUPO_KW (v1.22) idem para kwallis: F/p del
+*! test de rangos design-based (Lumley y Scott 2013) y su propia letra
+*! CLD -- H0 de localizacion/dominancia estocastica, NO la misma H0 que
+*! F_WALD (igualdad de medias); ver nota de cabecera v1.22. Para exportar
+*! TODAS las columnas (como hace especies_varestruc_svylet.do a mano), el
+*! patron es:
 *!
 *!     frame F1: reshape wide ESTIMA REF_ ERROR_ST LIM_INF LIM_SUP CV    ///
-*!         N_PONDERA N_SIN_PON GRUPO P_VS_REF SIG_VS_REF,                ///
-*!         i(NIVEL CATEGORIA var VARNAME F_WALD P_WALD P_MMD EFFECT_MMD) j(ANIO)
+*!         N_PONDERA N_SIN_PON GRUPO GRUPO_KW P_VS_REF SIG_VS_REF,       ///
+*!         i(NIVEL CATEGORIA var VARNAME F_WALD P_WALD P_MMD EFFECT_MMD  ///
+*!         F_KW P_KW) j(ANIO)
 *!
-*! (F_WALD/P_WALD/P_MMD/EFFECT_MMD quedan en i() porque son constantes
-*! dentro del grupo -- no varian por anio, no hace falta que el reshape
-*! las repita sufijadas)
+*! (F_WALD/P_WALD/P_MMD/EFFECT_MMD/F_KW/P_KW quedan en i() porque son
+*! constantes dentro del grupo -- no varian por anio, no hace falta que
+*! el reshape las repita sufijadas)
 *!
 *! Requiere: svylet (este mismo repo) y frameappend (SSC) -- la misma
 *! dependencia que ya pide tabsvy para acumular filas sin postfile/tempfile.
@@ -798,6 +1045,16 @@ program define tsvy
         MMDBOOT(integer 200)  /// boot() de mmd_2s
         MMDREPS(integer 20)   /// reps() de mmd_2s
         MMDSEED(integer 12345) ///
+        KSMMD                 /// v1.27 -- KS+MMD k-muestral con diseno (comando ksmmd). Ver help
+        KSMMDYEARS(numlist integer min=2) /// v1.27 -- anios (de years()) a comparar; def: todos los del bloque
+        KSMMDREPS(integer 1000) /// v1.27 -- permutaciones de ksmmd
+        KSMMDSEED(integer 12345) ///
+        KSMMDTYPE(string)     /// v1.27 -- vspool (def), maxpairwise o fuse
+        KSMMDFEAT(integer 200) /// v1.27 -- nfeatures() de ksmmd (RFF)
+        KWALLIS               /// v1.22 -- test de rangos design-based por bloque (Lumley y Scott 2013). Ver help
+        CLDMETODO(string)      /// v1.24 -- metodo de ajuste para GRUPO/CLD: auto (default v1.29), bonferroni, holm,
+                                /// fdr, lsd. Ver help
+        DFMODE(string)         /// v1.28 -- df del test por bloque: subpop (default), kg, full. Ver help
         ]
 
     * ---------------------------------------------------------------
@@ -905,6 +1162,130 @@ program define tsvy
             di as err "  (https://ideas.repec.org/c/boc/bocode/s459820.html)"
             exit 111
         }
+    }
+
+    * -- v1.27 -- ksmmd(): validacion temprana (antes de estimar)
+    if "`mmd'" != "" {
+        di as txt "tsvy: AVISO mmd -- mmd_2s NO usa el diseno muestral (solo un aweight, sin" ///
+            " estratos/UPM; p-valor bootstrap de unidades independientes). Para un test" ///
+            " distribucional con diseno use la opcion ksmmd."
+    }
+    if "`ksmmd'" != "" {
+        if `boot' > 0 {
+            di as err "tsvy: ksmmd no esta soportado con boot()>0 (camino viejo, via svylet" ///
+                " por bloque) -- mismo motivo que subpop()/mmd/kwallis. Use boot(0)."
+            exit 198
+        }
+        capture which ksmmd
+        if _rc {
+            di as err "tsvy: ksmmd requiere el comando ksmmd (v0.8 o posterior) instalado."
+            exit 111
+        }
+        if "`ksmmdtype'" == "" local ksmmdtype "vspool"
+        local ksmmdtype = lower("`ksmmdtype'")
+        if !inlist("`ksmmdtype'", "vspool", "maxpairwise", "fuse") {
+            di as err "tsvy: ksmmdtype() debe ser vspool, maxpairwise o fuse"
+            exit 198
+        }
+        if `ksmmdreps' < 99 {
+            di as err "tsvy: ksmmdreps() debe ser >= 99 (el p-valor de permutacion no tiene resolucion con menos)"
+            exit 198
+        }
+        if `"`subpop'"' != "" {
+            di as txt "tsvy: AVISO ksmmd -- subpop() se aplica a ksmmd como [if] (UPM sin" ///
+                " observaciones se descartan), no como subpoblacion nativa de svy."
+        }
+    }
+    else if "`ksmmdyears'" != "" {
+        di as err "tsvy: ksmmdyears() requiere la opcion ksmmd"
+        exit 198
+    }
+
+    * ---------------------------------------------------------------
+    * v1.22 -- kwallis(): mismo criterio fail-fast que mmd() -- cortar
+    * ACA, antes del loop de bloques. Restringido a boot()==0 (mismo
+    * motivo que subpop()/mmd: el camino viejo, boot()>0, filtra "if" y
+    * corre svylet por bloque, sin el "combo' conjunto que este test
+    * necesita reusar) y a stat(mean) (el caso mas directo -- ver la
+    * nota larga junto a tsvy_core/_tsvy_hajek_rank mas abajo sobre por
+    * que proportion/total/ratio quedan afuera de esta primera version).
+    * A diferencia de mmd(), NO pide un peso propio: reusa el MISMO peso
+    * que ya esta activo en el diseno de `svyset' -- es justamente lo
+    * que hace posible que el rango sea "poblacional" (Hajek) y no un
+    * rango de muestra simple (ver Lumley y Scott, 2013, seccion 2.1).
+    * v1.23 -- la variable de peso YA NO se busca aca (via
+    * _dta[_svy_wexp]: confirmado con datos reales que esa
+    * characteristic NO trae lo esperado, aun con un pweight activo en
+    * svyset -- el aviso decia "sin ponderar" con pweight(weight) puesto)
+    * -- se lee mas abajo de `e(wexp)' DESPUES del primer "svy: `stat'
+    * ..., over(`combo')" de cada `a' (e-class real, documentado, ya
+    * poblado para ese momento), nunca antes de haber corrido un svy:.
+    * ---------------------------------------------------------------
+    if "`kwallis'" != "" {
+        if `boot' > 0 {
+            di as err "tsvy: kwallis no esta soportado con boot()>0 (camino viejo," ///
+                " via svylet por bloque) -- mismo motivo que subpop()/mmd. Use" ///
+                " boot(0) (el default)."
+            exit 198
+        }
+        if "`stat'" != "mean" {
+            di as err "tsvy: kwallis por ahora solo esta soportado con stat(mean)" ///
+                " -- proportion/total/ratio quedan para un seguimiento (ver help)."
+            exit 198
+        }
+    }
+
+    * ---------------------------------------------------------------
+    * v1.24 -- cldmetodo(): que ajuste usa `tsvy_core' para pasar de
+    * p-valores crudos pareados a la matriz Pmat de la que sale GRUPO
+    * (y GRUPO_KW, si kwallis esta activo -- las dos ramas reusan el
+    * mismo `tsvy_core', ver nota junto a su definicion mas abajo).
+    * Nunca cambia el F omnibus ni el algoritmo de letras en si (el de
+    * subconjuntos maximales, validado contra Piepho 2004 -- ver ese
+    * mismo comentario), solo COMO se decide que par cuenta como "no
+    * significativamente distinto". Default "bonferroni": IDENTICO al
+    * comportamiento de siempre (p_raw*npares), nada cambia si no se
+    * pasa esta opcion -- retrocompatible por construccion.
+    *   - "holm": Holm (1979) step-down -- mismo control FWER que
+    *     Bonferroni (misma garantia, no es menos riguroso), pero
+    *     domina en potencia (nunca rechaza MENOS que Bonferroni, a
+    *     veces mas). Sin motivo para NO preferirlo sobre bonferroni,
+    *     salvo compatibilidad con resultados ya publicados.
+    *   - "fdr": Benjamini y Hochberg (1995) -- controla una tasa de
+    *     error DISTINTA (proporcion esperada de falsos descubrimientos
+    *     entre los rechazos, no la probabilidad de al menos un error
+    *     en toda la familia) -- mas potente aun que Holm, pero no es
+    *     un reemplazo directo: cambia la pregunta, no solo el umbral.
+    *   - "lsd": LSD "protegido" de Fisher (Fisher 1935; evaluado por
+    *     Carmer y Swanson 1973; defendido por Saville 1990) -- SIN
+    *     ningun ajuste por multiplicidad (p crudo contra alpha
+    *     directo), y solo si el F omnibus de ESE bloque ya fue
+    *     significativo (si no, ningun par se declara distinto -- esa
+    *     es la "proteccion"). Mucho mas probable que GRUPO muestre
+    *     letras distintas cuando F_WALD es significativo (la pregunta
+    *     original que motivo agregar estas 3 opciones), pero a costa
+    *     de dejar de controlar la tasa familywise -- documentado asi
+    *     de explicito en el help, no es "mejor" que bonferroni/holm,
+    *     es un criterio de error mas debil a cambio de mas potencia.
+    * ---------------------------------------------------------------
+    local cldmetodo = lower(`"`cldmetodo'"')
+    * v1.29 -- default pasa de bonferroni a auto: Bonferroni en todo
+    * bloque donde ya separa letras (resultado identico a antes), y solo
+    * donde F_WALD es significativo con una sola letra escala a
+    * holm -> fdr -> lsd. El metodo usado queda por bloque en CLD_METODO.
+    * Para el comportamiento anterior: cldmetodo(bonferroni).
+    if "`cldmetodo'" == "" local cldmetodo "auto"
+    if !inlist("`cldmetodo'", "bonferroni", "holm", "fdr", "lsd", "auto") {
+        di as err "tsvy: cldmetodo() invalido -- use bonferroni, holm, fdr, lsd o auto"
+        exit 198
+    }
+
+    * v1.28 -- dfmode(): df usado en F_WALD/P_WALD/GRUPO/P_VS_REF. Ver nota de cabecera.
+    local dfmode = lower(trim(`"`dfmode'"'))
+    if "`dfmode'" == "" local dfmode "subpop"
+    if !inlist("`dfmode'", "subpop", "kg", "full") {
+        di as err "tsvy: dfmode() invalido -- use subpop (default), kg o full"
+        exit 198
     }
 
     * ---------------------------------------------------------------
@@ -1075,6 +1456,25 @@ program define tsvy
         }
     }
 
+    * -- v1.27 -- ksmmdyears(): calendario -> codigo REAL de ANIO_ (mismo
+    * mecanismo posicional que mmdyears()/refyear()). Vacio = todos los anios.
+    local ksmmdcodes ""
+    if "`ksmmd'" != "" & "`ksmmdyears'" != "" {
+        foreach yr of local ksmmdyears {
+            local pos = 0
+            local ks_found ""
+            foreach y2 of local years {
+                local pos = `pos' + 1
+                if "`y2'" == "`yr'" local ks_found : word `pos' of `codigos_anio'
+            }
+            if "`ks_found'" == "" {
+                di as err "tsvy: ksmmdyears(`ksmmdyears') debe contener solo anios de years(`years')."
+                exit 198
+            }
+            local ksmmdcodes `ksmmdcodes' `ks_found'
+        }
+    }
+
     * ---------------------------------------------------------------
     * Frame acumulador
     * ---------------------------------------------------------------
@@ -1229,6 +1629,84 @@ program define tsvy
                 di as err "tsvy: e(df_r) no disponible tras el svy -- revisar version de Stata/diseno"
                 exit 498
             }
+
+            * -- v1.28 -- dfmode(): muestra de estimacion y variables de diseno,
+            * capturadas AHORA (e() recien poblado por el svy: conjunto).
+            tempvar esamp
+            quietly gen byte `esamp' = e(sample)
+            local dfm_psu ""
+            local dfm_strata ""
+            if "`dfmode'" != "full" {
+                foreach cand in su1 psu1 su psu {
+                    if "`dfm_psu'" == "" & "`e(`cand')'" != "" {
+                        capture confirm variable `e(`cand')'
+                        if _rc == 0 local dfm_psu "`e(`cand')'"
+                    }
+                }
+                foreach cand in strata1 strata {
+                    if "`dfm_strata'" == "" & "`e(`cand')'" != "" {
+                        capture confirm variable `e(`cand')'
+                        if _rc == 0 local dfm_strata "`e(`cand')'"
+                    }
+                }
+            }
+
+            * -- v1.27 -- ksmmd(): PSU / estrato / peso del diseno, leidos de e() del
+            * svy: de arriba (ya poblado; NO se corre ninguna estimacion aca, para
+            * no pisar e() antes del bloque de kwallis de abajo). Mismos nombres
+            * alternativos que prueba svylet.ado segun la version de Stata.
+            local ks_psu ""
+            local ks_strata ""
+            local ks_wexp ""
+            if "`ksmmd'" != "" {
+                local ks_psu "`e(psu)'"
+                if "`ks_psu'" == "" local ks_psu "`e(psu1)'"
+                if "`ks_psu'" == "" local ks_psu "`e(su)'"
+                if "`ks_psu'" == "" local ks_psu "`e(su1)'"
+                local ks_strata "`e(strata)'"
+                if "`ks_strata'" == "" local ks_strata "`e(strata1)'"
+                local ks_wexp = trim(subinstr("`e(wexp)'", "=", "", 1))
+                * "<observations>"/"_n" (sin PSU explicito) o cualquier cosa que no
+                * sea variable -> sin PSU; igual con estrato.
+                if "`ks_psu'" != "" {
+                    capture confirm variable `ks_psu'
+                    if _rc local ks_psu ""
+                }
+                if "`ks_strata'" != "" {
+                    capture confirm variable `ks_strata'
+                    if _rc local ks_strata ""
+                }
+                if "`ks_psu'`ks_strata'" == "" {
+                    di as txt "tsvy: ksmmd -- svyset de `a' sin psu()/strata(): ksmmd permutara" ///
+                        " unidades independientes (p-valor optimista con conglomerados)."
+                }
+            }
+
+            * -- v1.23 -- kwallis(): variable de peso, leida de `e(wexp)'
+            * (e-class real que deja CUALQUIER `svy:', ya poblado por el
+            * "svy: `stat' ..., over(`combo')" de arriba -- nunca de
+            * _dta[_svy_wexp], que dio vacio con datos reales aun con
+            * pweight() activo). `e(wexp)' viene como "= variable" (o
+            * vacio si el diseno no tiene peso) -- se recalcula en CADA
+            * iteracion de `a' (barato, mismo valor siempre dentro de la
+            * misma corrida de tsvy, nunca cambia el diseno a mitad de
+            * camino) en vez de una sola vez arriba, porque antes de este
+            * punto todavia no corrio ningun `svy:' en esta llamada.
+            if "`kwallis'" != "" {
+                local svy_wexp = "`e(wexp)'"
+                local svywtvar = trim(subinstr("`svy_wexp'", "=", "", .))
+                if "`svywtvar'" != "" {
+                    di as txt "tsvy: kwallis -- rango de Hajek ponderado por " ///
+                        "`svywtvar' (de e(wexp), tras el svy: de `a'). Si esto no" ///
+                        " coincide con su diseno, revise su svyset."
+                }
+                else {
+                    di as txt "tsvy: kwallis -- el svy: de `a' no trae peso (e(wexp)" ///
+                        " vacio) -- rango de Hajek SIN ponderar (equivalente a rango" ///
+                        " de muestra simple)."
+                }
+            }
+
             tempname Nmat_all Nsubpmat_all Rtable_all
             capture matrix `Nmat_all' = e(_N)
             capture matrix `Nsubpmat_all' = e(_N_subp)
@@ -1273,6 +1751,53 @@ program define tsvy
                         " degenerada`motivo_subpop'). Se ubica cada categoria por su nombre de" ///
                         " columna real en vez de por posicion asumida; el/los anio(s) sin columna" ///
                         " quedan como fila vacia puntual mas abajo, sin correr de posicion las demas."
+                }
+            }
+
+            * -----------------------------------------------------------
+            * v1.22 -- kwallis(): rango poblacional ponderado (Hajek) de
+            * `varname', agrupado por bloque (`a' [`cruce'], SIN ANIO_ --
+            * los anios se agrupan JUNTOS para que el rango sea relativo
+            * a la poblacion combinada de ese bloque, ver Lumley y Scott
+            * 2013 seccion 2.1, ecuaciones 1-2), seguido de EXACTAMENTE
+            * el mismo "svy: mean ..., over(`combo')" conjunto que ya
+            * corre para `varname' -- la equivalencia asintotica T_n~T_n
+            * que demuestra el paper (su Teorema 1) es lo que permite
+            * tratar el rango estimado R_i-hat COMO SI fuera cualquier
+            * otra variable normal para la varianza de diseno: no hace
+            * falta escribir una varianza nueva, la que ya calcula
+            * `svy: mean' sobre el rango ES la varianza design-based del
+            * test. `_tsvy_hajek_rank' (mata, definida mas abajo junto a
+            * tsvy_core) hace UN solo pasaje sobre los datos, agrupando
+            * internamente por `combo_rank' -- nunca un svy: por bloque
+            * (mismo principio del resto del archivo: un unico svy:
+            * conjunto, nunca repetido bloque por bloque).
+            * -----------------------------------------------------------
+            tempname B_all_kw V_all_kw
+            local have_kw = 0
+            if "`kwallis'" != "" {
+                tempvar combo_rank touse_rank RANKVAR
+                if "`cruce'" != "" {
+                    quietly egen `combo_rank' = group(`a' `cruce') if `touse'
+                }
+                else {
+                    quietly egen `combo_rank' = group(`a') if `touse'
+                }
+                quietly gen byte `touse_rank' = (`touse' == 1) & !missing(`varname')
+                quietly gen double `RANKVAR' = .
+                mata: _tsvy_hajek_rank("`varname'", "`svywtvar'", "`touse_rank'", ///
+                    "`combo_rank'", "`RANKVAR'")
+
+                capture noisily `svyprefix': mean `RANKVAR' if `touse', over(`combo')
+                if _rc {
+                    di as err "tsvy: kwallis -- el svy: mean del rango ponderado fallo" ///
+                        " (rc=" _rc ") para el over(`a' ANIO_) conjunto -- F_KW/P_KW/" ///
+                        "GRUPO_KW quedan missing para los " `n_niveles' " bloque(s) de `a'."
+                }
+                else {
+                    matrix `B_all_kw' = e(b)
+                    matrix `V_all_kw' = e(V)
+                    local have_kw = 1
                 }
             }
 
@@ -1423,6 +1948,33 @@ program define tsvy
                 }
             }
 
+            * -- v1.22 -- kwallis(): mismo recorte que b_sel_all/V_sel_all,
+            * reusando el MISMO `idx_usar_all' -- valido porque `B_all_kw'
+            * viene del mismo "svy: mean ..., over(`combo')" (mismo `combo',
+            * mismo universo `touse') que `B_all', asi que una categoria de
+            * `combo' sin columna real (varianza degenerada) lo es para las
+            * dos variables a la vez: si TODAS las unidades de esa celda
+            * tienen el mismo `varname', tambien tienen el mismo rango
+            * (Hajek), y viceversa -- nunca degenerada en una sola de las
+            * dos. No hace falta recalcular el mapeo de nombres de columna.
+            tempname b_sel_all_kw V_sel_all_kw
+            if `have_kw' {
+                matrix `b_sel_all_kw' = J(`k_total', 1, .)
+                matrix `V_sel_all_kw' = J(`k_total', `k_total', 0)
+                local fila = 0
+                foreach i of local idx_usar_all {
+                    local fila = `fila' + 1
+                    if "`i'" == "." continue
+                    matrix `b_sel_all_kw'[`fila', 1] = `B_all_kw'[1, `i']
+                    local col = 0
+                    foreach j of local idx_usar_all {
+                        local col = `col' + 1
+                        if "`j'" == "." continue
+                        matrix `V_sel_all_kw'[`fila', `col'] = `V_all_kw'[`i', `j']
+                    }
+                }
+            }
+
             * N ponderado/sin ponderar y limites de IC por categoria de
             * `combo', en el orden de `idx_usar_all' -- mismo patron que
             * usa svylet.ado internamente, con el mismo swap e(_N) <->
@@ -1498,13 +2050,31 @@ program define tsvy
                         local cruceopt "cruce(`sval')"
                     }
 
+                    * -- v1.21 -- texto de la etiqueta de valor de `a'
+                    * (y de `cruce', si esta) para `cval'/`sval', si
+                    * alguna de las dos variables tiene una definida.
+                    * Se calcula ACA (todavia en los datos originales,
+                    * antes de pasar a FILAS_TMP) porque es el UNICO
+                    * punto donde la variable `a' -- y su etiqueta de
+                    * valor -- siguen siendo accesibles; adentro de
+                    * FILAS_TMP no hay forma de recuperarlo despues.
+                    local catlbl ""
+                    local vallab_a : value label `a'
+                    if "`vallab_a'" != "" local catlbl : label `vallab_a' `cval'
+                    local crulbl ""
+                    if "`cruce'" != "" {
+                        local vallab_c : value label `cruce'
+                        if "`vallab_c'" != "" local crulbl : label `vallab_c' `sval'
+                    }
+
                     quietly summarize `combo' if `cond_bloque', meanonly
                     if r(N) == 0 {
                         di as err "tsvy: se salta `etiqueta_bloque' -- no tiene observaciones" ///
                             " (fila vacia agregada para no correr de posicion las filas siguientes)."
                         local bloques_saltados = `bloques_saltados' + 1
                         _tsvy_fila_vacia, nivel("`nivel_actual'") categoria(`cval') ///
-                            anio(`primer_anio') frame(`frame') varname(`"`varname'"') `cruceopt'
+                            anio(`primer_anio') frame(`frame') varname(`"`varname'"') ///
+                            categorialbl("`catlbl'") crucelbl("`crulbl'") `cruceopt'
                         continue
                     }
                     local start_pos = r(min)
@@ -1540,6 +2110,16 @@ program define tsvy
                     mata: st_matrix("`npmat'", st_matrix("`Nout_pond_all'")[(`start_pos'::`end_pos'), 1])
                     mata: st_matrix("`limat'", st_matrix("`LIout_all'")[(`start_pos'::`end_pos'), 1])
                     mata: st_matrix("`lsmat'", st_matrix("`LSout_all'")[(`start_pos'::`end_pos'), 1])
+
+                    * -- v1.22 -- kwallis(): mismo corte a este bloque
+                    * (`start_pos'/`end_pos', el rango CONTIGUO de `combo'
+                    * que le toca a `etiqueta_bloque'), sobre las matrices
+                    * del rango en vez de las de `varname'.
+                    tempname bmat_kw Vmat_kw
+                    if `have_kw' {
+                        mata: st_matrix("`bmat_kw'", st_matrix("`b_sel_all_kw'")[(`start_pos'::`end_pos'), 1])
+                        mata: st_matrix("`Vmat_kw'", st_matrix("`V_sel_all_kw'")[(`start_pos'::`end_pos'), (`start_pos'::`end_pos')])
+                    }
 
                     * -- v1.13 -- alguna posicion DENTRO de este bloque
                     * puede no tener columna real en e(b) (ver aviso mas
@@ -1577,7 +2157,8 @@ program define tsvy
                             " siguientes)."
                         local bloques_saltados = `bloques_saltados' + 1
                         _tsvy_fila_vacia, nivel("`nivel_actual'") categoria(`cval') ///
-                            anio(`primer_anio') frame(`frame') varname(`"`varname'"') `cruceopt'
+                            anio(`primer_anio') frame(`frame') varname(`"`varname'"') ///
+                            categorialbl("`catlbl'") crucelbl("`crulbl'") `cruceopt'
                         continue
                     }
 
@@ -1589,6 +2170,15 @@ program define tsvy
                     mata: st_matrix("`npmat_uso'", st_matrix("`npmat'")[(`idxlist'), 1])
                     mata: st_matrix("`limat_uso'", st_matrix("`limat'")[(`idxlist'), 1])
                     mata: st_matrix("`lsmat_uso'", st_matrix("`lsmat'")[(`idxlist'), 1])
+
+                    * -- v1.22 -- kwallis(): mismo recorte a `pos_validas'
+                    * (las posiciones con columna real en e(b) -- ver nota
+                    * v1.13 de arriba), sobre las matrices del rango.
+                    tempname bmat_uso_kw Vmat_uso_kw
+                    if `have_kw' {
+                        mata: st_matrix("`bmat_uso_kw'", st_matrix("`bmat_kw'")[(`idxlist'), 1])
+                        mata: st_matrix("`Vmat_uso_kw'", st_matrix("`Vmat_kw'")[(`idxlist'), (`idxlist')])
+                    }
                     local anios_uso ""
                     foreach p of local pos_validas {
                         local yr : word `p' of `anios_este_cval'
@@ -1606,18 +2196,66 @@ program define tsvy
                     * cualquier `k_cat_valido' -- lo unico que cambia es que
                     * F_WALD/P_WALD/GRUPO/P_VS_REF quedan en missing (lo
                     * unico que de verdad no se puede calcular con 1 anio).
+                    * -- v1.28 -- df del test para ESTE bloque (ver dfmode()).
+                    local df_blk = `df_r'
+                    if "`dfmode'" != "full" & `k_cat_valido' >= 2 {
+                        local cond_df "`cond_bloque'"
+                        if `"`subpop'"' != "" local cond_df "`cond_df' & (`subpop')"
+                        local dfopts ""
+                        if "`dfm_psu'" != ""    local dfopts "`dfopts' psu(`dfm_psu')"
+                        if "`dfm_strata'" != "" local dfopts "`dfopts' strata(`dfm_strata')"
+                        capture _tsvy_dfblock, esamp(`esamp') bloque(`cond_df') mode(`dfmode') `dfopts'
+                        if _rc == 0 & r(df) < . {
+                            local df_blk = r(df)
+                            if `df_blk' < `k_cat_valido' {
+                                di as err "tsvy: `etiqueta_bloque' -- df del bloque (" `df_blk' ///
+                                    ") menor que el numero de anios validos (`k_cat_valido'); se usa df=`k_cat_valido' como minimo."
+                                local df_blk = `k_cat_valido'
+                            }
+                        }
+                        else {
+                            di as err "tsvy: `etiqueta_bloque' -- no se pudo calcular el df del bloque (dfmode(`dfmode')); se usa el df del diseno (`df_r')."
+                        }
+                    }
                     local F_omni = .
                     local p_omni = .
+                    local cld_met_blk ""
+                    local cld_inc_blk = .
+                    local F_kw = .
+                    local p_kw = .
                     tempname pvsrefmat
                     matrix `pvsrefmat' = J(`k_cat_valido', 1, .)
 
                     if `k_cat_valido' >= 2 {
-                        mata: tsvy_core("`bmat_uso'", "`Vmat_uso'", `df_r', `alpha', `k_cat_valido')
+                        mata: tsvy_core("`bmat_uso'", "`Vmat_uso'", `df_blk', `alpha', `k_cat_valido', "`cldmetodo'")
                         local F_omni = r(F_omnibus)
                         local p_omni = r(p_omnibus)
+                        * -- v1.29 -- metodo de CLD realmente usado en ESTE
+                        * bloque (con cldmetodo(auto) puede variar por bloque)
+                        * y bandera F-significativo-con-una-sola-letra.
+                        local cld_met_blk "`r(metodo_usado)'"
+                        local cld_inc_blk = r(cld_inconsistente)
                         forvalues i = 1/`k_cat_valido' {
                             local letra_`i'  "`r(letra_`i')'"
                             local codigo_`i' : word `i' of `anios_uso'
+                            local letra_kw_`i' ""
+                        }
+
+                        * -- v1.22 -- kwallis(): mismo motor (tsvy_core,
+                        * reusado tal cual) sobre las matrices del rango
+                        * en vez de las de `varname' -- resultado guardado
+                        * en locales DISTINTOS (F_kw/p_kw/letra_kw_`i')
+                        * antes de que la llamada de mas abajo (P_VS_REF,
+                        * que no toca kwallis) pueda pisar los r() de
+                        * ESTA llamada -- el orden de capturas de arriba
+                        * (F_omni/p_omni/letra_`i' primero) ya lo garantiza.
+                        if `have_kw' {
+                            mata: tsvy_core("`bmat_uso_kw'", "`Vmat_uso_kw'", `df_blk', `alpha', `k_cat_valido', "`cldmetodo'")
+                            local F_kw = r(F_omnibus)
+                            local p_kw = r(p_omnibus)
+                            forvalues i = 1/`k_cat_valido' {
+                                local letra_kw_`i' "`r(letra_`i')'"
+                            }
                         }
 
                         * -- v1.4 -- refyear(): igual idea que ref() en svylet.ado
@@ -1646,7 +2284,7 @@ program define tsvy
                             mata: st_matrix("`vrefcol'", st_matrix("`Vmat_uso'")[.,`refpos_local'])
                             mata: st_matrix("`vse'", sqrt(st_matrix("`vdiag'") :+ st_matrix("`vdiag'")[`refpos_local',1] :- 2:*st_matrix("`vrefcol'")))
                             mata: st_matrix("`vt'", (st_matrix("`bmat_uso'") :- st_matrix("`bmat_uso'")[`refpos_local',1]) :/ st_matrix("`vse'"))
-                            mata: st_matrix("`vpraw'", 2:*ttail(`df_r', abs(st_matrix("`vt'"))) :* (`k_cat_valido'-1))
+                            mata: st_matrix("`vpraw'", 2:*ttail(`df_blk', abs(st_matrix("`vt'"))) :* (`k_cat_valido'-1))
                             mata: st_matrix("`pvsrefmat'", rowmin((st_matrix("`vpraw'"), J(`k_cat_valido',1,1))))
                             matrix `pvsrefmat'[`refpos_local', 1] = .
                         }
@@ -1657,6 +2295,7 @@ program define tsvy
                             " anio; F_WALD/P_WALD/GRUPO/P_VS_REF quedan missing (no hay con" ///
                             " que testear con 1 solo anio)."
                         local letra_1 ""
+                        local letra_kw_1 ""
                     }
 
                     di as text _n "{hline 70}"
@@ -1667,8 +2306,15 @@ program define tsvy
                             " alguna categoria, o menos de 2 anios validos en este bloque)."
                     }
                     else {
-                        di as text "  F(" %3.0f `=`k_cat_valido'-1' ", " %6.0f `=`df_r'-(`k_cat_valido'-1)+1' ") = " ///
+                        di as text "  F(" %3.0f `=`k_cat_valido'-1' ", " %6.0f `=`df_blk'-(`k_cat_valido'-1)+1' ") = " ///
                             as res %9.4f `F_omni' as text "   Prob > F = " as res %6.4f `p_omni'
+                    }
+                    if `have_kw' & `F_kw' != . {
+                        di as text "  kwallis: F(" %3.0f `=`k_cat_valido'-1' ", " ///
+                            %6.0f `=`df_blk'-(`k_cat_valido'-1)+1' ") = " ///
+                            as res %9.4f `F_kw' as text "   Prob > F = " as res %6.4f `p_kw' ///
+                            as text "  (rango design-based, Lumley y Scott 2013 -- H0 de" ///
+                            " localizacion/dominancia estocastica, NO la misma H0 que F_WALD)"
                     }
 
                     * ---------------------------------------------------
@@ -1726,12 +2372,67 @@ program define tsvy
                         }
                     }
 
+                    * ---------------------------------------------------
+                    * v1.27 -- ksmmd (KS de Kiefer + MMD/RFF, k anios) CON
+                    * diseno: etiqueta ANIO_ permutada por UPM (dentro de
+                    * estratos si estos mezclan anios). Universo = bloque
+                    * [+ ksmmdyears()] [+ subpop() como if]. Peso = el de
+                    * svyset (e(wexp)). Si ksmmd falla (UPM solitario, UPM
+                    * que mezcla anios, etc.), quedan missing -- no corta.
+                    * ---------------------------------------------------
+                    local p_ksk = .
+                    local p_ksm = .
+                    if "`ksmmd'" != "" {
+                        local universo_ks "`cond_bloque'"
+                        if "`ksmmdcodes'" != "" {
+                            local ks_lst : subinstr local ksmmdcodes " " ", ", all
+                            local universo_ks "`universo_ks' & inlist(ANIO_, `ks_lst')"
+                        }
+                        if `"`subpop'"' != "" {
+                            local universo_ks "`universo_ks' & (`subpop')"
+                        }
+                        quietly levelsof ANIO_ if `universo_ks', local(ks_anios)
+                        local ks_k : word count `ks_anios'
+                        if `ks_k' >= 2 {
+                            local ks_nsp ""
+                            if "`ks_strata'" != "" {
+                                tempvar ks_smin ks_smax
+                                quietly egen double `ks_smin' = min(ANIO_) if `universo_ks', by(`ks_strata')
+                                quietly egen double `ks_smax' = max(ANIO_) if `universo_ks', by(`ks_strata')
+                                quietly count if `ks_smin' != `ks_smax' & `universo_ks'
+                                if r(N) == 0 local ks_nsp "nostratperm"
+                                quietly drop `ks_smin' `ks_smax'
+                            }
+                            local ks_w ""
+                            if "`ks_wexp'" != "" local ks_w "[pweight=`ks_wexp']"
+                            local ks_opts "by(ANIO_) reps(`ksmmdreps') seed(`ksmmdseed') mmdtype(`ksmmdtype') nfeatures(`ksmmdfeat')"
+                            if "`ks_psu'" != "" local ks_opts "`ks_opts' psu(`ks_psu')"
+                            if "`ks_strata'" != "" local ks_opts "`ks_opts' strata(`ks_strata')"
+                            if "`ks_nsp'" != "" local ks_opts "`ks_opts' `ks_nsp'"
+                            di as text "  ksmmd: `etiqueta_bloque' (`ks_k' anios; psu(`ks_psu') strata(`ks_strata') peso(`ks_wexp') `ks_nsp')..."
+                            capture quietly ksmmd `varname' `ks_w' if `universo_ks', `ks_opts'
+                            if _rc == 0 {
+                                local p_ksk = r(P_KS)
+                                local p_ksm = r(P_MMD)
+                            }
+                            else {
+                                di as err "  ksmmd fallo (rc=" _rc ") para `etiqueta_bloque'" ///
+                                    " -- P_KSMMD_KS/P_KSMMD_MMD quedan missing para este bloque."
+                            }
+                        }
+                        else {
+                            di as err "  ksmmd: `etiqueta_bloque' tiene < 2 anios con datos en el universo" ///
+                                " -- se omite (P_KSMMD_* missing)."
+                        }
+                    }
+
                     capture frame drop FILAS_TMP
                     frame create FILAS_TMP
                     frame FILAS_TMP {
                         quietly set obs `k_cat'
                         gen str12  NIVEL      = subinstr("`a'", "_", "", .)
                         gen double CATEGORIA  = `cval'
+                        gen str80  CATEGORIA_LBL = "`catlbl'"
                         gen byte   ANIO       = .
                         gen double ESTIMA     = .
                         gen double ERROR_ST   = .
@@ -1741,15 +2442,23 @@ program define tsvy
                         gen double N_PONDERA  = .
                         gen double F_WALD     = `F_omni'
                         gen double P_WALD     = `p_omni'
+                        gen str10  CLD_METODO = "`cld_met_blk'"
+                        gen byte   CLD_INCONS = `cld_inc_blk'
                         gen double P_MMD      = `p_mmd'
                         gen double EFFECT_MMD = `effect_mmd'
+                        gen double P_KSMMD_KS  = `p_ksk'
+                        gen double P_KSMMD_MMD = `p_ksm'
+                        gen double F_KW       = `F_kw'
+                        gen double P_KW       = `p_kw'
                         gen str5   GRUPO      = ""
+                        gen str5   GRUPO_KW   = ""
                         gen double P_VS_REF   = .
                         gen str3   SIG_VS_REF = ""
                         gen byte   var        = 1
                         gen str32  VARNAME    = "`varname'"
                         if "`cruce'" != "" {
                             gen double CRUCE = `sval'
+                            gen str80  CRUCE_LBL = "`crulbl'"
                         }
 
                         * -- v1.13 -- `k_cat' filas (TODOS los anios reales
@@ -1790,6 +2499,7 @@ program define tsvy
                                 quietly replace N_SIN_PON = el(`nspmat_uso', `r', 1)      in `i'
                                 quietly replace N_PONDERA = el(`npmat_uso', `r', 1)       in `i'
                                 quietly replace GRUPO     = "`letra_`r''"                 in `i'
+                                quietly replace GRUPO_KW  = "`letra_kw_`r''"              in `i'
                                 quietly replace P_VS_REF  = el(`pvsrefmat', `r', 1)       in `i'
                             }
                         }
@@ -1830,6 +2540,17 @@ program define tsvy
                 local subset "`a' == `cval' & `touse'"
                 if "`cruce'" != "" local subset "`subset' & `cruce' == `sval'"
 
+                * -- v1.21 -- mismo texto de etiqueta de valor que el
+                * camino nuevo (boot()==0), ver esa nota de cabecera.
+                local catlbl ""
+                local vallab_a : value label `a'
+                if "`vallab_a'" != "" local catlbl : label `vallab_a' `cval'
+                local crulbl ""
+                if "`cruce'" != "" {
+                    local vallab_c : value label `cruce'
+                    if "`vallab_c'" != "" local crulbl : label `vallab_c' `sval'
+                }
+
                 * refopt() es GLOBAL a toda la corrida de tsvy, pero un
                 * bloque (`a'=`cval' [`cruce'=`sval']) chico podria no
                 * tener datos justo del anio de refyear() -- svylet.ado
@@ -1869,10 +2590,15 @@ program define tsvy
                 local F_omni = r(F_omnibus)
                 local p_omni = r(p_omnibus)
                 local k_cat  = r(k_categorias)
+                local cld_inc_blk = 0
                 forvalues i = 1/`k_cat' {
                     local letra_`i'  "`r(letra_`i')'"
                     local codigo_`i' "`r(nombre_categoria_`i')'"
+                    if "`letra_`i''" != "`letra_1'" local cld_inc_blk = -1
                 }
+                * -- v1.29 -- misma bandera que tsvy_core: F significativo
+                * y todas las categorias con la misma letra.
+                local cld_inc_blk = (`cld_inc_blk' == 0 & `p_omni' < `alpha')
 
                 capture frame drop FILAS_TMP
                 frame create FILAS_TMP
@@ -1880,6 +2606,7 @@ program define tsvy
                     quietly set obs `k_cat'
                     gen str12  NIVEL      = subinstr("`a'", "_", "", .)
                     gen double CATEGORIA  = `cval'
+                    gen str80  CATEGORIA_LBL = "`catlbl'"
                     gen byte   ANIO       = .
                     gen double ESTIMA     = .
                     gen double ERROR_ST   = .
@@ -1889,15 +2616,23 @@ program define tsvy
                     gen double N_PONDERA  = .
                     gen double F_WALD     = `F_omni'
                     gen double P_WALD     = `p_omni'
+                    gen str10  CLD_METODO = "bonferroni"
+                    gen byte   CLD_INCONS = `cld_inc_blk'
                     gen double P_MMD      = .   // v1.16 -- mmd() no soportado en el camino viejo (boot()>0)
                     gen double EFFECT_MMD = .
+                    gen double P_KSMMD_KS  = .
+                    gen double P_KSMMD_MMD = .
+                    gen double F_KW       = .   // v1.22 -- kwallis() tampoco soportado en el camino viejo
+                    gen double P_KW       = .
                     gen str5   GRUPO      = ""
+                    gen str5   GRUPO_KW   = ""
                     gen double P_VS_REF   = .
                     gen str3   SIG_VS_REF = ""
                     gen byte   var        = 1
                     gen str32  VARNAME    = "`varname'"
                     if "`cruce'" != "" {
                         gen double CRUCE = `sval'
+                        gen str80  CRUCE_LBL = "`crulbl'"
                     }
 
                     forvalues i = 1/`k_cat' {
@@ -1943,6 +2678,11 @@ program define tsvy
 
     local subpop_nota = cond(`"`subpop'"' != "", " -- subpop(`subpop')", "")
     frame `frame' {
+        * -- v1.29 -- deja en el frame el alpha y el metodo de CLD usados,
+        * para que tsvyexport arme Sig./leyenda con el MISMO criterio que
+        * las letras de GRUPO (ver tsvyexport v1.32).
+        char _dta[tsvy_alpha] `alpha'
+        char _dta[tsvy_cldmetodo] `cldmetodo'
         count
         di as text "tsvy: `frame' acumula ahora " as result r(N) as text ///
             " filas (VARNAME=`varname' STAT=`stat', " as result `bloques_ok' ///
@@ -1967,15 +2707,55 @@ end
 * depender de un programa definido en OTRO archivo .ado que podria no
 * estar cargado todavia, no aplica a un subprograma del mismo archivo.
 * -------------------------------------------------------------------------
+* ------------------------------------------------------------------
+* v1.28 -- _tsvy_dfblock: df de un bloque (subdominio) dentro de la muestra
+* de estimacion del svy: conjunto.
+*   mode(kg)    : n_S - L_S  (UPM y estratos CON observaciones del bloque).
+*   mode(subpop): n - L_S    (estratos con obs. del bloque; TODAS las UPM de
+*                 esos estratos en la muestra de estimacion) = df por defecto
+*                 de "svy, subpop(if bloque):".
+* Sin psu()/strata(): cada observacion es una UPM / un solo estrato.
+* ------------------------------------------------------------------
+capture program drop _tsvy_dfblock
+program define _tsvy_dfblock, rclass
+    version 14
+    syntax , ESAMP(varname) BLOQUE(string) MODE(string) [PSU(varname) STRATA(varname)]
+    tempvar st pu tp ts ins tpa
+    if "`strata'" == "" {
+        quietly gen byte `st' = 1
+    }
+    else quietly clonevar `st' = `strata'
+    if "`psu'" == "" {
+        quietly gen long `pu' = _n
+    }
+    else quietly clonevar `pu' = `psu'
+    quietly egen byte `tp' = tag(`st' `pu') if `esamp' == 1 & (`bloque')
+    quietly count if `tp' == 1
+    local nS = r(N)
+    quietly egen byte `ts' = tag(`st') if `esamp' == 1 & (`bloque')
+    quietly count if `ts' == 1
+    local LS = r(N)
+    if "`mode'" == "kg" {
+        return scalar df = `nS' - `LS'
+        exit
+    }
+    quietly egen byte `ins' = max(`esamp' == 1 & (`bloque')), by(`st')
+    quietly egen byte `tpa' = tag(`st' `pu') if `esamp' == 1 & `ins' == 1
+    quietly count if `tpa' == 1
+    return scalar df = r(N) - `LS'
+end
+
 capture program drop _tsvy_fila_vacia
 program define _tsvy_fila_vacia
-    syntax, NIVEL(string) CATEGORIA(string) ANIO(string) FRAME(string) VARNAME(string) [CRUCE(string)]
+    syntax, NIVEL(string) CATEGORIA(string) ANIO(string) FRAME(string) VARNAME(string) ///
+        [CRUCE(string) CATEGORIALBL(string) CRUCELBL(string)]
     capture frame drop FILAS_TMP
     frame create FILAS_TMP
     frame FILAS_TMP {
         quietly set obs 1
         gen str12  NIVEL      = "`nivel'"
         gen double CATEGORIA  = `categoria'
+        gen str80  CATEGORIA_LBL = "`categorialbl'"
         * -- v1.11 -- "gen byte ANIO = `anio'" (un solo paso, con el
         * literal ya adentro del generate) dejaba ANIO en missing: Stata
         * respeta el tipo "byte" declarado LITERALMENTE en el generate
@@ -1995,15 +2775,23 @@ program define _tsvy_fila_vacia
         gen double N_PONDERA  = .
         gen double F_WALD     = .
         gen double P_WALD     = .
+        gen str10  CLD_METODO = ""
+        gen byte   CLD_INCONS = .
         gen double P_MMD      = .
         gen double EFFECT_MMD = .
+        gen double P_KSMMD_KS  = .
+        gen double P_KSMMD_MMD = .
+        gen double F_KW       = .
+        gen double P_KW       = .
         gen str5   GRUPO      = ""
+        gen str5   GRUPO_KW   = ""
         gen double P_VS_REF   = .
         gen str3   SIG_VS_REF = ""
         gen byte   var        = 1
         gen str32  VARNAME    = "`varname'"
         if "`cruce'" != "" {
             gen double CRUCE = `cruce'
+            gen str80  CRUCE_LBL = "`crucelbl'"
         }
         gen double CV = .
         gen str2   REF_ = ""
@@ -2022,6 +2810,128 @@ end
 * Stata (r(9611) si se intenta). Si el motor de svylet_core() cambia,
 * replicar el cambio aca tambien.
 * -------------------------------------------------------------------------
+* -------------------------------------------------------------------------
+* v1.22 -- _tsvy_hajek_rank(): rango poblacional ponderado (Hajek) de
+* `yvar', con mid-rank para empates (Conover 1973 / Hudgens y Satten
+* 2002, citado en Lumley y Scott 2013 seccion 2.1) -- para cada unidad i
+* del grupo (definido por `groupvar', ej. un bloque NIVEL x [CRUCE]),
+* R_i-hat = {F_n-hat(Y_i) + F_n-hat(Y_i-)} / 2, donde F_n-hat es la CDF
+* empirica ponderada (Hajek) de `yvar' DENTRO de ese grupo -- ecuacion
+* (2) del paper, con g(R)=R (Wilcoxon/Kruskal-Wallis; `multiranktest' de
+* `survey' en R llama "KruskalWallis" al mismo test de Wilcoxon cuando
+* el grupo de comparacion tiene mas de 2 niveles). Un SOLO pasaje sobre
+* los datos, agrupando internamente por `groupvar' -- nunca un llamado
+* por grupo, mismo principio de "un solo svy: conjunto" que usa el
+* resto de este archivo. `groupvar' aca es SIEMPRE el bloque NIVEL x
+* [CRUCE] (sin ANIO_): los anios que se van a comparar quedan agrupados
+* JUNTOS a proposito, para que el rango sea relativo a la poblacion
+* COMBINADA de esos anios dentro del bloque -- exactamente la logica de
+* "G" (la variable de agrupacion que se compara) en el paper.
+* `wvar' vacio ("") se trata como sin peso (Hajek con w=1, F_n-hat cae a
+* la CDF empirica simple) -- valido si `svyset' no tiene weight().
+* -------------------------------------------------------------------------
+capture mata: mata drop _tsvy_hajek_rank()
+mata:
+
+void _tsvy_hajek_rank(string scalar yvar, string scalar wvar,
+                       string scalar touse, string scalar groupvar,
+                       string scalar outvar)
+{
+    real colvector y, w, g, outv, grupos, idx, yi, wi, ordi, ysi, wsi, cwi, midri, vv
+    real scalar n, ni, gi, ii, jj, kk, Ntot, cwstart, r, p
+
+    // v1.23 -- reescrita SOLO con subindices explicitos [i,1] y loops
+    // (nunca indexado vectorizado de un solo subindice tipo A[idx] o
+    // A[idx]=B) -- la version anterior tiraba "subscript invalid"
+    // (r(3301)) con datos reales, en los 3 escenarios probados (con
+    // peso, sin peso, con/sin cruce de bloques); mas lenta, pero cada
+    // paso queda inambiguo.
+    st_view(y = ., ., yvar, touse)
+    st_view(g = ., ., groupvar, touse)
+    n = rows(y)
+    if (wvar != "") {
+        st_view(w = ., ., wvar, touse)
+    }
+    else {
+        w = J(n, 1, 1)
+    }
+
+    outv = J(n, 1, .)
+    grupos = uniqrows(g)
+
+    for (gi = 1; gi <= rows(grupos); gi++) {
+        idx = J(0, 1, .)
+        for (r = 1; r <= n; r++) {
+            if (g[r,1] == grupos[gi,1]) idx = idx \ r
+        }
+        ni = rows(idx)
+
+        yi = J(ni, 1, .)
+        wi = J(ni, 1, .)
+        for (r = 1; r <= ni; r++) {
+            yi[r,1] = y[idx[r,1], 1]
+            wi[r,1] = w[idx[r,1], 1]
+        }
+
+        ordi = order(yi, 1)
+        ysi = J(ni, 1, .)
+        wsi = J(ni, 1, .)
+        for (r = 1; r <= ni; r++) {
+            ysi[r,1] = yi[ordi[r,1], 1]
+            wsi[r,1] = wi[ordi[r,1], 1]
+        }
+
+        cwi = J(ni, 1, .)
+        cwi[1,1] = wsi[1,1]
+        for (r = 2; r <= ni; r++) {
+            cwi[r,1] = cwi[r-1,1] + wsi[r,1]
+        }
+        Ntot = cwi[ni,1]
+
+        midri = J(ni, 1, .)
+        ii = 1
+        while (ii <= ni) {
+            jj = ii
+            // v1.26 -- FIX: "jj < ni & ysi[jj+1,1]==..." tiraba
+            // "subscript invalid" (r(3301)) con datos reales -- a
+            // diferencia de C/Stata, el "&" de Mata NO hace
+            // short-circuit (evalua SIEMPRE los dos lados), asi que con
+            // jj==ni igual evaluaba ysi[ni+1,1], fuera de rango. Separado
+            // en un "while" solo con la comparacion de limite y un "if"
+            // + "break" adentro, que solo mira ysi[jj+1,1] cuando jj<ni
+            // ya esta garantizado.
+            while (jj < ni) {
+                if (ysi[jj+1,1] != ysi[ii,1]) break
+                jj++
+            }
+            if (ii == 1) {
+                cwstart = 0
+            }
+            else {
+                cwstart = cwi[ii-1,1]
+            }
+            for (kk = ii; kk <= jj; kk++) {
+                midri[kk,1] = (cwstart + cwi[jj,1]) / (2*Ntot)
+            }
+            ii = jj + 1
+        }
+
+        // posicion r del orden (dentro del grupo) corresponde a la
+        // unidad original ordi[r] DENTRO del grupo, que a su vez es la
+        // fila idx[ordi[r]] del vector completo -- ahi va su mid-rank.
+        for (r = 1; r <= ni; r++) {
+            p = idx[ordi[r,1], 1]
+            outv[p,1] = midri[r,1]
+        }
+    }
+
+    st_view(vv = ., ., outvar, touse)
+    for (r = 1; r <= n; r++) {
+        vv[r,1] = outv[r,1]
+    }
+}
+end
+
 version 14
 * "capture" ACA (a nivel Stata, antes de entrar al bloque mata:), no
 * adentro del bloque -- un "mata drop" de una funcion que todavia no
@@ -2033,10 +2943,42 @@ capture mata: mata drop tsvy_core()
 mata:
 
 void tsvy_core(string scalar bname, string scalar Vname, real scalar df,
-                real scalar alpha, real scalar k)
+                real scalar alpha, real scalar k, | string scalar metodo, real scalar callado)
 {
+    if (args() < 7) callado = 0
+    // v1.24 -- metodo: "bonferroni" (default, retrocompatible si se omite
+    // el argumento o llega vacio), "holm", "fdr" o "lsd". Ver nota junto
+    // a cldmetodo() en el bloque de validacion de opciones (nivel Stata).
+    if (metodo == "") metodo = "bonferroni"
+
+    // v1.25 -- cldmetodo(auto): si el F omnibus es significativo pero el
+    // metodo actual deja TODAS las categorias con la misma letra (el
+    // omnibus rechaza H0 conjunta, ningun par individual la rechaza),
+    // se escala bonferroni -> holm -> fdr -> lsd y se queda con el
+    // PRIMERO (el mas estricto) que ya separe al menos 2 letras. Cada
+    // paso corre en silencio (callado=1); el elegido se re-corre con
+    // avisos y fija r(). r(metodo_usado) dice cual fue. Si ni lsd logra
+    // separar, queda lsd con el aviso de inconsistencia (NO se fuerzan
+    // letras distintas: no hay par significativo que las justifique).
+    if (metodo == "auto") {
+        string rowvector mets
+        real scalar mm
+        mets = ("bonferroni", "holm", "fdr", "lsd")
+        for (mm=1; mm<=4; mm++) {
+            tsvy_core(bname, Vname, df, alpha, k, mets[mm], 1)
+            if (st_numscalar("r(cld_inconsistente)") == 0) break
+            if (mm == 4) break
+        }
+        tsvy_core(bname, Vname, df, alpha, k, mets[mm], callado)
+        st_global("r(metodo_usado)", mets[mm])
+        if (mm > 1 & callado == 0) {
+            printf("{txt}  cldmetodo(auto): F omnibus significativo sin pares" +
+                   " distintos con bonferroni -- se uso {res}%s{txt}.\n", mets[mm])
+        }
+        return
+    }
     real matrix b, V, R, RVR, Pmat
-    real scalar stat_wald, Fstat, p_omni, i, j, npares, t, se, p_raw, p_adj
+    real scalar stat_wald, Fstat, p_omni, i, j, npares, t, se, p_raw
     real scalar k_dim, df_ajustado, k_valida
     real colvector idx_validas, b_valida
     real matrix V_valida
@@ -2049,7 +2991,7 @@ void tsvy_core(string scalar bname, string scalar Vname, real scalar df,
     for (i=1; i<=k; i++) {
         if (missing(V[i,i]) | V[i,i] <= 0) var_degenerada[i] = 1
     }
-    if (sum(var_degenerada) > 0) {
+    if (sum(var_degenerada) > 0 & callado == 0) {
         printf("{txt}Aviso: varianza no definida (o cero) en %g de %g categorias" +
                " -- probablemente una proporcion exactamente 0 o 1 sin variabilidad.\n",
                sum(var_degenerada), k)
@@ -2088,7 +3030,7 @@ void tsvy_core(string scalar bname, string scalar Vname, real scalar df,
         df_ajustado = df - k_dim + 1
         Fstat = (df_ajustado / (k_dim * df)) * stat_wald
         p_omni = 1 - F(k_dim, df_ajustado, Fstat)
-        if (k_valida < k) {
+        if (k_valida < k & callado == 0) {
             printf("{txt}  F omnibus calculado con %g de %g categorias" +
                    " (las de varianza degenerada quedan afuera del" +
                    " contraste, no del reporte -- sus puntos siguen" +
@@ -2100,31 +3042,97 @@ void tsvy_core(string scalar bname, string scalar Vname, real scalar df,
         df_ajustado = .
         Fstat = .
         p_omni = .
-        printf("{txt}  F omnibus no calculable: menos de 2 categorias" +
+        if (callado == 0) printf("{txt}  F omnibus no calculable: menos de 2 categorias" +
                " con varianza definida (%g de %g).\n", k_valida, k)
     }
 
+    // v1.24 -- cldmetodo(): se separa en 3 pasadas (recolectar p crudos
+    // validos -> ajustar segun `metodo' -> volcar a Pmat) en vez del
+    // ajuste Bonferroni de una sola linea de siempre, para poder elegir
+    // entre bonferroni/holm/fdr/lsd sin duplicar el bucle de pares. Los
+    // pares con varianza degenerada o se<=0 NUNCA pasan por el ajuste de
+    // `metodo' -- quedan en "." o en 1 directamente, igual que antes de
+    // v1.24 (el estadistico ahi no esta definido o el par es trivial, no
+    // es un p-valor que Holm/FDR/LSD deban ver).
     npares = k*(k-1)/2
     Pmat = J(k,k,.)
+    real colvector praw_vec, pi_vec, pj_vec, padj_vec, ordp
+    real scalar nvalid, ii, idxo, cand, run_val
+    praw_vec = J(0,1,.)
+    pi_vec   = J(0,1,.)
+    pj_vec   = J(0,1,.)
     for (i=1; i<=k-1; i++) {
         for (j=i+1; j<=k; j++) {
             if (var_degenerada[i]==1 | var_degenerada[j]==1) {
-                p_adj = .
-                Pmat[i,j] = p_adj
-                Pmat[j,i] = p_adj
+                Pmat[i,j] = .
+                Pmat[j,i] = .
                 continue
             }
             se = sqrt(V[i,i] + V[j,j] - 2*V[i,j])
             if (se > 0) {
                 t = (b[j]-b[i]) / se
                 p_raw = 2*ttail(df, abs(t))
-                p_adj = min((p_raw*npares, 1))
+                praw_vec = praw_vec \ p_raw
+                pi_vec   = pi_vec   \ i
+                pj_vec   = pj_vec   \ j
             }
             else {
-                p_adj = 1
+                Pmat[i,j] = 1
+                Pmat[j,i] = 1
             }
-            Pmat[i,j] = p_adj
-            Pmat[j,i] = p_adj
+        }
+    }
+
+    nvalid = rows(praw_vec)
+    if (nvalid > 0) {
+        padj_vec = J(nvalid,1,.)
+        if (metodo == "holm") {
+            // Holm (1979) -- step-down: multiplicador (nvalid-rango+1)
+            // sobre el p-valor crudo, forzando no-decrecimiento a medida
+            // que el rango (ascendente) aumenta via maximo acumulado.
+            ordp = order(praw_vec,1)
+            run_val = 0
+            for (ii=1; ii<=nvalid; ii++) {
+                idxo = ordp[ii,1]
+                cand = min(((nvalid-ii+1)*praw_vec[idxo,1], 1))
+                if (cand < run_val) cand = run_val
+                run_val = cand
+                padj_vec[idxo,1] = cand
+            }
+        }
+        else if (metodo == "fdr") {
+            // Benjamini y Hochberg (1995) -- step-up: multiplicador
+            // (nvalid/rango) de mayor a menor rango, forzando
+            // no-crecimiento via minimo acumulado desde el extremo.
+            ordp = order(praw_vec,1)
+            run_val = 1
+            for (ii=nvalid; ii>=1; ii--) {
+                idxo = ordp[ii,1]
+                cand = min(((nvalid/ii)*praw_vec[idxo,1], 1))
+                if (cand > run_val) cand = run_val
+                run_val = cand
+                padj_vec[idxo,1] = cand
+            }
+        }
+        else if (metodo == "lsd") {
+            // Fisher LSD "protegido" -- sin ajuste de multiplicidad,
+            // pero SOLO si el F omnibus de este bloque ya fue
+            // significativo; si no, ningun par se declara distinto.
+            if (p_omni < . & p_omni < alpha) {
+                for (ii=1; ii<=nvalid; ii++) padj_vec[ii,1] = praw_vec[ii,1]
+            }
+            else {
+                for (ii=1; ii<=nvalid; ii++) padj_vec[ii,1] = 1
+            }
+        }
+        else {
+            // "bonferroni" (default) -- igual que siempre, p_raw*npares
+            padj_vec = rowmin((praw_vec :* npares, J(nvalid,1,1)))
+        }
+
+        for (ii=1; ii<=nvalid; ii++) {
+            Pmat[pi_vec[ii,1], pj_vec[ii,1]] = padj_vec[ii,1]
+            Pmat[pj_vec[ii,1], pi_vec[ii,1]] = padj_vec[ii,1]
         }
     }
 
@@ -2191,6 +3199,22 @@ void tsvy_core(string scalar bname, string scalar Vname, real scalar df,
         if (var_degenerada[i]==1) letra_grupo[i] = "?"
     }
 
+    // v1.25 -- chequeo de consistencia omnibus vs. letras: F omnibus
+    // significativo pero una sola letra comun a todas las categorias.
+    // No es un bug: el omnibus testea la H0 CONJUNTA, que puede
+    // rechazarse sin que ningun par, ajustado, la rechace.
+    real scalar n_letras, incons
+    n_letras = rows(maximales)
+    incons = (p_omni < . & p_omni < alpha & n_letras <= 1)
+    if (incons & callado == 0) {
+        printf("{err}  Aviso CLD: F omnibus significativo (p=%g) pero todas las" +
+               " categorias comparten letra con cldmetodo(%s).\n", p_omni, metodo)
+        printf("{txt}  Ningun par individual es significativo tras el ajuste." +
+               " Pruebe cldmetodo(holm|fdr|lsd|auto) y reporte el criterio usado.\n")
+    }
+    st_numscalar("r(n_letras)", n_letras)
+    st_numscalar("r(cld_inconsistente)", incons)
+    st_global("r(metodo_usado)", metodo)
     st_numscalar("r(F_omnibus)", Fstat)
     st_numscalar("r(p_omnibus)", p_omni)
     st_numscalar("r(n_pares)", npares)

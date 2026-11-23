@@ -1,0 +1,67 @@
+d 'XHDFE': module to estimate high-dimensional fixed effects regression via a c++ plugin
+d
+d      xhdfe estimates linear models with high-dimensional fixed
+d effects (HDFE) using a    C++ backend.  It mirrors the reporting
+d and defaults of reghdfe where possible,    while exposing
+d fixest-style small-sample corrections and ideas from pyfixest,   
+d FixedEffectModels.jl, the within solvers of Fischer and
+d Schroeder, and fereg by    Schmieder.  The command supports
+d multiway fixed effects,    weights, robust and multiway-cluster
+d inference, reghdfe-style singleton dropping	 and DoF
+d adjustments, and (optionally) the group()/individual() machinery. d
+d KW: high-dimensional fixed effects
+d KW: mulkti-way vlustering
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261122
+d
+d Author: Miguel Portela, Universidade do Minho
+d Support: email miguel.portela@@eeg.uminho.pt
+d
+d Author: Tiago Tavares, Universidade do Minho
+d Support: email tgstavares@@eeg.uminho.pt
+d
+f xhdfe.ado
+g LINUX64 xhdfe.linux64.plugin xhdfe.plugin
+g LINUX64P xhdfe.linux64.plugin xhdfe.plugin
+g MACARM64 xhdfe.macos-universal.plugin xhdfe.plugin
+g OSX.ARM64 xhdfe.macos-universal.plugin xhdfe.plugin
+g MACINTEL64 xhdfe.macos-universal.plugin xhdfe.plugin
+g OSX.X8664 xhdfe.macos-universal.plugin xhdfe.plugin
+g WIN64 xhdfe.win64.plugin xhdfe.plugin
+g LINUX64 xfepout.linux64.plugin xfepout.plugin
+g LINUX64P xfepout.linux64.plugin xfepout.plugin
+g MACARM64 xfepout.macos-universal.plugin xfepout.plugin
+g OSX.ARM64 xfepout.macos-universal.plugin xfepout.plugin
+g MACINTEL64 xfepout.macos-universal.plugin xfepout.plugin
+g OSX.X8664 xfepout.macos-universal.plugin xfepout.plugin
+g WIN64 xfepout.win64.plugin xfepout.plugin
+h xhdfe.plugin
+h xfepout.plugin
+G MACARM64 xhdfe_libomp.dylib xhdfe_libomp.dylib
+G OSX.ARM64 xhdfe_libomp.dylib xhdfe_libomp.dylib
+G MACINTEL64 xhdfe_libomp.dylib xhdfe_libomp.dylib
+G OSX.X8664 xhdfe_libomp.dylib xhdfe_libomp.dylib
+f xhdfe.sthlp
+f xfepout.ado
+f xfepout.sthlp
+f xhdfe_estat.ado
+f xhdfe_example_cluster.do
+f xhdfe_example_partial_out.do
+f xhdfe_examples.sthlp
+f xhdfe_p.ado
+f xhdfeakm.ado
+f xhdfeakm.sthlp
+f xhdfeconnected.ado
+f xhdfeconnected.sthlp
+f xhdfegelbach.ado
+f xhdfegelbach.sthlp
+f xhdfegelbachbootstrap.ado
+f xhdfegelbachbootstrap.sthlp
+f xhdfegelbachcoefplot.ado
+f xhdfegelbachcoefplot.sthlp
+f xhdfegelbachetable.ado
+f xhdfegelbachetable.sthlp
+f xhdfegpu.ado
+f xhdfegpu.sthlp

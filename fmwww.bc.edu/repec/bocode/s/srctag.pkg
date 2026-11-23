@@ -1,0 +1,30 @@
+d 'SRCTAG': module to stamp variables with source lineage and search it
+d
+d  srctag records where each variable came from (source, vintage,
+d notes, agency, dataset, URL, category) in variable
+d characteristics, which survive save, merge, and append. It
+d refuses to overwrite an existing tag unless told to, keeps a
+d dataset-level list of sources, and can sign the data so stale
+d tags are detected. The companion command srcfind searches these
+d tags in memory or across a folder of .dta files, audits for
+d untagged variables, and exports every tag as a dataset that
+d srctag apply can read back after review. A test battery ships as
+d an ancillary file. 
+d
+d KW: provenance; data lineage; metadata; characteristics; documentation; data management
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261122
+d
+d Author: Eric A. Booth, Texas 2036
+d Support: email eric.a.booth@@gmail.com
+d
+d Author: Elizabeth Teas, Far Harbor, LLC
+d Support: email elizabeth@@farharbor.com
+d
+f srcfind.ado
+f srctag.ado
+f srcfind.sthlp
+f srctag.sthlp
+f ../t/test_srctag.do

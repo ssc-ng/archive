@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.20  24sep2026}{...}
+{* *! version 1.29  19nov2026}{...}
 {vieweralsosee "tsvy (English)" "help tsvy"}{...}
 {viewerjumpto "Sintaxis" "tsvy_es##syntax"}{...}
 {viewerjumpto "Descripcion" "tsvy_es##description"}{...}
@@ -19,7 +19,7 @@ Wald/Bonferroni/CLD, por nivel de agregacion y anio, para datos de
 encuestas complejas
 
 {phang}
-{it:Version {bf:1.20} (24sep2026)}{p_end}
+{it:Version {bf:1.29} (19nov2026)}{p_end}
 
 {marker syntax}{...}
 {title:Sintaxis}
@@ -86,7 +86,7 @@ comparaciones) -- una pregunta DISTINTA de {cmd:GRUPO} (CLD de todos los
 pares){p_end}
 
 {syntab:MMD (opcional, apagado por defecto)}
-{synopt:{opt mmd}}corre ademas {cmd:mmd_2s} (test de dos muestras
+{synopt:{opt mmd}}[NO usa el diseno -- {cmd:mmd_2s} solo recibe un aweight, sin estratos/UPM; preferir {opt ksmmd}] corre ademas {cmd:mmd_2s} (test de dos muestras
 Maximum Mean Discrepancy, {browse "https://ideas.repec.org/c/boc/bocode/s459820.html":ssc install mmd_2s}),
 comparando los 2 anios indicados en {cmd:mmdyears()} en cada bloque, y
 agregando {cmd:P_MMD}/{cmd:EFFECT_MMD} al frame acumulador. Apagado por
@@ -114,6 +114,66 @@ defecto {cmd:mmdboot(200)}{p_end}
 defecto {cmd:mmdreps(20)}{p_end}
 {synopt:{opt mmdseed(#)}}opcion {cmd:seed()} pasada a {cmd:mmd_2s}; por
 defecto {cmd:mmdseed(12345)}{p_end}
+
+{syntab:KSMMD (opcional, apagado por defecto; con diseno muestral)}
+{synopt:{opt ksmmd}}corre {helpb ksmmd} (estadistico KS k-muestral de Kiefer y
+un MMD k-muestral con random Fourier features) comparando la distribucion de
+{opt varname()} entre los anios de cada bloque, {it:con el diseno muestral}: la
+etiqueta de anio se permuta a nivel de UPM (cada UPM viaja entero, con los
+pesos de sus unidades), dentro de estratos cuando estos mezclan anios. UPM,
+estratos y peso se leen de {cmd:e()} tras el {cmd:svy:} del bloque -- es decir,
+de {helpb svyset}; no hay opcion de peso aparte. Si ningun estrato del bloque
+mezcla anios (p.ej. estratos redefinidos cada anio), {cmd:tsvy} pasa
+{cmd:nostratperm} a {cmd:ksmmd} automaticamente. Agrega
+{cmd:P_KSMMD_KS}/{cmd:P_KSMMD_MMD} al frame acumulador. Reemplaza a
+{cmd:mmd} cuando el diseno importa. Requiere {cmd:ksmmd}
+(v0.8 o posterior) y {cmd:boot(0)}. Limites heredados de {cmd:ksmmd}: solo
+la primera etapa de muestreo, sin fpc, y {opt subpop()} se aplica como
+{cmd:if} plano (los UPM que quedan sin observaciones se descartan){p_end}
+{synopt:{opt ksmmdyears(numlist)}}anios (de {cmd:years()}) a comparar; por
+defecto todos los presentes en el bloque (k-muestral, como {cmd:F_WALD}){p_end}
+{synopt:{opt ksmmdreps(#)}}permutaciones; por defecto {cmd:ksmmdreps(1000)},
+minimo 99{p_end}
+{synopt:{opt ksmmdseed(#)}}semilla; por defecto {cmd:ksmmdseed(12345)}{p_end}
+{synopt:{opt ksmmdtype(string)}}{cmd:vspool} (defecto), {cmd:maxpairwise} o
+{cmd:fuse}; ver {helpb ksmmd}{p_end}
+{synopt:{opt ksmmdfeat(#)}}numero de random Fourier features; por defecto
+{cmd:ksmmdfeat(200)}{p_end}
+
+{syntab:KWALLIS (opcional, apagado por defecto)}
+{synopt:{opt kwallis}}corre ademas un test de rangos design-based
+(Lumley y Scott, 2013, {it:Biometrika} 100(4):831-842 -- el metodo
+detras de {cmd:survey::svyranktest()}/{cmd:multiranktest()} de R) por
+cada bloque, agregando {cmd:F_KW}/{cmd:P_KW}/{cmd:GRUPO_KW} al frame
+acumulador. A diferencia de {cmd:mmd}, reusa el MISMO peso que ya fijo
+{helpb svyset} (sin opcion de peso aparte) y no agrega costo real de
+tiempo: es un {cmd:svy: mean} extra sobre un rango derivado, no un
+procedimiento de remuestreo. Requiere {cmd:stat(mean)} y no esta
+soportado con {cmd:boot()>0}. {bf:Importante:} {cmd:F_KW}/{cmd:P_KW}
+testean una hipotesis nula DISTINTA a la de {cmd:F_WALD} -- ver
+{help tsvy_es##remarks_kwallis:Comentarios: kwallis()} antes de tratarlos
+como intercambiables{p_end}
+
+{syntab:CLDMETODO (default auto desde v1.29)}
+{synopt:{opt cldmetodo(string)}}que ajuste de multiplicidad usa
+{cmd:tsvy_core} para pasar de p-valores pareados crudos a {cmd:GRUPO} (y
+{cmd:GRUPO_KW}, si {cmd:kwallis} esta activo): {cmd:auto} (por
+defecto desde v1.29: Bonferroni, y solo en los bloques con F omnibus
+significativo y una sola letra escala bonferroni -> holm -> fdr -> lsd
+hasta separar letras; el metodo usado queda en la columna
+{cmd:CLD_METODO}), {cmd:bonferroni} (el default anterior), {cmd:holm},
+{cmd:fdr} o {cmd:lsd}. Nunca cambia el F omnibus ni el algoritmo de asignacion de
+letras en si, solo que par cuenta como "no significativamente distinto".
+Ver {help tsvy_es##remarks_cldmetodo:Comentarios: cldmetodo()}{p_end}
+
+{syntab:DFMODE (v1.28)}
+{synopt:{opt dfmode(string)}}grados de libertad que usan {cmd:F_WALD}/{cmd:P_WALD},
+{cmd:GRUPO} y {cmd:P_VS_REF} en cada bloque: {cmd:subpop} (por defecto; mismo
+{it:n-L} que {cmd:svy, subpop(if bloque):}), {cmd:kg} (Korn y Graubard 1999,
+p. 209: solo UPM y estratos con observaciones del bloque; equivale a
+{cmd:dofsubpop}) o {cmd:full} (df del diseno, comportamiento de v1.27 y
+anteriores). Estimaciones, errores estandar y CV no cambian. Ver
+{help tsvy_es##remarks_dfmode:Comentarios: dfmode()}{p_end}
 
 {syntab:Salida}
 {synopt:{opt frame(name)}}frame acumulador; por defecto
@@ -299,6 +359,7 @@ Los comentarios se presentan bajo los siguientes titulos:
 {phang2}{help tsvy_es##remarks_nacional:La convencion NACIONAL}{p_end}
 {phang2}{help tsvy_es##remarks_subpop:subpop() vs if}{p_end}
 {phang2}{help tsvy_es##remarks_limits:Diferencias con tabsvy, y limitaciones actuales}{p_end}
+{phang2}{help tsvy_es##remarks_export:Exportar resultados}{p_end}
 
 {marker remarks_nacional}{...}
 {pstd}{bf:La convencion NACIONAL}
@@ -441,6 +502,118 @@ ese bloque, el mismo criterio de degradar sin cortar que ya tiene
 {cmd:P_VS_REF}. Ver {help tsvy_es##options:mmdyears()} sobre por que ya
 no depende de {cmd:refyear()} vs el ultimo anio.
 
+{marker remarks_kwallis}{...}
+{pstd}{bf:kwallis(): una hipotesis nula distinta, no un F_WALD mejorado}
+
+{pstd}
+{cmd:F_WALD} testea H0: mu_1=...=mu_k -- igualdad de las {it:k} MEDIAS
+de encuesta estimadas. {cmd:kwallis}, aunque sea design-based, sigue
+testeando la H0 clasica de Kruskal-Wallis/Wilcoxon: H0: F_1=...=F_k --
+igualdad de DISTRIBUCION (dominancia estocastica/localizacion), no de
+medias. Lo que cambia con el muestreo complejo es solo COMO se calcula
+el estadistico (un rango poblacional en vez de un rango de muestra, y
+varianza design-based en vez de la varianza libre de distribucion
+clasica); no hace que los dos tests respondan la misma pregunta. Un
+{cmd:F_WALD} significativo con un {cmd:P_KW} no significativo (o al
+reves) no es una contradiccion -- pueden discrepar legitimamente, porque
+testean cosas distintas. {cmd:kwallis} tampoco sustituye a {cmd:mmd}:
+{cmd:mmd_2s} es genuinamente omnibus (via kernel mean embedding,
+consistente contra CUALQUIER diferencia distribucional -- forma, escala,
+localizacion) pero solo de 2 muestras; {cmd:kwallis} es k-muestral (como
+{cmd:F_WALD}) pero, como cualquier test de rangos, tiene poca o nula
+potencia contra una diferencia de pura escala/forma con la misma
+mediana. Los 3 tests responden 3 preguntas distintas; ninguno sustituye
+a los otros 2.
+
+{pstd}
+Metodo: para cada bloque, el rango poblacional de {opt varname()} se
+estima via la CDF empirica ponderada por Hajek (con mid-ranks para
+empates), usando el MISMO peso que ya fijo {helpb svyset} -- agrupando
+TODOS los anios que se comparan dentro de ese bloque, para que el rango
+sea relativo a la poblacion combinada del bloque, no a un solo anio. Ese
+rango se trata despues como una variable cualquiera para el resto del
+motor: {cmd:svy: mean} del rango, con el mismo {cmd:over()} de celdas
+bloque x anio que ya usa {cmd:F_WALD}, alimentando el mismo motor de
+F omnibus/Bonferroni/CLD. No es una ponderacion ad-hoc del H clasico --
+es exactamente la construccion que Lumley y Scott (2013) demuestran
+asintoticamente equivalente a usar el rango poblacional real
+(no observable): no hace falta una formula de varianza nueva, la
+varianza design-based estandar de una media de dominio ya es la varianza
+correcta para este test.
+
+{pstd}
+Alcance actual: solo {cmd:stat(mean)}, solo {cmd:boot()==0}, no reporta
+tamano de efecto (las formulas de eta-cuadrado/epsilon-cuadrado ordinal
+que se usan para el H clasico sin ponderar no aplican a esta
+construccion de Wald-sobre-rangos, asi que se omiten en vez de
+aplicarlas mal). {bf:Esta opcion no se corrio contra Stata real} --
+probarla primero con un ejemplo chico y revisar que
+{cmd:F_KW}/{cmd:P_KW}/{cmd:GRUPO_KW} salgan razonables antes de confiar
+en ella con datos de produccion.
+
+{marker remarks_dfmode}{...}
+{pstd}{bf:dfmode(): grados de libertad del bloque}
+
+{pstd}
+{cmd:tsvy} estima todos los bloques de una variable de {cmd:nivel()} con un solo
+{cmd:svy: ..., over()} conjunto y corta {cmd:e(b)}/{cmd:e(V)} por bloque. Hasta
+v1.27 el test usaba el df del diseno ({cmd:e(df_r)} de la corrida conjunta) en
+todos los bloques, que puede ser ordenes de magnitud mayor que el df de un
+bloque chico (por ejemplo 15,149 frente a 365 en un departamento).
+{cmd:svy, subpop(if bloque):} descarta los estratos sin observaciones del
+bloque, y Korn y Graubard (1999, p. 209) recomiendan contar solo las UPM y
+estratos con observaciones del bloque. Desde v1.28 el {cmd:dfmode(subpop)} por
+defecto reproduce el df de {cmd:svy, subpop():} y {cmd:dfmode(kg)} el de
+Korn-Graubard. Use {cmd:dfmode(full)} para reproducir salidas antiguas. Los
+pares con p ajustado cercano a {cmd:alpha} pueden cambiar de letra.{p_end}
+
+{marker remarks_cldmetodo}{...}
+{pstd}{bf:cldmetodo(): alternativas a Bonferroni para GRUPO/CLD}
+
+{pstd}
+Por defecto {cmd:tsvy} ajusta cada p-valor pareado con una correccion de
+Bonferroni directa ({cmd:p_adj = min(p_raw*npares, 1)}) antes de decidir
+que pares comparten letra en {cmd:GRUPO}. {cmd:cldmetodo()} elige un
+ajuste distinto para ESE paso puntual; nunca toca el F omnibus
+({cmd:F_WALD}/{cmd:F_KW}) ni el algoritmo de letras de subconjuntos
+maximales en si, ninguno de los dos se ve afectado por esta opcion.
+
+{phang2}o {cmd:auto} (por defecto desde v1.29): Bonferroni en todo bloque
+donde ya separa letras; solo cuando el F omnibus es significativo y
+Bonferroni deja a todos los anios con la misma letra, prueba holm, fdr y
+lsd, en ese orden, y se queda con el primero que separe. {cmd:CLD_METODO}
+registra el metodo de cada bloque y {cmd:CLD_INCONS}=1 marca los bloques
+que ni con lsd separan.{p_end}
+{phang2}o {cmd:bonferroni}: el default hasta v1.28 -- use
+{cmd:cldmetodo(bonferroni)} para reproducir resultados anteriores.{p_end}
+{phang2}o {cmd:holm}: Holm (1979), {it:Scandinavian Journal of
+Statistics} 6(2):65-70 -- un procedimiento secuencial (step-down) que
+controla la misma tasa de error familywise que Bonferroni bajo los mismos
+supuestos, pero es uniformemente mas potente (nunca rechaza MENOS pares
+que Bonferroni, a veces mas). Hay poco motivo para preferir
+{cmd:bonferroni} sobre {cmd:holm}, salvo para igualar resultados ya
+publicados con la correccion de Bonferroni simple.{p_end}
+{phang2}o {cmd:fdr}: Benjamini y Hochberg (1995), {it:JRSS-B} 57(1):
+289-300 -- controla la {it:tasa de falsos descubrimientos} (la proporcion
+esperada de rechazos falsos entre los pares declarados distintos), no la
+probabilidad de un solo error falso en toda la familia. Es un criterio de
+error DISTINTO, no simplemente un Bonferroni mas laxo: responde "de los
+pares que declaro distintos, cuantos es probable que esten mal" en vez de
+"que tan probable es al menos un error en algun lado".{p_end}
+{phang2}o {cmd:lsd}: LSD "protegido" de Fisher (Fisher 1935/1937, {it:The
+Design of Experiments}; la etiqueta "protegido" y su evaluacion Monte
+Carlo son de Carmer y Swanson (1973), {it:JASA} 68(341):66-74; defendido
+explicitamente en Saville (1990), {it:The American Statistician}
+44(2):174-180). Los p-valores pareados se usan SIN AJUSTAR contra
+{cmd:alpha()}, y solo si el F omnibus de ese bloque ya fue significativo
+-- si no lo fue, ningun par se declara distinto (ese filtro del F omnibus
+es la "proteccion"). Es la opcion con mas probabilidad de mostrar una
+letra distinta cuando {cmd:F_WALD} (o {cmd:F_KW}) es significativo, pero
+a costa de abandonar por completo el control familywise (vuelve a la tasa
+de error por comparacion/comparisonwise). No es "mejor" que
+{cmd:bonferroni}/{cmd:holm} -- es una garantia de error mas debil a
+cambio de mas potencia, y debe reportarse como tal.{p_end}
+
 {marker remarks_limits}{...}
 {pstd}{bf:Diferencias con tabsvy, y limitaciones actuales}
 
@@ -506,6 +679,16 @@ replicas de remuestreo por bloque via bootstrap -- un mecanismo
 distinto, que implementa la misma matematica exacta de
 F-test/Bonferroni/CLD y da resultados identicos de cualquier
 forma.{p_end}
+
+{marker remarks_export}{...}
+{pstd}{bf:Exportar resultados}
+
+{pstd}
+El frame acumulador que arma {cmd:tsvy} (ver
+{help tsvy_es##frame:Estructura del frame} mas abajo) se puede escribir
+a Excel o Word con el comando aparte {helpb tsvyexport}, que se corre
+despues sobre ese mismo frame. Ver su propio help para sintaxis y
+opciones.{p_end}
 
 
 {marker examples}{...}
@@ -790,7 +973,15 @@ por (nivel de {cmd:nivel()}, valor, [valor de {it:cruce}], anio):
 fila (sin el {cmd:_} final si lo tuviera, siguiendo la convencion de
 {cmd:tabsvy} -- ej. {cmd:NOMBREDD_} se convierte en {cmd:NOMBREDD}){p_end}
 {synopt:{cmd:CATEGORIA}}el valor de la variable de {cmd:NIVEL} para esta fila{p_end}
+{synopt:{cmd:CATEGORIA_LBL}}el texto de la etiqueta de valor de
+{cmd:CATEGORIA} (v1.21), ej. {cmd:"Puno"} cuando la variable de
+{cmd:nivel()} tiene una etiqueta de valor asignada; en blanco
+({cmd:""}), nunca missing, cuando no la tiene -- revise si esta en
+blanco para volver al codigo numerico de {cmd:CATEGORIA}{p_end}
 {synopt:{cmd:CRUCE}}valor de {cmd:cruce()}, si se dio{p_end}
+{synopt:{cmd:CRUCE_LBL}}el texto de la etiqueta de valor de {cmd:CRUCE}
+(v1.21), misma logica que {cmd:CATEGORIA_LBL}; solo presente si se dio
+{cmd:cruce()}{p_end}
 {synopt:{cmd:var}}fijo en 1 (se mantiene solo por compatibilidad de
 columnas con el propio frame de {cmd:tabsvy}, donde identifica una
 categoria de una variable categorica){p_end}
@@ -822,6 +1013,11 @@ utilizable igual trae {cmd:ESTIMA}/{cmd:ERROR_ST}/etc. de ese anio, con
 {help tsvy_es##remarks_limits:Comentarios: diferencias con tabsvy}{p_end}
 {synopt:{cmd:GRUPO}}el codigo del Compact Letter Display para el anio de
 {it:esta fila} dentro de su bloque -- varia por anio{p_end}
+{synopt:{cmd:CLD_METODO}}(v1.29) metodo de ajuste realmente usado para
+{cmd:GRUPO} en este bloque (con {cmd:cldmetodo(auto)} puede variar entre
+bloques){p_end}
+{synopt:{cmd:CLD_INCONS}}(v1.29) 1 si {cmd:P_WALD} < {cmd:alpha()} pero
+todos los anios del bloque comparten letra con {cmd:CLD_METODO}{p_end}
 {synopt:{cmd:P_VS_REF}}p-valor ajustado por Bonferroni ({it:k}-1
 comparaciones) del anio de {it:esta fila} contra {cmd:refyear()}; missing
 si no se especifico {cmd:refyear()}, y siempre missing en la fila del
@@ -840,19 +1036,37 @@ comparacion no se pudo correr (ver
 {synopt:{cmd:EFFECT_MMD}}el estadistico de tamano de efecto que
 acompana a {cmd:P_MMD} para esa misma comparacion de dos anios -- mismas
 reglas de missing que {cmd:P_MMD}{p_end}
+{synopt:{cmd:P_KSMMD_KS}}p-valor de permutacion del estadistico KS
+k-muestral de Kiefer de {cmd:ksmmd}, con diseno (permutacion por UPM/estratos).
+{it:Constante en todos los anios dentro del mismo bloque}. Missing salvo que se
+pase {cmd:ksmmd}, o si {cmd:ksmmd} fallo en ese bloque (UPM solitario, UPM que
+mezcla anios, menos de 2 anios con datos){p_end}
+{synopt:{cmd:P_KSMMD_MMD}}igual, para el estadistico MMD k-muestral
+({cmd:ksmmdtype()}); mismas reglas de missing{p_end}
+{synopt:{cmd:F_KW}}estadistico F omnibus del test de rangos design-based
+(Lumley y Scott, 2013) entre todos los anios del bloque -- {it:constante
+entre todos los anios dentro del mismo bloque}, mismo patron que
+{cmd:F_WALD}/{cmd:P_WALD}. Missing salvo que se haya pasado
+{cmd:kwallis}. {bf:Testea una H0 DISTINTA a la de {cmd:F_WALD}} -- ver
+{help tsvy_es##remarks_kwallis:Comentarios: kwallis()}{p_end}
+{synopt:{cmd:P_KW}}p-valor de {cmd:F_KW}{p_end}
+{synopt:{cmd:GRUPO_KW}}el codigo de Compact Letter Display del test de
+rangos para el anio de {it:esta fila} dentro de su bloque -- varia por
+anio, mismo patron que {cmd:GRUPO} pero de un test distinto{p_end}
 {p2colreset}{...}
 
 {pstd}
-Como {cmd:F_WALD}/{cmd:P_WALD}/{cmd:P_MMD}/{cmd:EFFECT_MMD} son
-constantes dentro de un bloque y {cmd:GRUPO} varia por anio, un
-{cmd:reshape wide} posterior deberia listar {cmd:GRUPO} entre las
-variables que se reestructuran (asi se convierte en {cmd:GRUPO2023},
-{cmd:GRUPO2024}, ...) pero dejar {cmd:F_WALD}/{cmd:P_WALD}/{cmd:P_MMD}/
-{cmd:EFFECT_MMD} en {cmd:i()} en cambio, para que se lleven una sola vez
-por bloque en vez de repetirse innecesariamente por anio:
+Como {cmd:F_WALD}/{cmd:P_WALD}/{cmd:P_MMD}/{cmd:EFFECT_MMD}/{cmd:F_KW}/
+{cmd:P_KW} son constantes dentro de un bloque y {cmd:GRUPO}/
+{cmd:GRUPO_KW} varian por anio, un {cmd:reshape wide} posterior deberia
+listar {cmd:GRUPO}/{cmd:GRUPO_KW} entre las variables que se
+reestructuran (asi se convierten en {cmd:GRUPO2023}, {cmd:GRUPO2024},
+...) pero dejar {cmd:F_WALD}/{cmd:P_WALD}/{cmd:P_MMD}/{cmd:EFFECT_MMD}/
+{cmd:F_KW}/{cmd:P_KW} en {cmd:i()} en cambio, para que se lleven una
+sola vez por bloque en vez de repetirse innecesariamente por anio:
 
-{phang2}{cmd:. reshape wide ESTIMA REF_ ERROR_ST LIM_INF LIM_SUP CV N_PONDERA N_SIN_PON GRUPO,}{p_end}
-{phang2}{cmd:        i(NIVEL CATEGORIA var VARNAME F_WALD P_WALD P_MMD EFFECT_MMD) j(ANIO)}{p_end}
+{phang2}{cmd:. reshape wide ESTIMA REF_ ERROR_ST LIM_INF LIM_SUP CV N_PONDERA N_SIN_PON GRUPO GRUPO_KW,}{p_end}
+{phang2}{cmd:        i(NIVEL CATEGORIA var VARNAME F_WALD P_WALD P_MMD EFFECT_MMD P_KSMMD_KS P_KSMMD_MMD F_KW P_KW) j(ANIO)}{p_end}
 
 {pstd}
 Este esquema es por lo demas compatible con la mitad de estimaciones
@@ -865,18 +1079,78 @@ su propio reshape.
 {title:Referencias}
 
 {pstd}
-Los contrastes
-{it:k}-1 contra la base de {cmd:refyear()} usan la misma correccion de
-Bonferroni que {cmd:GRUPO}, aplicada a una familia de comparaciones mas
-chica y DISTINTA (Dunn, O.J. 1961. Multiple comparisons among means.
-{it:Journal of the American Statistical Association} 56(293): 52-64).
+Bonferroni, C.E. 1936. Teoria statistica delle classi e calcolo delle
+probabilita. {it:Pubblicazioni del R Istituto Superiore di Scienze
+Economiche e Commerciali di Firenze} 8: 3-62. El nombre detras de
+{cmd:cldmetodo(bonferroni)} (por defecto) -- sin DOI, no indexado en
+ninguna base de datos mayor; la fuente citable real de la correccion tal
+como se usa aqui es Dunn (1961) mas abajo, que tambien usan los
+contrastes {it:k}-1 contra la base de {cmd:refyear()}, aplicada a una
+familia de comparaciones mas chica y DISTINTA.
+
+{pstd}
+Dunn, O.J. 1961. Multiple comparisons among means. {it:Journal of the
+American Statistical Association} 56(293): 52-64.
+doi:10.1080/01621459.1961.10482090
+
+{pstd}
+Fisher, R.A. 1935/1937. {it:The Design of Experiments}. Edinburgh: Oliver
+and Boyd. Libro, sin DOI. Fuente de la diferencia minima significativa
+detras de {cmd:cldmetodo(lsd)} (el procedimiento de 2 pasos "testear el
+par solo si el F omnibus ya fue significativo" es de Fisher mismo; la
+etiqueta "protegido" no lo es -- ver Carmer y Swanson mas abajo).
+
+{pstd}
+Carmer, S.G., Swanson, M.R. 1973. An evaluation of ten pairwise multiple
+comparison procedures by Monte Carlo methods. {it:Journal of the American
+Statistical Association} 68(341): 66-74. doi:10.1080/01621459.1973.10481335
+Fuente de la etiqueta "protegido" y su evaluacion empirica para
+{cmd:cldmetodo(lsd)}.
+
+{pstd}
+Saville, D.J. 1990. Multiple comparison procedures: the practical
+solution. {it:The American Statistician} 44(2): 174-180.
+doi:10.1080/00031305.1990.10475712 Defensa explicita del LSD protegido de
+Fisher, citada para {cmd:cldmetodo(lsd)}.
+
+{pstd}
+Holm, S. 1979. A simple sequentially rejective multiple test procedure.
+{it:Scandinavian Journal of Statistics} 6(2): 65-70. doi:10.2307/4615733
+Fuente de {cmd:cldmetodo(holm)}.
+
+{pstd}
+Benjamini, Y., Hochberg, Y. 1995. Controlling the false discovery rate: a
+practical and powerful approach to multiple testing. {it:Journal of the
+Royal Statistical Society, Series B} 57(1): 289-300.
+doi:10.1111/j.2517-6161.1995.tb02031.x Fuente de {cmd:cldmetodo(fdr)}.
+
+{pstd}
+Miller, R.G. 1981. {it:Simultaneous Statistical Inference}, 2a ed. Nueva
+York: Springer. doi:10.1007/978-1-4613-8122-8 Marco de fondo general
+sobre los procedimientos de comparaciones multiples comparados arriba
+(libro).
+
+{pstd}
+Piepho, H.P. 2004. An algorithm for a letter-based representation of
+all-pairwise comparisons. {it:Journal of Computational and Graphical
+Statistics} 13(2): 456-466. doi:10.1198/1061860043515 El algoritmo de
+letras de {cmd:GRUPO}/{cmd:GRUPO_KW} apunta al mismo objeto
+correctamente definido (subconjuntos maximales de categorias sin
+diferencia significativa entre si), aunque la busqueda por fuerza bruta
+de subconjuntos maximales que usa {cmd:tsvy_core} es un calculo distinto
+y menos eficiente que llega al mismo resultado.
+
+{pstd}
+Lumley, T., Scott, A.J. 2013. Two-sample rank tests under complex
+sampling. {it:Biometrika} 100(4): 831-842. doi:10.1093/biomet/ast027
+Base metodologica de {cmd:kwallis()}.
 
 {pstd}
 West, B.T., Berglund, P.A., Heeringa, S.G. 2008. A closer examination of
 subpopulation analysis of complex-sample survey data. {it:Stata Journal}
-8(4): 520-531. Referencia canonica de {help
-tsvy_es##remarks_subpop:por que subpop() difiere de if}, el mecanismo
-detras de {cmd:subpop()} (la incorporacion principal de esta version).
+8(4): 520-531. doi:10.1177/1536867X0800800404 Referencia canonica de
+{help tsvy_es##remarks_subpop:por que subpop() difiere de if}, el
+mecanismo detras de {cmd:subpop()}.
 
 
 {marker author}{...}
@@ -893,7 +1167,7 @@ Public License v3 (https://www.gnu.org/licenses/gpl-3.0.txt).
 {title:Vea tambien}
 
 {psee}
-En linea: {helpb svy}
+En linea: {helpb svy}, {helpb tsvyexport}
 {p_end}
 
 {psee}

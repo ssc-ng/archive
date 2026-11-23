@@ -186,6 +186,7 @@ p tuples module for selecting all possible tuples from a list
 p turnbull module to estimate the Turnbull empirical distribution estimator of willingness to pay
 p tvdiff module to compute pre- and post-treatment estimation of the Average Treatment Effect (ATE) with binary time-varying treatment
 p tvgc module to perform Time-Varying Granger Causality tests
+p tvpc module to implement Time-variant Peter-Clark (TV-PC) causal discovery for time series
 p tvpreg module to perform parameter path estimation in unstable environments
 p tvthresh module to estimate time-varying threshold models and tests 
 p tvtie module to estimate time-varying true individual-effects stochastic frontier models

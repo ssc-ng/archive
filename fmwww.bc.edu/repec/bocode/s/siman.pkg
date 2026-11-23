@@ -1,0 +1,56 @@
+d 'SIMAN': module providing suite of analysing the results of simulation studies and producing graphs
+d
+d  A suite of programs for the analysis of simulation studies:
+d importing estimates data, computing performance measures and
+d graphing the results. It is based around the ADEMP structure of
+d Morris et al (2019) and builds on the analysis facilities in
+d simsum. 
+d
+d KW: simulkation
+d KW: graphics
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261122
+d
+d Author: Ian White, MRC Clinical Trials Unit at UCL
+d Support: email ian.white@@ucl.ac.uk
+d
+d Author:  Ella Marley-Zagar, MRC Clinical Trials Unit at UCL
+d Support: email e.marley-zagar@@ucl.ac.uk
+d
+d Author: Tim P. Morris, University College London
+d Support: email tim.morris@@ucl.ac.uk
+d
+f siman.ado
+f siman.sthlp
+f siman_analyse.ado
+f siman_analyse.sthlp
+f siman_blandaltman.ado
+f siman_blandaltman.sthlp
+f siman_comparemethodsscatter.ado
+f siman_comparemethodsscatter.sthlp
+f siman_describe.ado
+f siman_describe.sthlp
+f siman_examples.do
+f siman_examples.log
+f siman_import.ado
+f siman_import.sthlp
+f siman_lollyplot.ado
+f siman_lollyplot.sthlp
+f siman_nestloop.ado
+f siman_nestloop.sthlp
+f siman_scatter.ado
+f siman_scatter.sthlp
+f siman_setup.ado
+f siman_setup.sthlp
+f siman_swarm.ado
+f siman_swarm.sthlp
+f siman_table.ado
+f siman_table.sthlp
+f siman_zipplot.ado
+f siman_zipplot.sthlp
+f simcheck.dta
+f ../e/extendedtestdata.dta
+f ../n/nestloop.ado
+f ../n/nestloop.sthlp

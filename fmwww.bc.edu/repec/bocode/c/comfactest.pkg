@@ -1,0 +1,22 @@
+d 'COMFACTEST': module to test common factor (COMFAC) restrictions for EGLS estimation with AR(1) to AR(4) errors
+d
+d     comfactest tests whether a static regression with AR(p)
+d errors, p = 1, 2, 3 or 4, can be used in place of the
+d unrestricted	  regression that adds lags 1 to p of the dependent
+d variable and of every non-constant regressor. Write b(0,j) for
+d the	 coefficient of regressor j, b(l,j) for the coefficient of
+d its lag l, and c(l) for the coefficient of lag l of the dependent
+d    variable in the unrestricted regression. 
+d
+d KW: common factor restrictions
+d KW: COMFAC
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261122
+d
+d Author: Ozan Eruygur,  Ankara Haci Bayram Veli University
+d Support: email eruygur@@gmail.com
+d
+f comfactest.ado
+f comfactest.sthlp

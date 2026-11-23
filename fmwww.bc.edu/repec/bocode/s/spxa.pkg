@@ -1,0 +1,33 @@
+d 'SPXA': module implementing Lévy Process Algebra
+d
+d  spxa defines Lévy processes as Stata objects that carry their
+d exact Lévy–Khintchine triplet, cumulants, and simulation
+d routines. Processes are composed using +, *, and @
+d (subordination); core commands define processes, simulate sample
+d paths ready for xtset, and report triplets and cumulants in r().
+d Because the underlying algebra is exact rather than numerical,
+d composed models maintain the precision of their components while
+d explicitly declaring their exactness level. The package requires
+d Stata 16 or newer with Python integration enabled, alongside the
+d spxa Python library. 
+d
+d KW: Lévy processes; jump diffusion; variance gamma; CGMY; normal inverse Gaussian; subordination; Lévy–Khintchine triplet; cumulants; simulation
+d
+d Requires: Stata version 16 with Python library spxa
+d
+d Distribution-Date: 20261122
+d
+d Author: Nitya Hapani,  NA
+d Support: email nityahapani.tges@@gmail.com
+d
+f spxa.ado
+f spxa.sthlp
+f spxa_example.do
+f spxa_py.py
+f ../_/_spxa_clear.ado
+f ../_/_spxa_define.ado
+f ../_/_spxa_drop.ado
+f ../_/_spxa_ensure.ado
+f ../_/_spxa_list.ado
+f ../_/_spxa_report.ado
+f ../_/_spxa_simulate.ado

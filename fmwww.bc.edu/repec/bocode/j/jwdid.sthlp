@@ -27,13 +27,16 @@
 {synopt:{opt g:var(varname)}}Provides the cohort variable{p_end}
 
 {syntab :Treatment-control Specification options}
-{synopt:{opt trtvar(varname)}}If Gvar is not available, you can provide the post-treatment variable. By default, the panel data identifier is used to create the equivalent to Gvar. This option also allows you to add a variable that identifies intensity (0-1) {p_end}
-{synopt:{opt trgvar(varname)}}If data is repeated cross-section (RC), {cmd:trtvar()} can be combined with {cmd: trtgvar()} to identify the cohort variable. {cmd:trtgvar} should identify pseudo panels in the data, where each pseudo panel contains observations that were (or could have) been treated at the same point in time{p_end}
+{synopt:{opt trtvar(varname)}}If Gvar is not available, you can provide the post-treatment variable. By default, the panel data identifier is used to create the equivalent to Gvar. 
+This option also allows you to add a variable that identifies intensity (0-1) {p_end}
+{synopt:{opt trgvar(varname)}}If data is repeated cross-section (RC), {cmd:trtvar()} can be combined with {cmd: trtgvar()} to identify the cohort variable. {cmd:trtgvar} should identify pseudo panels in the data, 
+where each pseudo panel contains observations that were (or could have) been treated at the same point in time{p_end}
 
 {syntab :Basic DID Specification options}
 {synopt:{opt never}}By default, {cmd: jwdid} uses all never and not-yet treated observations as controls. The option {cmd: never} requests to use only never-treated as the control group. With this option, for each group/cohort, the period g-1 is excluded from the specification. {p_end}
-{synopt:{opt group}}Request using Group fixed effects instead of Panel ID fixed effects. In linear models, with balanced panel, estimates are numerically identical. However, it may reduce the computational burden with nonlinear models. This is the default whenever {cmd: method()} is called for except for {cmd: ppmlhdfe}.{p_end}
-{synopt:{opt corr}}When using {cmd:group} with unbalanced panel data, estimates are no longer identical to those that use the panel identifier fixed effect. The option {cmd:corr} applies a correction for this, following a Mundlak approach{p_end}
+{synopt:{opt group}}Request using Group fixed effects instead of Panel ID fixed effects. In linear models, with balanced panel, estimates are numerically identical. However, it may reduce the computational burden with nonlinear models.
+ This is the default whenever {cmd: method()} is called for except for {cmd: ppmlhdfe}.{p_end}
+{synopt:{opt corr}}When using {cmd:group} with unbalanced panel data, estimates are no longer identical to those that use the panel identifier fixed effect. The option {cmd:corr} applies a correction for this, following a Mundlak approach.{p_end}
 {synopt:{cre}} This option is used to request a correlated random effects (Mundlak) correction as an alternative to inclusion of fixed effects model. Particularly useful when using non-linear models. Supersedes -corr- {p_end}
 
 {synopt:{opt cluster(varname)}} This option is used to request standard errors to be clustered at {cmd: cluster()} level. When using panel data, the default is using {cmd:ivar()} for clustering standard errors. When using RC data, standard errors are estimated based on the Method default. For {cmd:reghdfe}, one should use {cmd:vce(robust)} to obtain robust standard errors.{p_end}  
@@ -43,7 +46,8 @@
 {synopt:{opt other_options}}It is also possible to request other method-specific options. For example, for {cmd:reghdfe} robust standard errors can be requested using {cmd: vce(robust)}.{p_end}
 
 {syntab :Advanced DID Specification options}
-{synopt:{opt hettype(hetspec)}}This option allows you to request different types of treatment effect heterogeneity. The default is to use full time-cohort heterogeneity. Other options include {cmd:time}, {cmd:cohort}, {cmd: event} and {cmd:twfe}. The last one reduces to the traditional TWFE estimator {p_end}
+{synopt:{opt hettype(hetspec)}}This option allows you to request different types of treatment effect heterogeneity. The default is to use full time-cohort heterogeneity. 
+Other options include {cmd:time}, {cmd:cohort}, {cmd: event} and {cmd:twfe}. The last one reduces to the traditional TWFE estimator {p_end}
 
 {synopt:{opt xasis}}Unless this option is requested, all variables in {cmd:varlist} are demeaned and interacted with the corresponding level of treatment heterogeneity. Declaring {cmd: xasis} requests using covariates without transformation. 
 
@@ -69,9 +73,11 @@
 {title:Description}
 
 {pstd}
-{cmd:jwdid} is a program that implements the Extended TWFE estimator proposed by Wooldridge (2021, 2023) for a generalized DID design that addresses the problems related to the standard TWFE. The program also incorporates additional options that allow for a more flexible model specification. This includes the guidelines for the estimation of Gravity-trade models as proposed by Nagengast and Yotov (2024) and Nagengast et al. (2024).   
+{cmd:jwdid} is a program that implements the Extended TWFE estimator proposed by Wooldridge (2021, 2023) for a generalized DID design that addresses the problems related to the standard TWFE. The program also incorporates additional options that allow for a more flexible model specification. 
+This includes the guidelines for the estimation of Gravity-trade models as proposed by Nagengast and Yotov (2024) and Nagengast et al. (2024).   
 
-{pstd}In principle, this estimator suggests that to avoid some of the negative aspects of the traditional TWFE-DID estimator, one should simply use a fully interacted set of dummies allowing for treatment effect heterogeneity by cohort and timing. By using such interaction, one avoids using already treated units as controls, preventing the so-called negative weights problems.
+{pstd}In principle, this estimator suggests that to avoid some of the negative aspects of the traditional TWFE-DID estimator, one should simply use a fully interacted set of dummies allowing for treatment effect heterogeneity by cohort and timing. 
+By using such interaction, one avoids using already treated units as controls, preventing the so-called negative weights problems.
 
 {pstd}Specifically, instead of estimating a model as follows:
 
@@ -83,11 +89,16 @@
 
 {pstd}where G_i * T corresponds to all possible interactions of the cohort unit i belongs to (G_i) and the period we aim to estimate that effect at (T), using as reference group all units that have not been treated yet. 
 
-{pstd}In the simplest case, gamma_gt represents the ATT for cohort G at time t. When the option {cmd: never} is used, the specification also includes the Group period interactions including all those periods before treatment occurred. In the case without covariates, the estimates are numerically identical to those identified using Callaway and Sant'Anna (2021)-regression outcome method, or using Sun and Abraham (2021) approach.
+{pstd}In the simplest case, gamma_gt represents the ATT for cohort G at time t. When the option {cmd: never} is used, the specification also includes the Group period interactions including all those periods before treatment occurred. 
+In the case without covariates, the estimates are numerically identical to those identified using Callaway and Sant'Anna (2021)-regression outcome method, or using Sun and Abraham (2021) approach.
 
 {pstd}Similar to {help xthdidregres} and {help hdidregress}, it is possible to estimate the DID model by declaring a treatment variable {cmd:trtvar()} instead of the group variable {cmd:gvar()}. Similarly, to reduce the complexity of the estimation, it is possible to impose some restrictions on the treatment effect heterogeneity using {cmd:hettype()}.
 
-{pstd}In addition to imposing constraints on the treatment effect heterogeneity, it is also possible to add covariates that allow for covariate heterogeneity, as well as restricting the heterogeneity only across time, across cohorts or no heterogeneity at all. Any variable that is included in the {cmd:varlist} is interacted with the corresponding level of treatment heterogeneity. The default option is to add sub-group demeaned variables to the model, but it is possible to request using the original variables using the option {cmd: xasis}. Both approaches produce the same aggregate average treatment effects, but the interpretation of the model coefficients changes. 
+{pstd}In addition to imposing constraints on the treatment effect heterogeneity, it is also possible to add covariates that allow for covariate heterogeneity, as well as 
+restricting the heterogeneity only across time, across cohorts or no heterogeneity at all. 
+Any variable that is included in the {cmd:varlist} is interacted with the corresponding level of treatment heterogeneity. 
+The default option is to add sub-group demeaned variables to the model, but it is possible to request using the original variables using the option {cmd: xasis}. 
+Both approaches produce the same aggregate average treatment effects, but the interpretation of the model coefficients changes. 
 
 {pstd}One can also request adding variables that are interacted with the time variable only {cmd: xtvar()}, cohort variable only {cmd: xgvar()}, or not interacted at all {cmd: exovar()}. Similarly, additional fixed effects can be added to the model using the option {cmd: fevar()}.
 
@@ -95,7 +106,8 @@
 
 {pstd}This could provide an extremely large number of estimated coefficients, which could make some models difficult to estimate.
 
-{pstd}Other estimation methods can be used by declaring the option {cmd: method()}. The default method is {cmd: reghdfe}, which is a linear regression model with fixed effects. Other methods include {cmd: poisson}, {cmd: logit}, or {cmd: ppmlhdfe}, which is the leading approach for the estimation of gravity-trade models. 
+{pstd}Other estimation methods can be used by declaring the option {cmd: method()}. The default method is {cmd: reghdfe}, which is a linear regression model with fixed effects. 
+Other methods include {cmd: poisson}, {cmd: logit}, or {cmd: ppmlhdfe}, which is the leading approach for the estimation of gravity-trade models. 
 
 {pstd}Except when {cmd: ppmlhdfe} is used, whenever {cmd: method()} is declared, the program will assume group/cohort fixed effects only, instead of individual fixed effects. This is to avoid the incidental parameter problem.
 
@@ -109,7 +121,8 @@ The code of this program is based on some of the advances by Prof. Wooldridge on
 
 {phang2}2. It is flexible for other methods. Namely, you should be easily able to apply it for binary or count models, or even for the estimation of gravity-trade models, as we show in Nagengast et al. (2024).
 
-{pstd}This program was coded independently from Jeff Wooldridge but is based on some of his early simulation codes he shared with the community. Some further advances were made following the official implementation of {help xthdidregress} and {help hdidregress}. Most advances were developed for the joint work with Arne Nagengast and Yoto Yotov, for the estimation of DID-type models in gravity trade settings.
+{pstd}This program was coded independently from Jeff Wooldridge but is based on some of his early simulation codes he shared with the community. Some further advances were made 
+following the official implementation of {help xthdidregress} and {help hdidregress}. Most advances were developed for the joint work with Arne Nagengast and Yoto Yotov, for the estimation of DID-type models in gravity trade settings.
 
 {pstd}To estimate aggregates, see {help jwdid_postestimation}
 

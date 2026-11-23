@@ -1,0 +1,36 @@
+d 'TVPC': module to implement Time-variant Peter-Clark (TV-PC) causal discovery for time series
+d
+d   tvpc implements the time-variant Peter-Clark (TV-PC) causal
+d discovery algorithm of Aung, Zhu, Lee, Guo and Li (2026,
+d Computational Economics, doi:10.1007/s10614-026-11411-x). Each
+d series is expanded into time-lagged nodes. Edges between lagged
+d nodes, and edges pointing back in time, are forbidden. The PC
+d algorithm then prunes the graph with Fisher z
+d conditional-independence tests and orients it with v-structures
+d and Meek's rules. The skeleton search, the order of the
+d conditioning sets and the orientation reproduce the authors'
+d gCastle implementation step for step; the estimated graphs are
+d identical to gCastle's on the paper's benchmark and on 24
+d simulated problems of the paper's size. 
+d
+d KW:  Peter-Clark elements
+d KW: causal discovery
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261122
+d
+f tvpc.ado
+f tvpc.sthlp
+f tvpc_a1.dta
+f tvpc_example.do
+f tvpc_macro.dta
+f tvpc_methods.sthlp
+f tvpcgraph.ado
+f tvpcgraph.sthlp
+f tvpcmci.ado
+f tvpcmci.sthlp
+f tvpcsens.ado
+f tvpcsens.sthlp
+f ../_/_tvpc_display.ado
+f ../_/_tvpc_score.ado

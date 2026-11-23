@@ -1,0 +1,26 @@
+d 'QREG_HAC': module for computing quantile regression with heteroskedasticity- and autocorrelation-consistent (HAC) standard errors
+d
+d  qreg_hac fits quantile regression models to time-series and
+d panel data and reports standard errors that are robust to
+d heteroskedasticity and autocorrelation (HAC). The coefficients
+d are identical to those of qreg; the variance-covariance matrix is
+d the sandwich estimator of Galvao and Yoon (2024), D^-1 J D^-1,
+d where D is estimated from the conditional density of the errors
+d and J is a kernel-weighted (HAC) estimate of the long-run
+d variance of the quantile scores. 
+d
+d KW: quantile regression
+d KW: HAC
+d KW: heteroskedasticity
+d KW: autocorrelation
+d KW: time serie
+d
+d Requires: Stata version 13
+d
+d Distribution-Date: 20261122
+d
+d Author: Ariel Linden, Linden Consulting Group, LLC
+d Support: email alinden@@lindenconsulting.org
+d
+f qreg_hac.ado
+f qreg_hac.sthlp

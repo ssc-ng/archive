@@ -1,0 +1,32 @@
+d 'XTDOSEKC': module to estimate dynamic nonlinear panel EKC with difference-of-sigmoids and trends
+d
+d  xtdosekc implements Amoroso, Garcia-Martos and Koopman (2026,
+d The Econometrics Journal, doi:10.1093/ectj/utag037). The
+d Environmental Kuznets Curve is modelled as a difference of two
+d logistic functions (economic-growth and green-transition effects)
+d with country fixed effects and country stochastic trends.
+d Parameters are estimated by penalised profile likelihood with an
+d exact-diffuse Kalman filter and a Mata port of the L-BFGS-B
+d optimiser, which reproduces the published estimates. Inference
+d uses the Stoffer-Wall state-space bootstrap. The command also
+d provides the static, linear-trend and single-equation variants,
+d turning points, residual diagnostics, a dynamic factor model of
+d the trends, penalty sensitivity and integration tests,
+d journal-style tables with LaTeX export, and all of the paper's
+d figures. 
+d
+d KW:  panel data
+d KW: environmental Kuznets curve
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261123
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f xtdosekc.ado
+f xtdosekc.sthlp
+f xtdosekc_methods.sthlp
+f xtdosekc_example.do
+f xtdosekc_gta.dta

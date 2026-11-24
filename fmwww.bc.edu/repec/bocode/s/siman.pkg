@@ -13,14 +13,14 @@ d Requires: Stata version 15
 d
 d Distribution-Date: 20261122
 d
-d Author: Ian White, MRC Clinical Trials Unit at UCL
+d Author:  Ella Marley-Zagar, UCL Innovative Clinical Trials Unit
+d Support: email NA
+d
+d Author: Ian White, UCL Innovative Clinical Trials Unit
 d Support: email ian.white@@ucl.ac.uk
 d
-d Author:  Ella Marley-Zagar, MRC Clinical Trials Unit at UCL
-d Support: email e.marley-zagar@@ucl.ac.uk
-d
-d Author: Tim P. Morris, University College London
-d Support: email tim.morris@@ucl.ac.uk
+d Author: Tim Morris, Novartis Pharmaceuticals UK Ltd.
+d Support: email tim.morris@@novartis.com
 d
 f siman.ado
 f siman.sthlp

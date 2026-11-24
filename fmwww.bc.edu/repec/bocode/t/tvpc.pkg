@@ -20,6 +20,9 @@ d Requires: Stata version 15
 d
 d Distribution-Date: 20261122
 d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
 f tvpc.ado
 f tvpc.sthlp
 f tvpc_a1.dta

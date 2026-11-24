@@ -23129,6 +23129,7 @@ fmwww.bc.edu/repec/bocode/x/xtpanelgarch_example.do
 fmwww.bc.edu/repec/bocode/x/xtie2.sthlp
 fmwww.bc.edu/repec/bocode/x/xwt.ado
 fmwww.bc.edu/repec/bocode/x/xtgls2.sthlp
+fmwww.bc.edu/repec/bocode/x/xtdosekc.pkg
 fmwww.bc.edu/repec/bocode/x/xtdynestimb_predict.ado
 fmwww.bc.edu/repec/bocode/x/xtcollin.sthlp
 fmwww.bc.edu/repec/bocode/x/xtvfreg.ado
@@ -23139,6 +23140,7 @@ fmwww.bc.edu/repec/bocode/x/xtcd.pkg
 fmwww.bc.edu/repec/bocode/x/xtregrem.sthlp
 fmwww.bc.edu/repec/bocode/x/xtmispanel_graph.ado
 fmwww.bc.edu/repec/bocode/x/xtqptest.sthlp
+fmwww.bc.edu/repec/bocode/x/xtdosekc.ado
 fmwww.bc.edu/repec/bocode/x/xtgcce.ado
 fmwww.bc.edu/repec/bocode/x/xtnonlincoint_ecm.sthlp
 fmwww.bc.edu/repec/bocode/x/xrigls.sthlp
@@ -23411,6 +23413,7 @@ fmwww.bc.edu/repec/bocode/x/xtgps.pkg
 fmwww.bc.edu/repec/bocode/x/xtnondynthreshsfacomps.ado
 fmwww.bc.edu/repec/bocode/x/xtsemipar.sthlp
 fmwww.bc.edu/repec/bocode/x/xtpdyn.pkg
+fmwww.bc.edu/repec/bocode/x/xtdosekc_g20.dta
 fmwww.bc.edu/repec/bocode/x/xtregcluster.sthlp
 fmwww.bc.edu/repec/bocode/x/xtregbem.dta
 fmwww.bc.edu/repec/bocode/x/xtdpthresh.sthlp
@@ -23819,6 +23822,7 @@ fmwww.bc.edu/repec/bocode/x/xtss.pkg
 fmwww.bc.edu/repec/bocode/x/xtpanelgarch_cl.ado
 fmwww.bc.edu/repec/bocode/x/xtable.sthlp
 fmwww.bc.edu/repec/bocode/x/xtcspqardl_graph.ado
+fmwww.bc.edu/repec/bocode/x/xtdosekc_example.do
 fmwww.bc.edu/repec/bocode/x/xtreghet_lfn.ado
 fmwww.bc.edu/repec/bocode/x/xtdynestimb_dd.sthlp
 fmwww.bc.edu/repec/bocode/x/xtselvar.sthlp
@@ -24052,6 +24056,7 @@ fmwww.bc.edu/repec/bocode/x/xtregam.dlg
 fmwww.bc.edu/repec/bocode/x/xtdynestimb_example.do
 fmwww.bc.edu/repec/bocode/x/xtoos_i.ado
 fmwww.bc.edu/repec/bocode/x/xrigls.ado
+fmwww.bc.edu/repec/bocode/x/xtdosekc.sthlp
 fmwww.bc.edu/repec/bocode/x/xbalance.pkg
 fmwww.bc.edu/repec/bocode/x/xtmrho.hlp
 fmwww.bc.edu/repec/bocode/x/xicor.pkg
@@ -24228,6 +24233,7 @@ fmwww.bc.edu/repec/bocode/x/xtpanelgarch_cg.ado
 fmwww.bc.edu/repec/bocode/x/xhdfeconnected.ado
 fmwww.bc.edu/repec/bocode/x/xtcbc.pkg
 fmwww.bc.edu/repec/bocode/x/xtcspqardl.pkg
+fmwww.bc.edu/repec/bocode/x/xtdosekc_methods.sthlp
 fmwww.bc.edu/repec/bocode/x/xtdhcoint.ado
 fmwww.bc.edu/repec/bocode/x/xtivdfreg_postestimation.sthlp
 fmwww.bc.edu/repec/bocode/x/xtabond2.pkg

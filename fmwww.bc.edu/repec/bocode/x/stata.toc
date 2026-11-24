@@ -80,6 +80,7 @@ p xtdcce2 module to estimate heterogeneous coefficient models using common corre
 p xtdhazard module to perform Own-Differences IV/CF Estimation of the Discrete-Time Hazard Model
 p xtdhcoint module to perform Durbin-Hausman panel cointegration tests
 p xtdolshm module to perform panel data cointegration 
+p xtdosekc module to estimate dynamic nonlinear panel EKC with difference-of-sigmoids and trends
 p xtdpdbc module to perform bias-corrected estimation of linear dynamic panel data models
 p xtdpdgmm module to perform generalized method of moments estimation of linear dynamic panel data models
 p xtdpdml module to estimate Dynamic Panel Data Models using Maximum Likelihood

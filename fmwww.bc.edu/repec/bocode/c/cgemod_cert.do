@@ -1,4 +1,4 @@
-* cgemod certification script, version 2.0.0
+* cgemod certification script, version 2.1.0
 * Compares cgemod results with an independent reference implementation of the same model.
 * Run from the folder that contains the package files.
 clear all
@@ -42,6 +42,8 @@ matrix Q[12, 8] = Q[12, 8] + 2
 matrix Q[13, 11] = -4
 matrix Q[11, 13] = 0
 tempfile lg cmp
+* the audit log is lg.dta, which Stata does not erase with the tempfile; clear it so reruns start fresh
+capture erase `"`lg'.dta"'
 cgemod sambalance, sam(Q) name(QG) log(`lg'.dta) compare(`cmp', replace)
 assert r(converged) == 1 & r(imb_after) < 1e-6 & r(signflips) == 0
 _cert QG[13,11] -2.869475700228022
@@ -281,6 +283,42 @@ assert "`r(status)'" == "REPLICATED"
 cgemod ssa, tm(*0) elasticities(sigmava sigmaq omega sigmax) range(0.3) notable
 assert r(failed) == 0
 cgemod dynamic, periods(3) labor(LAB) capital(CAP) lgrowth(0.03) start(1) tm(*0) notable
+
+* ---- 2.1.0: GAMS include import and mapping-file aggregation (values from the Python implementation)
+cgemod samimport using cgemod_sam_ext.csv, name(EXT) nolist
+cgemod samexport, sam(EXT) gams(__cgemod_ext.inc) replace
+cgemod samimport using __cgemod_ext.inc, name(EXTG) nolist
+assert r(accounts) == 21 & "`r(unassigned)'" == ""
+cgemod calibrate, sam(EXTG) notable
+cgemod sim, tm(*0) notable
+cgemod compare using cgemod_ext_reference.csv, value(default) tolerance(1e-4)
+assert "`r(status)'" == "REPLICATED"
+erase __cgemod_ext.inc
+tempname fh
+file open `fh' using __cgemod_map.csv, write replace
+file write `fh' "source,destination" _n "A_IND,A_NAG" _n "A_SER,A_NAG" _n "C_IND,C_NAG" _n "C_SER,C_NAG" _n
+file close `fh'
+cgemod samimport using cgemod_sam_ext.csv, name(AGG) map(__cgemod_map.csv) nolist
+assert r(accounts) == 19 & r(maxdiff) < 1e-6
+assert "`r(activities)'" == "A_AGR A_NAG" & "`r(commodities)'" == "C_AGR C_NAG C_OIL"
+erase __cgemod_map.csv
+cgemod calibrate, sam(AGG) notable
+cgemod sim, tm(*0) notable
+matrix M = r(macro)
+local v = M[rownumb(M,"RGDP"),3]
+_cert `v' -3.276611052482892e-05
+local v = M[rownumb(M,"RCONS"),3]
+_cert `v' 4.180486702094188
+local v = M[rownumb(M,"EXR"),3]
+_cert `v' 7.976522602383862
+local v = M[rownumb(M,"RIMP"),3]
+_cert `v' 9.388603792199458
+matrix X = r(sector)
+local v = X[rownumb(X,"A_NAG"),1]
+_cert `v' -0.713395417856133
+matrix H = r(household)
+local v = H[rownumb(H,"HH_URB"),3]
+_cert `v' 5.372926982671629
 
 * ---- Tier 2: wage curve, carbon tax, fiscal closures and rules, quotas, price caps, debt, poverty
 cgemod samimport using cgemod_sam_ext.csv, name(EXT) nolist

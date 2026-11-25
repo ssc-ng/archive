@@ -1,5 +1,6 @@
-* cgemod unit tests, version 2.0.0
-* Checks that invalid input is rejected with the right return code and a clear message,
+* cgemod unit tests, version 2.1.0
+* Checks that invalid input is rejected with the right return code and a clear message (shown in
+* red by Stata, followed by a note that the error was expected),
 * and that each subcommand runs end to end. Run from the folder that contains the package files.
 clear all
 set more off
@@ -15,6 +16,9 @@ program define _ut
     if _rc != `want' {
         di as err `"unit test failed: {bf:`0'} returned "' _rc `", expected `want'"'
         exit 9
+    }
+    if `want' != 0 {
+        di as txt "  {it:(the error above is expected: rc = `want'; test passed)}"
     }
     global UT_n = $UT_n + 1
 end
@@ -96,6 +100,20 @@ _ut 0   : cgemod scenario table
 _ut 198 : cgemod validate, steps(1)
 _ut 0   : cgemod validate, notable
 assert r(failed) == 0
+
+* ---- samimport: mapping file and GAMS include file
+tempname fh
+file open `fh' using __cgemod_badmap.csv, write replace
+file write `fh' "source,destination" _n "A_XXX,A_NAG" _n
+file close `fh'
+_ut 111 : cgemod samimport using cgemod_sam_ext.csv, name(BAD) map(__cgemod_badmap.csv) nolist
+erase __cgemod_badmap.csv
+_ut 601 : cgemod samimport using cgemod_sam_ext.csv, name(BAD) map(__cgemod_nofile.csv) nolist
+file open `fh' using __cgemod_empty.inc, write replace
+file write `fh' "* no parameter block" _n
+file close `fh'
+_ut 459 : cgemod samimport using __cgemod_empty.inc, name(BAD) nolist
+erase __cgemod_empty.inc
 
 * ---- poverty
 preserve

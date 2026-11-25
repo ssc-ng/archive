@@ -1,4 +1,4 @@
-*! version 2.0.0  15nov2026  Yusuf Toyin Yusuf and A. A. Kilishi
+*! version 2.1.0  22nov2026  Yusuf Toyin Yusuf and A. A. Kilishi
 *! cgemod: SAM-based computable general equilibrium modelling, sensitivity analysis,
 *!         model diagnostics and elasticity estimation with residual diagnostics
 
@@ -1543,28 +1543,53 @@ end
 
 * ---------------------------------------------------------------------------
 program define _cgemod_samimport, rclass
-    syntax using/ [, SHEET(string) CELLRange(string) NAME(name) MERGE(string) LABELCol(integer 1) noROLES noLIST]
+    syntax using/ [, SHEET(string) CELLRange(string) NAME(name) MERGE(string) MAP(string) LABELCol(integer 1) noROLES noLIST]
     if "`name'" == "" local name "CGESAM"
     local ext = lower(substr(`"`using'"', -4, .))
-    preserve
-    qui {
-        clear
-        if inlist("`ext'", ".csv", ".txt") {
-            import delimited using `"`using'"', varnames(nonames) stringcols(_all) clear
-        }
-        else if "`ext'" == ".tab" {
-            import delimited using `"`using'"', varnames(nonames) stringcols(_all) delimiters(tab) clear
-        }
-        else {
-            local opts "allstring clear"
-            if `"`sheet'"' != "" local opts `"`opts' sheet(`"`sheet'"')"'
-            if "`cellrange'" != "" local opts "`opts' cellrange(`cellrange')"
-            import excel using `"`using'"', `opts'
-        }
+    if inlist("`ext'", ".inc", ".gms") {
+        confirm file `"`using'"'
+        mata: _cgemod_gamsread("`name'", `"`using'"')
     }
-    mata: _cgemod_samread("`name'", `labelcol')
-    restore
+    else {
+        preserve
+        qui {
+            clear
+            if inlist("`ext'", ".csv", ".txt") {
+                import delimited using `"`using'"', varnames(nonames) stringcols(_all) clear
+            }
+            else if "`ext'" == ".tab" {
+                import delimited using `"`using'"', varnames(nonames) stringcols(_all) delimiters(tab) clear
+            }
+            else {
+                local opts "allstring clear"
+                if `"`sheet'"' != "" local opts `"`opts' sheet(`"`sheet'"')"'
+                if "`cellrange'" != "" local opts "`opts' cellrange(`cellrange')"
+                import excel using `"`using'"', `opts'
+            }
+        }
+        mata: _cgemod_samread("`name'", `labelcol')
+        restore
+    }
     if `"`merge'"' != "" mata: _cgemod_sammerge("`name'", `"`merge'"')
+    if `"`map'"' != "" {
+        confirm file `"`map'"'
+        local mext = lower(substr(`"`map'"', -4, .))
+        preserve
+        qui {
+            clear
+            if inlist("`mext'", ".csv", ".txt") {
+                import delimited using `"`map'"', varnames(nonames) stringcols(_all) clear
+            }
+            else if "`mext'" == ".tab" {
+                import delimited using `"`map'"', varnames(nonames) stringcols(_all) delimiters(tab) clear
+            }
+            else {
+                import excel using `"`map'"', allstring clear
+            }
+        }
+        mata: _cgemod_sammap("`name'")
+        restore
+    }
     mata: _cgemod_samcheck("`name'", 0, 1e-9, 1, "`list'" == "")
     local gaps = `maxdiff'
     if "`roles'" == "" {
@@ -5663,6 +5688,125 @@ void _cgemod_sammerge(string scalar name, string scalar spec)
     st_matrix(name, S)
     st_matrixrowstripe(name, (J(k, 1, ""), nm'))
     st_matrixcolstripe(name, (J(k, 1, ""), nm'))
+}
+
+/* aggregate SAM accounts with a mapping file: column 1 = account, column 2 = new account */
+void _cgemod_sammap(string scalar name)
+{
+    string matrix D
+    string colvector src, dst
+    string rowvector nm, nw, ord
+    string scalar a, b
+    real matrix S, G, V
+    real scalar k, m, i, j, p, nmap, first
+    D = st_sdata(., .)
+    if (cols(D) < 2 | rows(D) < 1) {
+        errprintf("map(): the mapping file needs two columns: account and new account\n")
+        exit(459)
+    }
+    first = 1
+    a = strlower(strtrim(D[1, 1]))
+    if (a == "source" | a == "from" | a == "old" | a == "account" | a == "original") first = 2
+    src = J(0, 1, "")
+    dst = J(0, 1, "")
+    for (i = first; i <= rows(D); i++) {
+        a = strtrim(D[i, 1])
+        b = strtrim(D[i, 2])
+        if (a == "" | b == "") continue
+        src = src \ strtoname(a)
+        dst = dst \ strtoname(b)
+    }
+    nmap = rows(src)
+    if (nmap == 0) {
+        errprintf("map(): no account pairs found in the mapping file\n")
+        exit(459)
+    }
+    S = st_matrix(name)
+    nm = st_matrixrowstripe(name)[., 2]'
+    k = cols(nm)
+    nw = nm
+    for (i = 1; i <= nmap; i++) {
+        p = _cgemod_find(src[i], nm, J(1, 0, ""))
+        if (!p) {
+            errprintf("map(): account %s is not in the SAM\n", src[i])
+            exit(111)
+        }
+        nw[p] = dst[i]
+    }
+    ord = J(1, 0, "")
+    for (j = 1; j <= k; j++) {
+        if (!_cgemod_in(ord, nw[j])) ord = (ord, nw[j])
+    }
+    m = cols(ord)
+    G = J(m, k, 0)
+    for (j = 1; j <= k; j++) {
+        p = _cgemod_find(nw[j], ord, J(1, 0, ""))
+        G[p, j] = 1
+    }
+    V = G*S*G'
+    _diag(V, 0)
+    st_matrix(name, V)
+    st_matrixrowstripe(name, (J(m, 1, ""), ord'))
+    st_matrixcolstripe(name, (J(m, 1, ""), ord'))
+    printf("{txt}map(): %g mapping rows; %g accounts aggregated into %g (flows inside a new account removed)\n",
+           nmap, k, m)
+}
+
+/* read the SAM parameter of a GAMS include file: lines "row.col value" between "Parameter ... /" and "/" */
+void _cgemod_gamsread(string scalar name, string scalar fn)
+{
+    string colvector L, R, C
+    string rowvector nm
+    string scalar l, ll
+    real colvector V
+    real matrix S
+    real scalar i, st, k, a, b
+    L = cat(fn)
+    st = 0
+    R = J(0, 1, "")
+    C = J(0, 1, "")
+    V = J(0, 1, .)
+    for (i = 1; i <= rows(L); i++) {
+        l = strtrim(L[i])
+        if (l == "" | substr(l, 1, 1) == "*") continue
+        ll = strlower(l)
+        if (st == 0) {
+            if (substr(ll, 1, 9) == "parameter") {
+                st = (strpos(l, "/") ? 2 : 1)
+            }
+            continue
+        }
+        if (st == 1) {
+            if (substr(l, 1, 1) == "/") st = 2
+            continue
+        }
+        if (substr(l, 1, 1) == "/") break
+        if (ustrregexm(l, "^'?([A-Za-z0-9_\-]+)'?\s*\.\s*'?([A-Za-z0-9_\-]+)'?\s+([-+0-9.eE]+)")) {
+            R = R \ strtoname(ustrregexs(1))
+            C = C \ strtoname(ustrregexs(2))
+            V = V \ strtoreal(ustrregexs(3))
+        }
+    }
+    if (rows(V) == 0) {
+        errprintf("no SAM entries (row.column value) found in a Parameter block of %s\n", fn)
+        exit(459)
+    }
+    nm = J(1, 0, "")
+    for (i = 1; i <= rows(V); i++) {
+        if (!_cgemod_in(nm, R[i])) nm = (nm, R[i])
+        if (!_cgemod_in(nm, C[i])) nm = (nm, C[i])
+    }
+    k = cols(nm)
+    S = J(k, k, 0)
+    for (i = 1; i <= rows(V); i++) {
+        a = _cgemod_find(R[i], nm, J(1, 0, ""))
+        b = _cgemod_find(C[i], nm, J(1, 0, ""))
+        S[a, b] = S[a, b] + V[i]
+    }
+    st_matrix(name, S)
+    st_matrixrowstripe(name, (J(k, 1, ""), nm'))
+    st_matrixcolstripe(name, (J(k, 1, ""), nm'))
+    printf("{txt}read SAM {res}%s{txt} from GAMS file: %g accounts, %g non-zero cells\n", name, k, rows(V))
 }
 
 real scalar _cgemod_starts(string scalar l, string rowvector pre)

@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.35  19nov2026}{...}
+{* *! version 1.37  23nov2026}{...}
 {vieweralsosee "tsvyexport (in English)" "help tsvyexport"}{...}
 {viewerjumpto "Sintaxis" "tsvyexport_es##syntax"}{...}
 {viewerjumpto "Descripcion" "tsvyexport_es##description"}{...}
@@ -16,7 +16,7 @@
 {bf:tsvyexport} {hline 2} Exporta un frame acumulador de {helpb tsvy} a Excel o Word
 
 {phang}
-{it:Version {bf:1.35} (19nov2026)}{p_end}
+{it:Version {bf:1.37} (23nov2026)}{p_end}
 
 {marker syntax}{...}
 {title:Sintaxis}
@@ -257,8 +257,9 @@ distinta, y una fila de encabezado con varios {cmd:colspan} (uno por
 anio) aplicados de derecha a izquierda -- las dos mecanicas ya estan
 confirmadas contra Stata real de forma aislada por el script
 {cmd:test_putdocx_merge.do} que acompana a este .ado (Pruebas 7, 9, 11
-y 12); {cmd:tsvyexport} en si todavia no se corrio de punta a punta con
-datos reales de 2+ {cmd:VARNAME}. Con exactamente 1 {cmd:VARNAME}, la
+y 12); {bf:Corregido en v1.36:} esta rama cortaba con "not sorted" r(5); ya
+se corrio de punta a punta contra Stata real (2 {cmd:VARNAME} sobre
+{cmd:auto.dta}). Con exactamente 1 {cmd:VARNAME}, la
 tabla sale igual que en la forma descrita arriba.
 
 {pstd}

@@ -1,9 +1,22 @@
-*! tsvyexport.ado v1.35 - 19nov2026
+*! tsvyexport.ado v1.37 - 23nov2026
+*! v1.37 -- Leyenda del Word (wide) reescrita: tildes y enie reales (via
+*! uchar(), el .ado sigue en ASCII), "Grupos (Bonferroni)" sin la frase
+*! "salvo indicacion entre parentesis" cuando ninguna fila uso otro
+*! metodo, "? indica..." solo si hay algun "?", y "Sig. (por anio)" solo
+*! si SIG_VS_REF tiene datos (refyear()) y con el texto correcto (ese
+*! anio contra el anio de referencia, no "categoria de referencia").
+*! Encabezados Categoria/Estimacion y "Elaboracion:" con tilde.
+*! v1.36 -- FIX: wide()+Word con 2+ VARNAME cortaba con "not sorted"
+*! r(5) (by NIVEL CATEGORIA: despues de un gsort). CATFIRST/CATN y
+*! CRUFIRST/CRUN se calculan ahora con bysort (__ORD) y se restaura el
+*! orden del gsort, conservando NACIONAL primero. Limpieza: comilla de
+*! mas en `varnombres', comentario DEBUG huerfano de v1.28.
+*! CONFIRMADO contra Stata real (23nov2026): wide()+Word con 2 VARNAME
+*! (mpg, weight) x nivel(NACIONAL foreign) sobre auto.dta corre limpio.
 *! v1.35 -- FIX: fuente()/elaboracion() vaciaban `using' (el syntax
 *! anidado reescribia los locales del syntax principal) y tsvyexport
 *! cortaba con "no se pudo determinar el formato". Se parsean ahora en
 *! el subprograma _tsvyexport_txtopt. Se quitan los 2 DEBUG de using.
-*! v1.34 (19nov2026):
 *! v1.34 -- FIX: SIG_WALD (wide) y la leyenda de Sig. solo usan niveles
 *! <= alpha de tsvy (char _dta[tsvy_alpha], 0.05 por defecto). Antes un
 *! P_WALD entre 0.05 y 0.10 salia "*" junto a GRUPOS "a-a-a" (letras al
@@ -558,6 +571,15 @@ program define tsvyexport
         ELABORACION(string asis) ESTILO(string) ///
         KEEP(string) REPLACE APPEND DIGITS(integer 2) WIDE]
 
+    * -- v1.37 -- letras acentuadas para el texto del Word (titulos de
+    * columna y leyenda) via uchar(), asi el .ado sigue siendo ASCII puro.
+    local _a = uchar(225)
+    local _e = uchar(233)
+    local _i = uchar(237)
+    local _o = uchar(243)
+    local _n = uchar(241)
+    local _u = uchar(250)
+
     if `"`keep'"' != "" & "`wide'" != "" {
         di as err "tsvyexport: keep() y wide no se pueden combinar -- wide()" ///
             " usa un conjunto de columnas fijo (ver help)"
@@ -724,16 +746,6 @@ program define tsvyexport
         local elabtxt `"`r(txt)'"'
         local elabtam = cond(r(tam) < ., r(tam), `sz_nota')
     }
-    * -- v1.28 DEBUG temporal: bisecar si fuente()/elaboracion() (los 2
-    * unicos bloques de aca arriba que corren `syntax' una segunda vez,
-    * sobre `local 0') estan corrompiendo `using' -- reportado 2 veces
-    * con datos reales, siempre con fuente()/elaboracion() presentes,
-    * nunca sin ellas (Example 6/7 sin fuente() -> OK; Example 8, mismo
-    * archivo, agrega fuente()+elaboracion() -> "no se pudo determinar
-    * el formato"). Si esta linea muestra `using' ya vacio o distinto de
-    * "cuadro_categorias.docx" aca, el problema esta en el bloque de
-    * arriba (el `local 0'/`syntax' anidado); si sale bien ACA pero mal
-    * en el bloque de fmt mas abajo, el problema esta en otro lado.
 
     if "`frame'" == "" local frame ACUM_ALL
     cap confirm frame `frame'
@@ -812,7 +824,7 @@ program define tsvyexport
     if "`cldmetodo_usado'" == "holm"       local etiqueta_cldmetodo "Holm"
     if "`cldmetodo_usado'" == "fdr"        local etiqueta_cldmetodo "FDR, Benjamini-Hochberg"
     if "`cldmetodo_usado'" == "lsd"        local etiqueta_cldmetodo "Fisher LSD"
-    if "`cldmetodo_usado'" == "auto"       local etiqueta_cldmetodo "Bonferroni salvo indicacion entre parentesis"
+    if "`cldmetodo_usado'" == "auto"       local etiqueta_cldmetodo "Bonferroni"
 
     frame TSVYEXPORT_TMP {
       if "`wide'" != "" {
@@ -1050,7 +1062,7 @@ program define tsvyexport
             * putdocx table ya trae grilla visible.
             * -------------------------------------------------------
             quietly levelsof VARNAME, local(varnombres) clean
-            local nvarnames: word count `varnombres''
+            local nvarnames: word count `varnombres'
 
             * -- v1.13: mas de 1 VARNAME ya NO es un error -- con 1 sola
             * el cuadro sale exactamente como en v1.12 (sin cambios); con
@@ -1228,13 +1240,13 @@ program define tsvyexport
             * numeracion original completa (1..`ncols') -- todavia sin
             * ninguna fusion aplicada.
             local paso = `paso' + 1
-            cap noisily putdocx table tbl(1,1) = ("Categoria")
+            cap noisily putdocx table tbl(1,1) = ("Categor`_i'a")
             if _rc {
                 di as err "tsvyexport DEBUG paso `paso' (contenido tbl(1,1)): rc=" _rc
                 exit _rc
             }
             local paso = `paso' + 1
-            cap noisily putdocx table tbl(1,2) = ("Estimacion")
+            cap noisily putdocx table tbl(1,2) = ("Estimaci`_o'n")
             if _rc {
                 di as err "tsvyexport DEBUG paso `paso' (contenido tbl(1,2)): rc=" _rc
                 exit _rc
@@ -1486,7 +1498,7 @@ program define tsvyexport
             * __NACPRIMERO ya viene calculado de mas arriba).
             if `hascruce' quietly gsort -__NACPRIMERO NIVEL CATEGORIA CRUCE VARNAME
             else quietly gsort -__NACPRIMERO NIVEL CATEGORIA VARNAME
-            * -- v1.31 NOTA (no se toco esta rama todavia): gsort NO deja
+            * -- v1.31 NOTA (corregido en v1.36, ver abajo): gsort NO deja
             * la bandera de "ordenado" que `by' (sin bysort) exige -- el
             * `by NIVEL CATEGORIA:' de aca abajo va a tirar "not sorted"
             * r(5) la primera vez que se llegue a esta rama (2+
@@ -1501,12 +1513,21 @@ program define tsvyexport
             * mas arriba, v1.13). Esta rama NO se activo en el caso que
             * reporto el bug (1 sola VARNAME) -- ver el fix real en el
             * `sort' agregado antes del reshape, mas arriba.
-            quietly by NIVEL CATEGORIA: gen byte CATFIRST = (_n==1)
-            quietly by NIVEL CATEGORIA: gen long CATN = _N
+            * -- v1.36 -- FIX del bug descrito arriba: se guarda el orden
+            * del gsort en __ORD, se calculan CATFIRST/CATN (y CRUFIRST/
+            * CRUN) con bysort usando __ORD como orden interno del grupo,
+            * y se vuelve al orden original con sort __ORD. Como el gsort
+            * ya dejo cada NIVEL x CATEGORIA [x CRUCE] en filas contiguas,
+            * la primera fila de cada grupo segun __ORD es la primera en
+            * la tabla, y el orden NACIONAL-primero se conserva.
+            quietly gen long __ORD = _n
+            quietly bysort NIVEL CATEGORIA (__ORD): gen byte CATFIRST = (_n==1)
+            quietly bysort NIVEL CATEGORIA (__ORD): gen long CATN = _N
             if `hascruce' {
-                quietly by NIVEL CATEGORIA CRUCE: gen byte CRUFIRST = (_n==1)
-                quietly by NIVEL CATEGORIA CRUCE: gen long CRUN = _N
+                quietly bysort NIVEL CATEGORIA CRUCE (__ORD): gen byte CRUFIRST = (_n==1)
+                quietly bysort NIVEL CATEGORIA CRUCE (__ORD): gen long CRUN = _N
             }
+            quietly sort __ORD
 
             local paso = `paso' + 1
             cap noisily putdocx table tbl = (`nrows', `ncols'), layout(fixed)
@@ -1527,7 +1548,7 @@ program define tsvyexport
             * Paso A: contenido de las 2 filas de encabezado, numeracion
             * original completa, sin fusiones todavia.
             local paso = `paso' + 1
-            cap noisily putdocx table tbl(1,`c_cat') = ("Categoria")
+            cap noisily putdocx table tbl(1,`c_cat') = ("Categor`_i'a")
             if _rc {
                 di as err "tsvyexport DEBUG paso `paso' (contenido tbl(1,`c_cat')): rc=" _rc
                 exit _rc
@@ -1909,40 +1930,37 @@ program define tsvyexport
             * `etiqueta_cldmetodo' mas arriba, junto a la copia de
             * trabajo) -- vacio (texto generico de siempre, sin el
             * parentesis) si el frame no trae esa characteristic.
-            local grupos_lbl = cond(`"`etiqueta_cldmetodo'"' != "", ///
-                " (`etiqueta_cldmetodo')", "")
+            * -- v1.37 -- leyenda reescrita: (1) tildes/enie reales (via
+            * uchar(), ver arriba); (2) "Grupos (metodo)" solo menciona el
+            * parentesis por fila si alguna fila de verdad uso otro metodo
+            * (cldmetodo(auto)); (3) "? indica..." solo si hay algun "?" en
+            * GRUPOS; (4) "Sig. (por anio)" solo si alguna celda de
+            * SIG_VS_REF trae dato, y con el texto correcto: compara ESE
+            * anio contra el anio de referencia (refyear()), no contra una
+            * categoria de referencia.
+            local grupos_lbl ""
+            if `"`etiqueta_cldmetodo'"' != "" local grupos_lbl " (`etiqueta_cldmetodo')"
+            if `metvaria' local grupos_lbl " (Bonferroni; entre par`_e'ntesis, el m`_e'todo menos estricto usado en esa fila porque con Bonferroni la prueba F era significativa y todos los a`_n'os compart`_i'an letra)"
+            quietly count if strpos(GRUPOS, "?")
+            local hayinterrog = r(N) > 0
+            local hassigdat = 0
+            if `hassig' {
+                foreach y of local anios {
+                    quietly count if SIG_VS_REF`y' != ""
+                    if r(N) > 0 local hassigdat = 1
+                }
+            }
+            local siglbl = cond(`nvarnames' == 1, "Sig.", "Sig. Wald")
+            local leyenda "`siglbl': significancia de la prueba F de Wald de igualdad entre los a`_n'os (`sig_leyenda')."
+            local leyenda "`leyenda' Grupos`grupos_lbl': a`_n'os con la misma letra no presentan diferencia estad`_i'sticamente significativa entre s`_i' (Compact Letter Display)."
+            if `hayinterrog' local leyenda "`leyenda' ? indica que la prueba no se pudo calcular en ese a`_n'o."
+            if `nvarnames' > 1 & `hassigdat' local leyenda "`leyenda' Sig. (por a`_n'o): significancia de la diferencia entre ese a`_n'o y el a`_n'o de referencia."
+            if `n_incons' > 0 local leyenda "`leyenda' b/ La prueba F de Wald es significativa, pero ning`_u'n par de a`_n'os difiere tras el ajuste por comparaciones m`_u'ltiples."
 
             local paso = `paso' + 1
             cap noisily putdocx paragraph
             if !_rc {
-                if `nvarnames' == 1 {
-                    cap noisily putdocx text ("Sig.: significancia del test F omnibus entre los anios" ///
-                        + " (`sig_leyenda'). Grupos`grupos_lbl': anios con la misma letra no" ///
-                        + " presentan diferencia estadisticamente significativa entre si (Compact Letter" ///
-                        + " Display); ? indica que el test no se pudo calcular en ese bloque."), italic `onota_bare'
-                }
-                else {
-                    local leyenda = "Sig. Wald: significancia del test F omnibus entre los anios" ///
-                        + " (`sig_leyenda'). Grupos`grupos_lbl': anios con la misma letra no" ///
-                        + " presentan diferencia estadisticamente significativa entre si (Compact Letter" ///
-                        + " Display); ? indica que el test no se pudo calcular en ese bloque."
-                    if `hassig' local leyenda = `"`leyenda'"' ///
-                        + " Sig. (por anio): significancia de esa categoria respecto a la" ///
-                        + " categoria de referencia, ese anio."
-                    cap noisily putdocx text ("`leyenda'"), italic `onota_bare'
-                }
-                * -- v1.34 -- llamada b/ (solo si hay alguna fila marcada)
-                if `n_incons' > 0 {
-                    cap noisily putdocx text (" b/ F de Wald significativo, pero ningun" ///
-                        + " par de anios difiere tras el ajuste por comparaciones multiples:" ///
-                        + " la diferencia global no se atribuye a un par especifico de anios."), italic `onota_bare'
-                }
-                if `metvaria' {
-                    cap noisily putdocx text (" Entre parentesis en Grupos: metodo de ajuste" ///
-                        + " usado en esa fila, menos estricto que Bonferroni, porque con Bonferroni" ///
-                        + " el F de Wald era significativo y todos los anios compartian letra" ///
-                        + " (cldmetodo(auto) de tsvy)."), italic `onota_bare'
-                }
+                cap noisily putdocx text ("`leyenda'"), italic `onota_bare'
             }
 
             * -- v1.19: Fuente/Elaboracion, ultimas 2 lineas del pie del
@@ -1965,7 +1983,7 @@ program define tsvyexport
             }
             if `"`elabtxt'"' != "" {
                 cap noisily putdocx paragraph
-                cap noisily putdocx text ("Elaboracion: `elabtxt'."), font("`estfont'", `elabtam')
+                cap noisily putdocx text ("Elaboraci`_o'n: `elabtxt'."), font("`estfont'", `elabtam')
             }
 
             local nvars = `ncols'

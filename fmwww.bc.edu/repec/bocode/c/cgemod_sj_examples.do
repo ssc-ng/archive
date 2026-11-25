@@ -4,7 +4,7 @@
 * (https://doi.org/10.7910/DVN/WWZDTD).
 * Sections 5.5-5.7: illustrative datasets supplied with the package.
 
-version 17
+version 15
 clear all
 set more off
 capture log close sjex

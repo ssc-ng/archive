@@ -1,29 +1,28 @@
-d 'TSVY': module to produce point-estimate table and Wald/Bonferroni/CLD test, by level of aggregation and year, using svylet as the estimation engine
+d 'TSVY': module to produce point-estimate tables and Wald/CLD tests by level of aggregation and year for complex survey data
 d
 d    tsvy builds, in one pass, the table that a researcher working
-d with repeated cross-sections or panel waves of a complex survey  
-d  usually needs: point estimates broken down by level of
-d aggregation (national, regional, local, ...) and by year,
-d together with    a test of whether each level's estimate actually
-d changed from year to year. It loops over every level of
-d aggregation named in	  caida(), running the same
-d omnibus-F/Bonferroni/CLD computation as svylet once per (level x
-d value x [sexovar value])    combination, and accumulates one row
-d per year in a frame that is ready to reshape wide and export --
-d so the point-estimate    table and the F/Bonferroni/CLD test come
-d from the very same call, with no separate pass to keep aligned by
-d hand.     tsvyexport exports the accumulator frame built by tsvy
-d to Excel (.xlsx) or Word (.docx). The original frame is never
-d modified.    It can write the frame as is (one row per
-d level/year) or in a wide layout (one column per year). 
+d with repeated cross-sections or panel waves of a complex survey
+d usually needs: point estimates (mean, total, proportion or ratio)
+d broken down by level of aggregation (national, regional, local,
+d ...) and by year, together with a test of whether each level's
+d estimate changed from year to year. It loops over every level of
+d aggregation named in nivel(), optionally crossed with a second
+d variable in cruce(), and for each block reports an omnibus Wald F
+d test and a Compact Letter Display of pairwise comparisons
+d (Bonferroni by default, escalating to Holm, FDR or LSD only when
+d the omnibus test is significant but no pair separates). Results
+d accumulate one row per year in a frame ready to reshape and
+d export. tsvyexport exports that frame to Excel (.xlsx) or Word
+d (.docx), either as is or in a wide year-by-year layout with
+d INEI-style table formatting. 
 d
 d KW: complex survey data
-d KW: taabulations
+d KW: tabulations
 d KW: export
 d
-d Requires: Stata version 16 and svylet, frameappend from SSC (q.v.)
+d Requires: Stata version 16 and frameappend, (optionally) svylet from SSC (q.v.)
 d
-d Distribution-Date: 20260925
+d Distribution-Date: 20261124
 d
 d Author: Andres Talavera Cuya,   Direccion Nacional de Censos y Encuestas -- INEI Peru
 d Support: email talaveracuya@@gmail.com

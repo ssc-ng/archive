@@ -527,9 +527,13 @@ Current scope: {cmd:stat(mean)} only, {cmd:boot()==0} only, no effect
 size is reported (the ordinal eta-squared/epsilon-squared formulas used
 for the classical, unweighted H statistic do not apply to this
 Wald-on-ranks construction, so they are omitted rather than misapplied).
-{bf:This option has not been run against real Stata} -- test it on a
-small example and sanity-check {cmd:F_KW}/{cmd:P_KW}/{cmd:GRUPO_KW}
-before relying on it with production data.
+{bf:Validated against real Stata} ({cmd:prueba_kwallis.do}, on
+{cmd:auto.dta} with sampling weights): {cmd:F_KW}/{cmd:P_KW} match, to
+1e-6, a hand computation of the weighted Hajek mid-rank followed by
+{cmd:svy, subpop(): regress} rank {cmd:i.ANIO_} and {cmd:testparm}, in
+every block; {cmd:F_KW} is identical for {it:varname} and a monotone
+transformation of it (log); and, without weights, {cmd:P_KW} is close
+to the classical {helpb kwallis} p-value (0.921 vs 0.931).
 
 {marker remarks_dfmode}{...}
 {pstd}{bf:dfmode(): degrees of freedom of the block}

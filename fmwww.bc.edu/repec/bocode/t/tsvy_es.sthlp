@@ -546,10 +546,14 @@ Alcance actual: solo {cmd:stat(mean)}, solo {cmd:boot()==0}, no reporta
 tamano de efecto (las formulas de eta-cuadrado/epsilon-cuadrado ordinal
 que se usan para el H clasico sin ponderar no aplican a esta
 construccion de Wald-sobre-rangos, asi que se omiten en vez de
-aplicarlas mal). {bf:Esta opcion no se corrio contra Stata real} --
-probarla primero con un ejemplo chico y revisar que
-{cmd:F_KW}/{cmd:P_KW}/{cmd:GRUPO_KW} salgan razonables antes de confiar
-en ella con datos de produccion.
+aplicarlas mal). {bf:Validada contra Stata real} ({cmd:prueba_kwallis.do}, sobre
+{cmd:auto.dta} con pesos de muestreo): {cmd:F_KW}/{cmd:P_KW} coinciden,
+hasta 1e-6, con el calculo a mano del rango medio de Hajek ponderado
+seguido de {cmd:svy, subpop(): regress} rango {cmd:i.ANIO_} y
+{cmd:testparm}, en todos los bloques; {cmd:F_KW} es identico para
+{it:varname} y para una transformacion monotona suya (log); y, sin
+pesos, {cmd:P_KW} queda cerca del p-valor del {helpb kwallis} clasico
+(0.921 vs 0.931).
 
 {marker remarks_dfmode}{...}
 {pstd}{bf:dfmode(): grados de libertad del bloque}

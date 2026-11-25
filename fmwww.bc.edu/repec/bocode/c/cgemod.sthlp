@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 2.0.0  15nov2026}{...}
+{* *! version 2.1.0  22nov2026}{...}
 {vieweralsosee "[R] regress" "help regress"}{...}
 {vieweralsosee "[TS] newey" "help newey"}{...}
 {vieweralsosee "[XT] xtreg" "help xtreg"}{...}
@@ -38,12 +38,13 @@ estimation of trade and substitution elasticities with residual diagnostics and 
 {cmd:cgemod sam,} {opt mat:rix(matname)} [{opt name(matname)} {opt bal:ance} {opt tol:erance(#)}
 {opt max:iter(#)} {opt nolist}]
 
-{pstd}Import a SAM from Excel or CSV and detect account roles from the names
+{pstd}Import a SAM from Excel, CSV, tab-delimited text or a GAMS include file, aggregate it, and detect
+account roles from the names
 
 {p 8 16 2}
 {cmd:cgemod samimport using} {it:filename} [{cmd:,} {opt sheet(name)} {opt cellr:ange(range)}
 {opt name(matname)}
-{opt merge(SOURCE=DESTINATION ...)} {opt labelc:ol(#)} {opt noroles} {opt nolist}]
+{opt merge(SOURCE=DESTINATION ...)} {opt map(mapfile)} {opt labelc:ol(#)} {opt noroles} {opt nolist}]
 
 {pstd}Generate a balanced synthetic SAM of any size (for testing, teaching and performance benchmarks)
 
@@ -270,6 +271,20 @@ Stata
 names (for example {cmd:a-maiz} becomes {cmd:a_maiz}). {opt merge()} adds one account to another, for example
 stock
 changes to savings-investment.
+
+{pstd}
+{opt map(mapfile)} aggregates the SAM with a mapping file (CSV, tab-delimited or Excel) of two columns: an
+account of the SAM and the account it belongs to after aggregation. A first row reading {cmd:source},
+{cmd:from}, {cmd:old}, {cmd:account} or {cmd:original} is treated as a header. Several accounts may map to the
+same new account (for example 42 IFPRI activities into 8 sectors, with the matching commodities); accounts not
+listed keep their names. Flows between accounts that are merged together are removed, which keeps the SAM
+balanced. {opt merge()} is applied first, then {opt map()}, then role detection on the new names.
+
+{pstd}
+A file ending in {cmd:.inc} or {cmd:.gms} is read as a GAMS include file: the entries {it:row}{cmd:.}{it:column}
+{it:value} of the first {cmd:Parameter} block, as written by {cmd:cgemod samexport, gams()} or by most GAMS CGE
+models. Binary GDX files cannot be read by Stata; write the SAM from GAMS with {cmd:execute_unload} into a GDX
+and convert it with {cmd:gdxdump} or {cmd:gdx2xls}, or {cmd:put} it as an include file.
 
 {pstd}
 Account roles are detected from common naming conventions, including prefixed names ({cmd:A_AGR}, {cmd:C_AGR},
@@ -1080,7 +1095,7 @@ Press.{p_end}
 
 {pstd}Yusuf, Y. T., and A. A. Kilishi. 2026. {cmd:cgemod}: Stata module for computable general equilibrium
 modelling,
-SAM balancing, microsimulation and scenario analysis. Version 2.0.0.{p_end}
+SAM balancing, microsimulation and scenario analysis. Version 2.1.0.{p_end}
 
 
 {title:Authors}

@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.35  19nov2026}{...}
+{* *! version 1.37  23nov2026}{...}
 {vieweralsosee "tsvyexport (en espanol)" "help tsvyexport_es"}{...}
 {viewerjumpto "Syntax" "tsvyexport##syntax"}{...}
 {viewerjumpto "Description" "tsvyexport##description"}{...}
@@ -16,7 +16,7 @@
 {bf:tsvyexport} {hline 2} Export a {helpb tsvy} accumulator frame to Excel or Word
 
 {phang}
-{it:Version {bf:1.35} (19nov2026)}{p_end}
+{it:Version {bf:1.37} (23nov2026)}{p_end}
 
 {marker syntax}{...}
 {title:Syntax}
@@ -245,8 +245,9 @@ body {cmd:rowspan} in a different column, and a header row with
 several {cmd:colspan}s (one per year) applied right-to-left -- both
 mechanics are confirmed against real Stata in isolation by the
 accompanying {cmd:test_putdocx_merge.do} script (Pruebas 7, 9, 11 and
-12); {cmd:tsvyexport} itself has not yet been run end-to-end with real
-2+-{cmd:VARNAME} data. With exactly 1 {cmd:VARNAME}, the table is
+12); {bf:Fixed in v1.36:} this branch used to stop with "not sorted"
+r(5); it has since been run end-to-end against real Stata (2
+{cmd:VARNAME}s on {cmd:auto.dta}). With exactly 1 {cmd:VARNAME}, the table is
 unchanged from the shape described above.
 
 {pstd}

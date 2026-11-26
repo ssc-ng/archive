@@ -24,6 +24,7 @@ p fbnardl module to perform Fourier Bootstrap Nonlinear Autoregressive Distribut
 p fcinstability module to perform forecast comparison and forecast rationality tests
 p fcoint module to perform Fourier cointegration tests for time series with smooth structural breaks
 p fcstats module to compute time series forecast accuracy statistics
+p fcusum module to perform the Fourier CUSUM test for the null of cointegration
 p fdfilter module to implement Corbae-Ouliaris frequency domain filter to time series data
 p fdta module to change contents of string variables
 p fedistr module for plotting distributions after absorbing fixed effects

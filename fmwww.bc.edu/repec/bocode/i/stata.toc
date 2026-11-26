@@ -31,6 +31,7 @@ p ihelp module to display the help documents in PDF format using the default bro
 p ihsretran module to compute marginal effects on the original scale for linear regression with an inverse hyperbolic sine (IHS) transformed dependent variable using Duan's smearing estimate.
 p ihstrans module for generating inverse hyperbolic sine (IHS) transformed variables
 p iia module to test the iia assumption in conditional logistic regression (version 5)
+p ilostat module to Access ILOSTAT statistics and metadata 
 p ilr module to compute a isometric log-ratio (ILR) transformation of a set of variables
 p imbalance module to check covariate imbalance before and after matching
 p imeus2 module to install SSC routines 

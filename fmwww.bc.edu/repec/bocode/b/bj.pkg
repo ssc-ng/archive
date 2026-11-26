@@ -1,0 +1,28 @@
+d 'BJ': module to to implement the Box-Jenkins strategy (identification, estimation, diagnostic checking and forecast) in two figures
+d
+d  bj gathers the steps of the Box-Jenkins time series strategy in
+d a single command. The output consists of two figures. The first
+d (identification) displays the time plot of the series, its
+d autocorrelation and partial autocorrelation functions,
+d descriptive statistics, Dickey-Fuller unit root tests and ARMA
+d order selection by AIC, BIC and HQIC. The second (estimation)
+d displays observed and fitted values, a forecast, the residuals,
+d their histogram, a normal Q-Q plot and residual diagnostics
+d (Ljung-Box, McLeod-Li, Jarque-Bera). The model can be the one
+d selected by BIC or any arima specification given by the user,
+d including covariates. It is intended for teaching and applied
+d analysis. 
+d
+d KW: Box-Jenkins
+d KW: ARIMA
+d
+d Requires: Stata version 18
+d
+d Distribution-Date: 20261125
+d
+d Author: Rodrigo Taborda,  Universidad de los Andes
+d Support: email r.taborda@@uniandes.edu.co
+d
+f bj.ado
+f bj.sthlp
+f bj_test_simple.do

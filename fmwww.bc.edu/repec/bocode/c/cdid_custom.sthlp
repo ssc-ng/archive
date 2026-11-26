@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0.0  16nov2026}{...}
+{* *! version 1.4.0.0  24nov2026}{...}
 {vieweralsosee "cdid" "help cdid"}{...}
 {vieweralsosee "cdid_pretest" "help cdid_pretest"}{...}
 {vieweralsosee "[M-2] struct" "help m2_struct"}{...}
@@ -128,6 +128,9 @@ those units.
 {phang}
 {bf:Not supported.} {cmd:method(custom)} is not available with
 {opt crosspair}, {cmd:gmmweighting(within)}, {opt preset()}, or {opt dvar()}.
+In chained mode, a custom estimator defaults to {cmd:gmmweighting(optimal)};
+{cmd:gmmweighting(two_step)} is a synonym, and {cmd:gmmweighting(identity)}
+uses the unweighted criterion.
 
 {phang}
 {bf:Ordinary estimation} ({cmd:mode(ordinary)} or {cmd:rcs}). The callback

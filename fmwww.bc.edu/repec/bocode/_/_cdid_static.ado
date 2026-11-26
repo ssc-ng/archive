@@ -1,4 +1,4 @@
-*! version 1.0.0.0  16nov2026
+*! version 1.0.0.1  17nov2026
 program define _cdid_static, eclass
     version 19.5
     syntax anything(name=raw_varlist id="varlist") [if] [in] [iweight], TIME(varname numeric) ///

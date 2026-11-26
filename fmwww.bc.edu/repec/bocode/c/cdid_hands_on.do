@@ -1,4 +1,4 @@
-*! Hands-on guide to cdid for Stata (Stata 19.5 or later)
+*! Hands-on guide to cdid 1.4.0.0 for Stata (Stata 19.5 or later)
 *! Do-file for docs/hands-on.md
 *! Repository: https://github.com/dvbn/cdid-stata
 *!
@@ -249,7 +249,16 @@ cdid y x_bin x_cont, ivar(id) time(period) gvar(first_treat) ///
     method(dr) controlgroup(nevertreated) ptassumption(all) ptstart(1) ///
     biters($CDID_DEMO_BITERS)
 
-* 3d. Comparing treatment methods (`method(ipw)`, `method(reg)`) and `outcomepooling(pooled)`
+* 3d. Compare the current cohort default with the earlier two-step default.
+*     Keep the data, adjustment and inference settings fixed.
+cdid y x_bin x_cont, ivar(id) time(period) gvar(first_treat) bstrap(0) cband(0)
+display as text "Applied weighting: " as result e(gmm_weighting)
+
+cdid y x_bin x_cont, ivar(id) time(period) gvar(first_treat) ///
+    gmmweighting(optimal) bstrap(0) cband(0)
+display as text "Applied weighting: " as result e(gmm_weighting)
+
+* 3e. Comparing treatment methods (`method(ipw)`, `method(reg)`) and `outcomepooling(pooled)`
 if $CDID_DEMO_RUN_ADVANCED == 1 {
     cdid y x_bin x_cont, ivar(id) time(period) gvar(first_treat) ///
         method(dr) outcomepooling(pooled) biters($CDID_DEMO_BITERS)

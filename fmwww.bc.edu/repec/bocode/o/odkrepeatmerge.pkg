@@ -1,0 +1,29 @@
+d 'ODKREPEATMERGE': module to merge ODK repeat-group data into one wide dataset in questionnaire order
+d
+d  odkrepeatmerge combines the main CSV file and the repeat-group
+d CSV files exported from ODK Central into one wide Stata dataset
+d with one row per submission. It reads the XLSForm to find the
+d repeat groups and how they are nested (to any depth), reshapes
+d each repeat group to wide form, merges it into its parent, labels
+d the variables from the XLSForm, and orders them as in the
+d questionnaire. Instance numbers are taken from ODK's KEY, group
+d prefixes in column names are removed, and the command stops with
+d a clear message rather than losing or misplacing data when
+d variable names would clash. 
+d
+d KW: ODK
+d KW: ODK Central
+d KW: XLSForm
+d KW: repeat groups
+d KW: reshape
+d KW: survey data
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261125
+d
+d Author: Arman Mahmud ,  ARCED Foundation
+d Support: email arman.mahmud.stat@@gmail.com
+d
+f odkrepeatmerge.ado
+f odkrepeatmerge.sthlp

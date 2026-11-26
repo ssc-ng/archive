@@ -23,6 +23,7 @@ p qog module to access the most recent release of the "Quality of Government" da
 p qogbook module to access Quality of Government codebooks 
 p qpair module to perform Q-analysis on paired Q-sorts using different factor extraction and factor rotation techniques
 p qpfit module containing various quantile and probability plots for assessing distribution fit
+p qqardl module to perform Quantile-on-Quantile ARDL (QQARDL) bounds test, long-run, short-run and error-correction coefficients
 p qqcompare module to evaluate balance after matching using quantile-quantile plots
 p qqplot2 module to produce quantile-quantile plot
 p qqplot3 module to plot the unweighted and weighted quantiles of one variable against the corresponding quantiles of another
@@ -32,6 +33,7 @@ p qqvalue module to generate quasi-q-values by inverting multiple-test procedure
 p qrbreak module to test and estimate structural breaks in quantile regression 
 p qreg2 module to perform quantile regression with robust and clustered standard errors
 p qreg_hac module for computing quantile regression with heteroskedasticity- and autocorrelation-consistent (HAC) standard errors
+p qregark module for quantile regression with AR(k) errors, by Prais-Winsten or Cochrane-Orcutt estimation.
 p qregpd module to perform Quantile Regression for Panel Data
 p qregplot module for plotting coefficients of a Quantile Regression
 p qregsel module to estimate quantile regression corrected for sample selection

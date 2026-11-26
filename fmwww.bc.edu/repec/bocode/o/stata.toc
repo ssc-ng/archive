@@ -12,6 +12,7 @@ p odi module to score Oswestry Disability Index
 p odk_validate module to validdate ODK survey forms
 p odkexport module to export xlsForms to readable docx or xlsx files
 p odkmeta module to import ODK data
+p odkrepeatmerge module to merge ODK repeat-group data into one wide dataset in questionnaire order
 p odksplit module to split and label multiple response variables generated from ODK or SurveyCTO
 p oeratio module to calculate ratio of observed to expected outcomes 
 p oesch module to recode ISCO codes into Oesch class scheme

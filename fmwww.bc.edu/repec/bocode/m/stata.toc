@@ -76,6 +76,7 @@ p mc module to calculate a matched concordance index
 p mca module to perform multiple correspondence analysis
 p mcenter module to center variables at their means
 p mces module for Marginal Comparison Effect Sizes
+p mchaid module to perform  Chi-square automated interaction detection (CHAID) for a categorical response variable
 p mchs module to provide Stata file/CLI boundary adapter
 p mcib module to  estimate income distribution and inequality statistics from grouped data
 p mcl module to estimate multinomial conditional logit models

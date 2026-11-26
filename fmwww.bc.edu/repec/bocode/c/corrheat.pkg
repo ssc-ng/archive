@@ -1,0 +1,31 @@
+d 'CORRHEAT': module to plot a correlation matrix as a heat map with r and p labels and a color bar
+d
+d  corrheat creates correlational matrix heat plots (lower-triangle
+d portion only) in a single command. It runs pwcorr on the
+d specified variables, labels each cell with its correlation
+d coefficient and p-value, and draws a gradient color bar using the
+d same colors and cut points as the cells. All cell labels follow
+d APA style by default (no leading zeros, p < .001), and the label
+d text switches to white on dark cells for legibility (white text
+d cutoffs are adjustable). Options control the color palette, the
+d bin cut points (so several figures can share one scale), label
+d sizes, bar position and ticks, and pairwise or listwise deletion.
+d Any other twoway options are passed through to the graph, and the
+d user's data are left unchanged. 
+d
+d KW: correlation
+d KW: correlation matrix
+d KW: heat map
+d KW: heatplot
+d KW: graphics
+d
+d Requires: Stata version 16 and heatplot, palettes, colrspace from SSC (q.v.)
+d
+d Distribution-Date: 20261125
+d
+d Author: Shane Littrell ,  Cornell University
+d Support: email shane.littrell27@@gmail.com
+d
+f corrheat.ado
+f corrheat.sthlp
+f corrheat.pdf

@@ -27,7 +27,7 @@ d KW: ATE
 d
 d Requires: Stata version 19.5 and csdid from SSC (q.v.)
 d
-d Distribution-Date: 20261117
+d Distribution-Date: 20261125
 d
 d Author: David Benatia,  HEC Montréal
 d Support: email david.benatia@@hec.ca
@@ -56,6 +56,7 @@ f cdid_pretest_load.ado
 f cdid_pretest_load.sthlp
 f cdid_pretest.ado
 f cdid_pretest.sthlp
+f cdid_sources.zip
 f ../l/lcdid_native.mlib
 f ../_/_cdid_aug_reference_prepare.ado
 f ../_/_cdid_baseline_reference_prepare.ado

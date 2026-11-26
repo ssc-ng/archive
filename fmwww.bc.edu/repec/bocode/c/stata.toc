@@ -264,6 +264,7 @@ p corr2docx module to report Pearson & Spearman correlation coefficients to form
 p corr2tex module to export publication-ready correlation matrices to LaTeX with significance stars
 p corr_svy module to compute correlation tables for survey data
 p correlationchords module to produce a circular chord diagram of correlations
+p corrheat module to plot a correlation matrix as a heat map with r and p labels and a color bar
 p corrtab module to display correlation coefficients in a formatted tabular output
 p corrtable module to show correlation matrix as graphical table
 p corrtex module to generate correlation tables formatted in LaTeX

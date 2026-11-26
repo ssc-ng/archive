@@ -1,4 +1,4 @@
-*! version 1.0.0.0  16nov2026
+*! version 1.4.0.0  24nov2026
 *! cdid: chained and ordinary difference-in-differences
 program define cdid, eclass
     version 19.5
@@ -307,7 +307,11 @@ if _rc quietly mata: mata mlib index
     if "`controlgroup'"=="" local controlgroup "nevertreated"
     if "`baseperiod'"=="" local baseperiod "varying"
     if "`ptassumption'"=="" local ptassumption "post"
-    if "`gmmweighting'"=="" local gmmweighting "optimal"
+    // Switching and ordinary modes have already dispatched. The preset's
+    // regression branch has already selected within-unit least squares.
+    if "`gmmweighting'"=="" {
+        local gmmweighting=cond("`method'"=="custom" | "`preset'"!="","optimal","within")
+    }
     local ptassumption=strlower(strtrim("`ptassumption'"))
     local gmmweighting=strlower(strtrim("`gmmweighting'"))
     local ptassumption_req "`ptassumption'"

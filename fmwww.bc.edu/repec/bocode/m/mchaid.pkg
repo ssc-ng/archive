@@ -1,0 +1,29 @@
+d 'MCHAID': module to perform  Chi-square automated interaction detection (CHAID) for a categorical response variable
+d
+d    mchaid grows a CHAID decision tree for a categorical response
+d variable: it merges	 the categories of the splitting variables
+d and splits the data into nodes that	 differ as much as possible
+d in the distribution of the response variable.  It is a    faster,
+d corrected version of chaid, and shows the tree in a table and in
+d a graph.    maid performs Automatic interaction detection with F
+d tests (MAID): CHAID tree for a	       quantitative
+d response variable 
+d
+d KW: CHAID
+d KW: decision tree
+d
+d Requires: Stata version 12.1 and moremata from SSC (q.v.)
+d
+d Distribution-Date: 20261125
+d
+d Author: Modesto Escobar,  Universidad de Salamanca
+d Support: email modesto@@usal.es
+d
+f mchaid.ado
+f mchaid.sthlp
+f maid.ado
+f maid.sthlp
+f mchaid_d3_js.ado
+f mchaid_estat.ado
+f mchaid_tree_css.ado
+f mchaid_tree_js.ado

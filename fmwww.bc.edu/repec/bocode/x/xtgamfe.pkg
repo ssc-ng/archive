@@ -16,7 +16,7 @@ d KW: log link
 d
 d Requires: Stata version 15
 d
-d Distribution-Date: 20261114
+d Distribution-Date: 20261125
 d
 d Author:  M. Christopher Roebuck,   RxEconomics LLC
 d Support: email   mcr@@rxeconomics.com
@@ -25,4 +25,5 @@ f xtgamfe.ado
 f xtgamfe_estat.ado
 f xtgamfe_p.ado
 f xtgamfe.sthlp
+f xtgamfe_technical.sthlp
 f xtgamfe_example.dta

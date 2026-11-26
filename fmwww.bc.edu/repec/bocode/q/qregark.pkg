@@ -1,0 +1,32 @@
+d 'QREGARK': module for quantile regression with AR(k) errors, by Prais-Winsten or Cochrane-Orcutt estimation.
+d
+d  qregark fits a linear quantile regression model with
+d autoregressive errors of order k. The regression coefficients b
+d and the AR coefficients rho_1,...,rho_k are estimated jointly by
+d minimizing the quantile check function. qregark extends qreg to
+d AR(k) errors in the same way that prais extends regress.  By
+d default, qregark uses a Prais-Winsten-type estimator, which also
+d uses the first k observations of each time segment, transformed
+d by the stationary covariance of the errors (Prais and Winsten
+d 1954; Vougas 2021; Dielman and Rose 1994). With option corc,
+d qregark uses the conditional (Cochrane-Orcutt-type) estimator of
+d Tian et al. (2018), which conditions on the first k observations
+d of each segment. 
+d
+d KW: quantile regression
+d KW: autocorrelation
+d KW: Prais-Winsten
+d KW: Cochrane-Orcutt
+d KW: time series
+d
+d Requires: Stata version 13
+d
+d Distribution-Date: 20261125
+d
+d Author: Ariel Linden, Linden Consulting Group, LLC
+d Support: email alinden@@lindenconsulting.org
+d
+f qregark.ado
+f qregark.sthlp
+f qregark_p.ado
+f QREGARK_methods.pdf

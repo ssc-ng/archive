@@ -1,0 +1,28 @@
+d 'FCUSUM': module to perform the Fourier CUSUM test for the null of cointegration
+d
+d  fcusum tests the null hypothesis of cointegration against the
+d alternative of no cointegration, allowing for smooth structural
+d change in the intercept approximated by a Fourier pair at a
+d fractional or integer frequency. The cointegrating regression is
+d estimated by dynamic OLS, the residual CUSUM statistic of Xiao
+d and Phillips (2002) is scaled by a Bartlett long-run variance, a
+d sup-F pre-test decides whether the Fourier terms are needed, and
+d bootstrap critical values replicate the frequency search. It is
+d the Stata version of my R package FCUSUM 1.1.0 on CRAN. 
+d
+d KW: cointegration
+d KW: CUSUM
+d KW: Fourier
+d KW: structural break
+d KW: dynamic OLS
+d KW: time series
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261135
+d
+d Author: Taha Zaghdoudi,  University of Jendouba
+d Support: email zedtaha@@gmail.com
+d
+f fcusum.ado
+f fcusum.sthlp

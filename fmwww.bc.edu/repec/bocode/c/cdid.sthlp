@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0.0  16nov2026}{...}
+{* *! version 1.4.0.0  24nov2026}{...}
 {vieweralsosee "cdid postestimation" "help cdid_postestimation"}{...}
 {vieweralsosee "cdid with dvar()" "help cdid_dvar"}{...}
 {vieweralsosee "cdid_custom" "help cdid_custom"}{...}
@@ -107,7 +107,7 @@ Aggregate, test, inspect, plot, export, or save the results: see
 {synopt :{opt fixweights(string)}}{opt first_period} or {opt base_period} when weights vary within units{p_end}
 
 {syntab:GMM}
-{synopt :{opt gmmweighting(string)}}{opt optimal} (default), {opt two_step}, {opt within}, or {opt identity}{p_end}
+{synopt :{opt gmmweighting(string)}}{opt within} (built-in cohort default), {opt optimal}, {opt two_step}, or {opt identity}{p_end}
 {synopt :{opt gmmcovariance(string)}}{opt tikhonov} (default and only value){p_end}
 {synopt :{opt condition(#)}}relative eigenvalue threshold; default {cmd:1e-10}{p_end}
 {synopt :{opt ridge(#)}}relative Tikhonov multiplier; default {cmd:1e-4}{p_end}
@@ -174,7 +174,7 @@ cross sections. A binary treatment that units can enter and leave is estimated
 with {opt dvar()}; see {helpb cdid_dvar:cdid with dvar()}.
 
 {pstd}
-{cmd:cdid} corresponds to the function {cmd:att_gt()} of {browse "https://github.com/dvbn/cdid":R {cmd:cdid} 1.3.0.0}; see
+{cmd:cdid} corresponds to the function {cmd:att_gt()} of {browse "https://github.com/dvbn/cdid":R {cmd:cdid}}; see
 {help cdid##remarks_r:Correspondence with R}.
 
 
@@ -379,14 +379,23 @@ each target cohort's reference date. Weights are not allowed with
 
 {phang}
 {opt gmmweighting(optimal|two_step|within|identity)} selects the weighting
-matrix that combines the comparisons: the inverse of their estimated covariance
-({opt optimal}, the default; {opt two_step} is a synonym), the inverse of the
-analytical covariance of within-unit changes under uncorrelated level shocks
-({opt within}), or the identity matrix. {opt within} is available with or
-without {opt selection()} and with every {opt selmethod()}, but not with
-{cmd:method(custom)}; with {opt selection()}, {cmd:outcomepooling(pooled)}, or
-covariates that vary over time it requires a constant in the covariate design.
-Inference always uses the estimated influence functions.
+matrix that combines the comparisons. The built-in chained cohort methods
+({opt ipw}, {opt reg}, and {opt dr}) default to {opt within}, the inverse
+working covariance of within-unit changes under uncorrelated level shocks.
+Choose {opt optimal} (alias {opt two_step}) to use the covariance of
+comparison scores estimated from the data and reproduce the earlier cohort
+default. {opt identity} uses the unweighted criterion.
+
+{pstd}
+{opt within} is available with {opt crosspair} and with every supported
+{opt selmethod()}. With observation correction, {cmd:outcomepooling(pooled)},
+or covariates or weights that vary over time, it requires a constant in the
+covariate design. {cmd:method(custom)}, {opt dvar()}, and the {opt ipw} and
+{opt dr} branches of {cmd:preset(cohort_time_fe)} default to {opt optimal}
+and do not accept {opt within}. The {opt reg} branch of the preset uses
+within-unit least squares. Inference uses the full study-unit influence
+functions. After a chained cohort fit, {cmd:e(gmm_weighting)} and
+{helpb cdid_diagnostics} report the weighting used.
 
 {phang}
 {opt gmmcovariance(tikhonov)}, {opt condition(#)}, and {opt ridge(#)} control
@@ -581,9 +590,10 @@ supported; {cmd:selmethod(imputation)} and {cmd:selmethod(dr)} require
 {pstd}
 {cmd:gmmweighting(within)} uses a working weighting matrix, block diagonal by
 target cohort, built from the covariance of within-unit changes under
-uncorrelated level shocks of equal variance. The weighting matrix does not
-depend on the outcomes; it affects efficiency, not consistency, and the
-reported standard errors do not assume it. With {opt crosspair}, {cmd:ptassumption(ctrl)},
+uncorrelated level shocks with variance proportional to the inverse sampling
+weight. A shock at a shared date contributes to the covariance of two
+comparisons. Within weighting uses this working covariance to choose the
+weights. Standard errors use the full study-unit influence functions. With {opt crosspair}, {cmd:ptassumption(ctrl)},
 {cmd:baseperiod(universal)}, not-yet-treated controls, no covariates, and
 nested observation windows within each cohort, the point estimates equal the
 coefficients of stacked target-cohort regressions with unit fixed effects; see
@@ -656,11 +666,13 @@ comparison by a Mata function; see {help cdid_custom}. It is not available with
 {title:Correspondence with R}
 
 {pstd}
-{cmd:cdid} 1.0.0.0 for Stata implements the estimators, options, and defaults
-of {browse "https://github.com/dvbn/cdid":R {cmd:cdid} 1.3.0.0}, except the R arguments that control computation or
-printing ({cmd:faster_mode}, {cmd:print_details}, {cmd:pl}, {cmd:cores},
-{cmd:control$workers}), which have no Stata counterpart and do not change the
-estimator. Estimates and standard errors were compared with R on a range of
+The original Stata port followed the estimators, options and defaults
+of {browse "https://github.com/dvbn/cdid/tree/v1.3.0.0":R {cmd:cdid} 1.3.0.0}.
+The chained cohort weighting defaults follow
+{browse "https://github.com/dvbn/cdid/commit/5f554b848038c9613208164032794ae19e7e5d04":R {cmd:cdid} 1.4.0.0}.
+R arguments that control computation or printing ({cmd:faster_mode},
+{cmd:print_details}, {cmd:pl}, {cmd:cores}, {cmd:control$workers}) have no Stata
+counterpart. Estimates and standard errors were compared with R on a range of
 configurations and agree there up to numerical precision; agreement is not
 established beyond them, and multiplier-bootstrap draws come from Stata's
 random-number generator and differ from R's. The mapping between
@@ -692,6 +704,10 @@ R arguments and Stata options is in
 
 {pstd}Regression adjustment, not-yet-treated controls, analytical standard errors{p_end}
 {phang2}{cmd:. cdid y x, ivar(id) time(year) gvar(G) method(reg) controlgroup(notyettreated) bstrap(0) cband(0)}{p_end}
+
+{pstd}Earlier two-step weighting and the applied-weighting diagnostic{p_end}
+{phang2}{cmd:. cdid y x, ivar(id) time(year) gvar(G) method(reg) controlgroup(notyettreated) gmmweighting(optimal) bstrap(0) cband(0)}{p_end}
+{phang2}{cmd:. display e(gmm_weighting)}{p_end}
 
 {pstd}Augmented correction for outcomes missing conditionally on {cmd:x}{p_end}
 {phang2}{cmd:. cdid y x, ivar(id) time(year) gvar(G) selection(conditional_mtar) selmethod(dr) bstrap(0) cband(0)}{p_end}

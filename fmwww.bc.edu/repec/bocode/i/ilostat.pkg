@@ -1,0 +1,35 @@
+d 'ILOSTAT': module to Access ILOSTAT statistics and metadata 
+d
+d      ilostat retrieves ILOSTAT data and metadata from the ILOSTAT
+d Plumber API. Data    are returned as native Stata DTA by default.
+d There is no persistent local cache,	 and no Python, R, curl or
+d PowerShell dependency. Requests include    channel=ilostat-stata.
+d    Dataset identifiers such as FRA_A are automatically routed to
+d the reference-area	segment. Use by() to select a segment
+d explicitly. Other identifiers default to    the indicator
+d segment.    Code filters accept space-separated values. The API
+d applies its partial-matching	  semantics. Label filters accept
+d comma-separated quoted values; commas inside	  quotes are
+d preserved. Label filters are applied locally after labels have
+d been	  retrieved.	metadata returns a catalogue summary, not
+d the full dataset-specific JSON    metadata. datasetdic returns
+d classification values available in the selected    dataset. 
+d
+d KW: International Labour Organization
+d KW: ILO
+d KW: data management
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261125
+d
+d Author: David Bescond,  International Labour Organization
+d Support: email bescond@@ilo.org
+d
+f ilostat.ado
+f ilostat.sthlp
+f ilostat_datasetdic.sthlp
+f ilostat_info.sthlp
+f ilostat_metadata.sthlp
+f ilostat_quickstart.do
+f ilostat_toc.sthlp

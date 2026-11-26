@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.0.0  16nov2026}{...}
+{* *! version 1.0.0.1  17nov2026}{...}
 {vieweralsosee "cdid" "help cdid"}{...}
 {vieweralsosee "cdid_nuisance" "help cdid_nuisance"}{...}
 {vieweralsosee "cdid_export" "help cdid_export"}{...}
@@ -215,6 +215,14 @@ role are estimated jointly by GMM. Under {cmd:selection(none)}, the units
 observed at a pair of dates are assumed to have the expected change of their
 role. A cell is unavailable when the observed dates of its switchers or of its
 stayers do not connect {it:t}-1 and {it:t}.
+
+{pstd}
+With {cmd:selmethod(ipw)} or {cmd:selmethod(dr)}, the observation logit needs
+a finite solution. A cell with every outcome observed or every outcome missing
+has no finite intercept. A selection covariate can also separate observed and
+unobserved units and prevent a finite solution. For direct-pair logits,
+the response indicates whether both outcomes are observed. For independent-date
+logits, the response indicates whether the outcome at that date is observed.
 
 {pstd}
 {bf:Input.} {opt dvar()} needs a row for every unit at every date and a

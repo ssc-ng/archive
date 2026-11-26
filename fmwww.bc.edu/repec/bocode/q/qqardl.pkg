@@ -1,0 +1,30 @@
+d 'QQARDL': module to perform Quantile-on-Quantile ARDL (QQARDL) bounds test, long-run, short-run and error-correction coefficients
+d
+d    qqardl implements the Quantile-on-Quantile Autoregressive
+d Distributed Lag    (QQARDL) approach introduced by Destek,
+d Radulescu, Ozkan and Balsalobre-Lorente    (2025) and applied by
+d Balci and Dogan (2026).  For every pair of quantiles of the
+d dependent and the explanatory variable it builds the quantile
+d series (QSER) of Li (2025), estimates the ARDL error-correction
+d regression, and reports the Pesaran-Shin-Smith bounds test, the
+d long-run, short-run and error-correction coefficients as quantile
+d grids and paper-style heatmaps. The quantile series is a Mata
+d port of the R package qfa, with a Frisch-Newton interior-point
+d quantile regression solver. 
+d
+d KW: ARDL
+d KW: quantile
+d KW: autoregressive
+d KW: distributed lag
+d
+d Requires: Stata version 15
+d
+d Distribution-Date: 20261125
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f qqardl.ado
+f qqardl.sthlp
+f qqardl_methods.sthlp
+f qqardl_example.do

@@ -218,6 +218,13 @@ algorithm. The default is {cmd:iterate(10000)}.
 {pstd}Post-intervention trend of the median{p_end}
 {phang2}{cmd:. lincom _t + _x_t}{p_end}
 
+{pstd}Predicted pre- and post-intervention trend lines of the median, with 95% confidence intervals{p_end}
+{phang2}{cmd:. predictnl double fit = predict(xb), ci(lb ub)}{p_end}
+{phang2}{cmd:. twoway (rarea lb ub qtr if _x == 0, color(gs13)) (rarea lb ub qtr if _x == 1, color(gs13))}{p_end}
+{phang3}{cmd:(scatter ln_consump qtr, msize(small) mcolor(gs8)) (line fit qtr if _x == 0, lcolor(navy))}{p_end}
+{phang3}{cmd:(line fit qtr if _x == 1, lcolor(navy)), xline(`=tq(1971q1)', lpattern(dash)) legend(off)}{p_end}
+{phang3}{cmd:ytitle("ln_consump") xtitle("Quarter")}{p_end}
+
 {pstd}0.9 quantile, residual bootstrap{p_end}
 {phang2}{cmd:. qregark ln_consump _t _x _x_t, lag(4) quantile(.9) vce(bootstrap, reps(500) seed(1234))}{p_end}
 {phang2}{cmd:. matrix list e(ci_percentile)}{p_end}
@@ -385,7 +392,7 @@ to the research community, like a paper. Please cite it as such: {p_end}
 
 {p 4 8 2}
 Linden, A. 2026. QREGARK: Stata module for quantile regression with AR(k) errors, by Prais-Winsten or Cochrane-Orcutt estimation.
-Statistical Software Components sXXXXXX, Boston College Department of Economics.{p_end}
+Statistical Software Components S460048, Boston College Department of Economics.{p_end}
 
 
 {title:Also see}

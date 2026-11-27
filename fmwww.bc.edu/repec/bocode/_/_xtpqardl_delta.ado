@@ -1,4 +1,4 @@
-*! _xtpqardl_delta v1.0.4 — delta-method mapping of a quantile ARDL fit
+*! _xtpqardl_delta v1.0.5 — delta-method mapping of a quantile ARDL fit
 *! Author: Dr Merwan Roudane (merwanroudane920@gmail.com)
 *! Date: August 2026
 *!

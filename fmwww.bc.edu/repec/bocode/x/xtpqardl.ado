@@ -1,7 +1,13 @@
-*! xtpqardl v1.0.4  28aug2026  Dr Merwan Roudane  merwanroudane920@gmail.com
+*! xtpqardl v1.0.5  23nov2026  Dr Merwan Roudane  merwanroudane920@gmail.com
 *! Panel Quantile Autoregressive Distributed Lag (PQARDL) Model
 *! Combines Panel ARDL (PMG/MG/DFE) with Quantile Regression
 *! Based on: Cho, Kim & Shin (2015), Bildirici (2022), Pesaran et al. (1999)
+*!
+*! v1.0.5  - robust/HAC/cluster SEs: the Powell kernel divided by c instead
+*!           of 2c, halving every sandwich standard error (incl. DFE default)
+*!         - lagsel(): one common sample + panel fixed effects; aic honoured
+*!         - DFE Wald tests use the joint cross-quantile covariance
+*!         - half-life defined for -2<rho<-1 (oscillating convergence)
 *!
 *! v1.0.4  - short-run (and AR) parameters now report Std.Err., z and P>|z|
 *!         - vce(mg|iid|robust|hac|cluster), bw() and kernel() options
@@ -178,7 +184,37 @@ program define _xtpq_Estimate, eclass
 			local best_q`j' = 1
 		}
 
-		di in gr "  BIC Grid: rows = p, columns = q"
+		* ----------------------------------------------------------------
+		* v1.0.5: every candidate is fitted on ONE common sample -- the
+		* observations on which the LARGEST model (pmax, qmax) is defined --
+		* so that the BIC values are comparable, and with panel fixed
+		* effects (areg), so that the criterion is not driven by the
+		* between-panel variation that the panel ARDL never uses.  Up to
+		* v1.0.4 each candidate used its own sample (larger lags dropped
+		* more observations) and a pooled regression without intercepts.
+		* ----------------------------------------------------------------
+		tempvar lscommon
+		qui gen byte `lscommon' = `touse'
+		qui replace `lscommon' = 0 if missing(`depvar')
+		foreach v of local lr {
+			qui replace `lscommon' = 0 if missing(`v')
+		}
+		forvalues lag = 1/`= `pmax' - 1' {
+			qui replace `lscommon' = 0 if missing(L`lag'.`depvar')
+		}
+		foreach xvar of local indepvars {
+			qui replace `lscommon' = 0 if missing(`xvar')
+			forvalues lag = 1/`= `qmax' - 1' {
+				qui replace `lscommon' = 0 if missing(L`lag'.`xvar')
+			}
+		}
+		qui count if `lscommon'
+		local n_ls = r(N)
+
+		local icname = cond("`lagsel'" == "aic", "AIC", "BIC")
+		di in gr "  `icname' grid (OLS with panel fixed effects, common sample N = `n_ls')"
+		if "`lagsel'" == "both" di in gr "  (both: the BIC is used for the choice)"
+		di in gr "  rows = p, columns = q"
 		di in smcl in gr "  {hline 62}"
 		di in gr "  {ralign 6:p \ q}" _c
 		forvalues jq = 1/`qmax' {
@@ -192,54 +228,24 @@ program define _xtpq_Estimate, eclass
 
 			forvalues jq = 1/`qmax' {
 				local test_ar ""
-				if `ip' > 1 {
-					forvalues lag = 1/`= `ip' - 1' {
-						tempvar test_ar_`ip'_`jq'_`lag'
-						capture qui gen double `test_ar_`ip'_`jq'_`lag'' = L`lag'.`depvar' if `touse'
-						if _rc == 0 {
-							local test_ar "`test_ar' `test_ar_`ip'_`jq'_`lag''"
-						}
-					}
+				forvalues lag = 1/`= `ip' - 1' {
+					local test_ar "`test_ar' L`lag'.`depvar'"
 				}
 				local test_sr ""
-				forvalues xj = 1/`k' {
-					local xvar : word `xj' of `indepvars'
-					tempvar test_x_`ip'_`jq'_`xj'_0
-					capture qui gen double `test_x_`ip'_`jq'_`xj'_0' = `xvar' if `touse'
-					if _rc == 0 {
-						local test_sr "`test_sr' `test_x_`ip'_`jq'_`xj'_0'"
-					}
-					if `jq' > 1 {
-						forvalues lag = 1/`= `jq' - 1' {
-							tempvar test_x_`ip'_`jq'_`xj'_`lag'
-							capture qui gen double `test_x_`ip'_`jq'_`xj'_`lag'' = L`lag'.`xvar' if `touse'
-							if _rc == 0 {
-								local test_sr "`test_sr' `test_x_`ip'_`jq'_`xj'_`lag''"
-							}
-						}
-					}
-				}
-				local test_lr ""
-				forvalues lj = 1/`k_lr' {
-					local lrv : word `lj' of `lr'
-					tempvar test_lr_`ip'_`jq'_`lj'
-					capture qui gen double `test_lr_`ip'_`jq'_`lj'' = `lrv' if `touse'
-					if _rc == 0 {
-						local test_lr "`test_lr' `test_lr_`ip'_`jq'_`lj''"
+				foreach xvar of local indepvars {
+					local test_sr "`test_sr' `xvar'"
+					forvalues lag = 1/`= `jq' - 1' {
+						local test_sr "`test_sr' L`lag'.`xvar'"
 					}
 				}
 
-				tempvar test_dv_`ip'_`jq'
-				qui gen double `test_dv_`ip'_`jq'' = `depvar' if `touse'
-
-				local test_reg "`test_lr' `test_ar' `test_sr'"
-
-				capture qui reg `test_dv_`ip'_`jq'' `test_reg' if `touse'
+				capture qui areg `depvar' `lr' `test_ar' `test_sr' ///
+					if `lscommon', absorb(`ivar')
 				if _rc == 0 & e(N) > 5 {
 					local n_bic = e(N)
 					local k_bic = e(df_m) + 1
 					local rss = e(rss)
-					local bic_val = `n_bic' * ln(`rss'/`n_bic') + `k_bic' * ln(`n_bic')
+					local bic_val = `n_bic' * ln(`rss'/`n_bic') + `k_bic' * cond("`lagsel'" == "aic", 2, ln(`n_bic'))
 
 					if `bic_val' < `best_bic' | `best_bic' == . {
 						di as res " " %9.2f `bic_val' "*" _c
@@ -271,7 +277,7 @@ program define _xtpq_Estimate, eclass
 		}
 		local qlags = strtrim("`qlags'")
 
-		di as res "  ► Optimal: PQARDL(`p'`qdisp')" in gr "  BIC = " %9.2f `best_bic'
+		di as res "  ► Optimal: PQARDL(`p'`qdisp')" in gr "  `icname' = " %9.2f `best_bic'
 		di in smcl in gr "{hline 78}"
 	}
 
@@ -320,7 +326,7 @@ program define _xtpq_Estimate, eclass
 	di in smcl in gr "{hline 78}"
 	di in smcl in gr "  {bf:+======================================================================+}"
 	di in smcl in gr "  {bf:|}" _col(5) in ye "  XTPQARDL — Panel Quantile ARDL" _col(72) in gr "{bf:|}"
-	di in smcl in gr "  {bf:|}" _col(5) in ye "  Version 1.0.4" _col(72) in gr "{bf:|}"
+	di in smcl in gr "  {bf:|}" _col(5) in ye "  Version 1.0.5" _col(72) in gr "{bf:|}"
 	di in smcl in gr "  {bf:+======================================================================+}"
 	di in smcl in gr "{hline 78}"
 	di in gr "  Model:            " in ye "`model_label'"
@@ -439,6 +445,17 @@ program define _xtpq_Estimate, eclass
 					matrix `halflife_mg'[1, `t'] = ln(2) / abs(`rv')
 				}
 			}
+			* the per-panel table must use the same formula as its mean row
+			if `export_panels' {
+				forvalues pi = 1/`npest' {
+					forvalues t = 1/`ntau' {
+						local rv = `rho_all'[`pi', `t']
+						if `rv' < . & `rv' < 0 {
+							matrix `halflife_all'[`pi', `t'] = ln(2) / abs(`rv')
+						}
+					}
+				}
+			}
 		}
 
 		if "`pooled'" != "" {
@@ -547,7 +564,7 @@ program define _xtpq_Estimate, eclass
 					di in gr " {ralign 9:      .}" _c
 				}
 
-				if `hl_val' < . & `hl_val' > 0 {
+				if `hl_val' < . & `hl_val' >= 0 {
 					di in ye " {ralign 10:" %8.2f `hl_val' "}" _c
 				}
 				else {
@@ -566,7 +583,7 @@ program define _xtpq_Estimate, eclass
 				di in gr "  Half-life = ln(2)/|rho(tau)|   (hlapprox: first-order approximation)"
 			}
 			else {
-				di in gr "  Half-life = ln(0.5)/ln(1+rho(tau)) — periods to close 50% of the gap"
+				di in gr "  Half-life = ln(0.5)/ln|1+rho(tau)| — periods to close 50% of the gap"
 			}
 
 			* --- Table 3: Short-run ECM parameters ---------------------
@@ -655,8 +672,8 @@ program define _xtpq_Estimate, eclass
 		* Half-life table
 		* ==============================================================
 		if "`halflife'" != "" & `export_panels' {
-			_xtpq_header "Half-Life of Adjustment HL_i(tau)" ///
-				"HL = ln(0.5)/ln(1+rho_i(tau))"
+			local hlsub = cond("`hlapprox'" != "", "HL = ln(2)/|rho_i(tau)|  (hlapprox)", "HL = ln(0.5)/ln|1+rho_i(tau)|")
+			_xtpq_header "Half-Life of Adjustment HL_i(tau)" "`hlsub'"
 			di in gr "  {ralign 10:Panel}" _c
 			foreach tauval of local tau {
 				di in gr " {ralign 12:tau=" %4.2f `tauval' "}" _c
@@ -669,7 +686,7 @@ program define _xtpq_Estimate, eclass
 				di in gr "  {ralign 10:`i'}" _c
 				forvalues t = 1/`ntau' {
 					local hv = `halflife_all'[`pi', `t']
-					if `hv' < . & `hv' > 0 {
+					if `hv' < . & `hv' >= 0 {
 						if `hv' < 5 {
 							di in ye " {ralign 12:" %10.2f `hv' "}" _c
 						}
@@ -687,7 +704,7 @@ program define _xtpq_Estimate, eclass
 			di in ye "  {ralign 10:Mean}" _c
 			forvalues t = 1/`ntau' {
 				local mhl = `halflife_mg'[1, `t']
-				if `mhl' < . & `mhl' > 0 {
+				if `mhl' < . & `mhl' >= 0 {
 					di in ye " {ralign 12:" %10.2f `mhl' "}" _c
 				}
 				else {
@@ -954,10 +971,22 @@ program define _xtpq_Estimate, eclass
 			local reg_p "`reg_p' `rp`rj''"
 		}
 
+		* v1.0.5: raw coefficients of every quantile are kept so that the
+		* cross-quantile covariance blocks can be computed afterwards
+		tempvar dfeuse
+		qui gen byte `dfeuse' = `touse'
+		markout `dfeuse' `dv_p' `reg_p'
+		local KDall = wordcount("`reg_p'") + ("`constant'" == "")
+		tempname Bst okv taumat Vcross
+		matrix `Bst'    = J(`ntau', `KDall', 0)
+		matrix `okv'    = J(1, `ntau', 0)
+		matrix `taumat' = J(1, `ntau', .)
+
 		local ti = 0
 		local nfit = 0
 		foreach tauval of local tau {
 			local ++ti
+			matrix `taumat'[1, `ti'] = `tauval'
 
 			capture qui qreg `dv_p' `reg_p' if `touse', quantile(`tauval') `constant'
 			local rc_d = _rc
@@ -967,6 +996,10 @@ program define _xtpq_Estimate, eclass
 			}
 			local ++nfit
 			matrix `b_dfe' = e(b)
+			if colsof(`b_dfe') == `KDall' {
+				matrix `Bst'[`ti', 1] = `b_dfe'
+				matrix `okv'[1, `ti'] = 1
+			}
 
 			local have_V = 0
 			if inlist("`vce'", "robust", "hac", "cluster") {
@@ -1007,6 +1040,20 @@ program define _xtpq_Estimate, eclass
 			}
 		}
 
+		* cross-quantile blocks of the covariance (v1.0.5)
+		if `nfit' >= 2 {
+			local jvce = cond("`vce'" == "iid", "robust", "`vce'")
+			capture mata: _xtpq_dfejoint("`dv_p'", "`reg_p'", "`dfeuse'", ///
+				"`Bst'", "`okv'", "`taumat'", "`jvce'", `bw', "`kernel'", ///
+				"`tvar'", "`ivar'", `= ("`constant'" == "")', `k_lrx', ///
+				`nrest', "`Vcross'")
+			if _rc == 0 {
+				matrix `g_V' = `g_V' + `Vcross'
+				local dfecross "cross-quantile blocks from the joint quantile-regression sandwich"
+			}
+			else local dfecross "cross-quantile blocks unavailable (set to zero)"
+		}
+
 		capture drop __xtpqfe_*
 
 		if `nfit' == 0 {
@@ -1027,7 +1074,7 @@ program define _xtpq_Estimate, eclass
 					matrix `halflife_mg'[1, `t'] = ln(2) / abs(`rv')
 				}
 				else {
-					matrix `halflife_mg'[1, `t'] = ln(0.5) / ln(1 + `rv')
+					matrix `halflife_mg'[1, `t'] = cond(abs(1 + `rv') < 1e-12, 0, ln(0.5) / ln(abs(1 + `rv')))
 				}
 			}
 			forvalues j = 1/`k_lrx' {
@@ -1097,7 +1144,7 @@ program define _xtpq_Estimate, eclass
 		if `ntau' >= 2 {
 			_xtpqardl_waldtest, gmat(`g_mg') vmat(`g_V') tau(`tau') ///
 				kx(`k_lrx') nar(`ncoefs_ar') nsr(`ncoefs_sr') mdim(`M') ///
-				note("Covariance: `vcelab'; quantiles fitted separately, so cross-quantile blocks are zero")
+				note("Covariance: `vcelab'; `dfecross'")
 			local w_beta  = r(wald_beta)
 			local w_rho   = r(wald_rho)
 			local w_sr    = r(wald_sr)
@@ -1176,7 +1223,7 @@ program define _xtpq_Estimate, eclass
 	* ================================================================
 	di
 	di in smcl in gr "{hline 78}"
-	di in gr "  {bf:XTPQARDL v1.0.4} — Panel Quantile ARDL" ///
+	di in gr "  {bf:XTPQARDL v1.0.5} — Panel Quantile ARDL" ///
 		_col(50) in ye "PQARDL(`ardl_order')"
 	di in smcl in gr "{hline 78}"
 	di

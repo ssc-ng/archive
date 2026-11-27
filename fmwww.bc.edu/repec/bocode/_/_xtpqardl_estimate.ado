@@ -1,4 +1,4 @@
-*! _xtpqardl_estimate v1.0.4 — Per-panel quantile regression engine
+*! _xtpqardl_estimate v1.0.5 — Per-panel quantile regression engine
 *! Called internally by xtpqardl.ado
 *! Author: Dr Merwan Roudane (merwanroudane920@gmail.com)
 *! Date: August 2026

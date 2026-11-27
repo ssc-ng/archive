@@ -1,0 +1,32 @@
+d 'DVAR': module to perform Distributional VAR, multimodality and distributional impulse responses
+d
+d  dvar implements the distributional vector autoregression of
+d Wang, Oka and Zhu (2025, Journal of Applied Econometrics). The
+d conditional joint distribution of a vector time series is
+d factorised into univariate conditional distributions, each
+d estimated by distribution regression (logit/probit, with the
+d optional elastic net of the authors' replication code), with
+d sandwich/HAC inference (Theorem 1), rearrangement, sequential
+d sampling, local-projection multi-step distributions,
+d distributional / quantile / moment impulse responses with a
+d moving-block bootstrap, and out-of-sample PIT (Rossi-Sekhposyan),
+d CRPS, quantile- and log-score evaluation. The subcommand -dvar
+d kernel- implements the kernel estimator and density impulse
+d responses of Adrian, Boyarchenko and Giannone (2021,
+d International Economic Review). Joint densities are drawn as
+d Parula heat maps / contours, and the number of modes is reported. d
+d KW: distributional VAR
+d KW: kernel estimator
+d
+d Requires: Stata version 16
+d
+d Distribution-Date: 20261126
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f dvar.ado
+f dvar.sthlp
+f dvar_methods.sthlp
+f dvar_example.do
+f dvar_uys.dta

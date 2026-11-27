@@ -147,3 +147,4 @@ p exquantile module for estimation and inference for (conditional) extremal quan
 p extfunnel module to produce graphical augmentations to the funnel plot to indicate the potential impact of a new study on an existing meta-analysis
 p extreme module to fit models used in univariate extreme value theory
 p extremes module to list extreme values of a variable
+p extvgc module to perform Extreme time-varying Granger-Causality test (EX-TVGC)

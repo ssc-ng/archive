@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.2 13jul2026}{...}
+{* *! version 1.0.3 22nov2026}{...}
 {vieweralsosee "xtpmg" "help xtpmg"}{...}
 {vieweralsosee "pnardl" "help pnardl"}{...}
 {viewerjumpto "Syntax" "xtpcmg##syntax"}{...}
@@ -14,7 +14,7 @@
 {title:Title}
 
 {phang}
-{bf:xtpcmg} {hline 2} Panel Cointegrating Polynomial Regressions: Group-Mean & Pooled FM-OLS (v1.0.2)
+{bf:xtpcmg} {hline 2} Panel Cointegrating Polynomial Regressions: Group-Mean & Pooled FM-OLS (v1.0.3)
 
 
 {marker syntax}{...}
@@ -42,6 +42,7 @@
 
 {syntab:Advanced}
 {synopt :{opt corrrob}}{it:(mg only)} cross-sectional dependence robust VCV matrix{p_end}
+{synopt :{opt ct:test}}CT test for cointegrating polynomial regressions, panel by panel (Wagner 2023){p_end}
 {synopt :{opt graph}}produce comprehensive diagnostic plots (7 graphs for mg, 4 for pmg){p_end}
 {synopt :{opt l:evel(#)}}confidence level; default is {cmd:level(95)}{p_end}
 {synoptline}
@@ -102,11 +103,13 @@ Individual or two-way fixed effects are removed before estimation.
 {bf:(i)} Individual FM-OLS coefficient table (mg only), showing each panel's estimates.{break}
 {bf:(ii)} Coefficient heterogeneity analysis with descriptive statistics (mean, median, SD, IQR,
 skewness, kurtosis) and percentile distribution (min, P5, P25, P75, P95, max).{break}
-{bf:(iii)} Swamy (1970) test for slope homogeneity across panels.{break}
+{bf:(iii)} Swamy (1970) test for slope homogeneity across panels, based on the panel-specific
+FM-OLS variances, with its standardised dispersion statistic Delta.{break}
 {bf:(iv)} Between-within variance decomposition to distinguish systematic heterogeneity from
 estimation noise.{break}
 {bf:(v)} Turning point analysis with delta-method confidence intervals (quadratic) or two
-critical points (cubic).
+critical points (cubic), checked against the sample range of the polynomial variable.{break}
+{bf:(vi)} With {opt cttest}: Wagner's (2023) CT test of the null of cointegration, panel by panel.
 {p_end}
 
 
@@ -144,6 +147,15 @@ detrending individual series.
 Default is {bf:1}.
 {p_end}
 
+{pmore}
+{bf:Inference under trend(2).} When individual intercepts and linear trends are removed,
+the coefficient on the first power of the polynomial variable has a non-standard
+(unit-root type) limiting distribution, while the coefficients on the higher powers remain
+asymptotically normal (Wagner and Reichold 2023, Case ii). {cmd:xtpcmg} prints a note in that
+case: the z-test of the first-power coefficient and the delta-method interval of the turning
+point are then approximate, and the shape of the curve should be judged by the higher-order term(s).
+{p_end}
+
 {phang}
 {opt effects(string)} ({it:pmg only}) controls the fixed-effects removal.
 {bf:oneway} = individual fixed effects.
@@ -176,6 +188,20 @@ cross-sectional dependence is expected.
 {p_end}
 
 {phang}
+{opt cttest} computes the CT test of Wagner (2023) for each panel. For panel i, a time-series
+FM-OLS regression of the dependent variable on the controls (power 1) and on the polynomial
+variable (powers 1 to q) is estimated with deterministic terms matching {opt trend()} (intercept
+for {cmd:trend(1)} and for {cmd:model(pmg)}; intercept and linear trend for {cmd:trend(2)}), and the
+KPSS-type statistic CT = (T omega)^-1 sum_t (T^-1/2 S_t)^2 is computed from the FM-OLS residuals,
+with omega the conditional long-run variance. H0 is cointegration; large values reject it.
+All regressors are treated as integrated, so at most three controls are allowed (m <= 4), and
+critical values at 10%, 5% and 1% are taken from the tables distributed with the authors' code.
+With {cmd:bw(And91)} the bandwidth is not rounded, as in that code. The automatic bandwidth grows
+with the persistence of the residuals, which lowers power against spurious regressions in short
+samples; a fixed bandwidth (e.g. {cmd:bw(3)} or {cmd:bw(4)}) is a useful robustness check.
+{p_end}
+
+{phang}
 {opt graph} produces a comprehensive suite of publication-quality diagnostic plots.
 For the mg model, up to 7 graphs are produced: polynomial fit, panel-by-panel scatter,
 kernel density of coefficients, caterpillar (sorted bar) plots, box plots,
@@ -200,8 +226,9 @@ point analysis. Default is 95.
 {dlgtab:Individual Coefficient Table (mg only)}
 
 {pstd}
-Displays each panel's individual FM-OLS coefficient estimates for the polynomial terms.
-This allows direct inspection of cross-sectional heterogeneity in the estimated relationship.
+Displays each panel's individual FM-OLS coefficient estimates for the polynomial terms, labelled
+with the panel identifier (or its value label), together with the panel-specific turning point
+and shape (q=2). This allows direct inspection of cross-sectional heterogeneity.
 {p_end}
 
 {dlgtab:Coefficient Heterogeneity Analysis (mg only)}
@@ -220,16 +247,21 @@ of individual panel coefficients.
 
 {pstd}
 Tests the null hypothesis that all individual FM-OLS slope coefficients are equal against the
-alternative that at least one panel has a different slope. The S-statistic follows a chi-squared
-distribution with (N-1)*K degrees of freedom under the null. A rejection (p < 0.05) suggests
-significant heterogeneity, supporting the use of Group-Mean over Pooled FM-OLS.
+alternative that at least one panel has a different slope. With V_i = Omega_u.v,i (X_i'X_i)^-1 the
+FM-OLS variance of panel i and b_wls = (sum V_i^-1)^-1 sum V_i^-1 b_i, the statistic is
+S = sum_i (b_i - b_wls)' V_i^-1 (b_i - b_wls), which follows a chi-squared distribution with
+(N-1)*K degrees of freedom under the null. The standardised dispersion statistic
+Delta = sqrt(N) (S/N - K) / sqrt(2K) is also reported, with a one-sided normal p-value.
+A rejection (p < 0.05) suggests significant heterogeneity, supporting the use of Group-Mean over
+Pooled FM-OLS.
 {p_end}
 
 {dlgtab:Between-Within Variance Decomposition (mg only)}
 
 {pstd}
 Decomposes the total variance of individual panel coefficients into between-panel variance
-(systematic heterogeneity) and within-panel estimation noise. The ratio of between-panel to total
+(systematic heterogeneity) and within-panel estimation noise, the latter measured by the average
+of the panel-specific FM-OLS sampling variances. The ratio of between-panel to total
 variance indicates the strength of the heterogeneity signal. A ratio > 0.8 indicates high
 systematic heterogeneity; < 0.5 indicates mostly estimation noise.
 {p_end}
@@ -238,8 +270,10 @@ systematic heterogeneity; < 0.5 indicates mostly estimation noise.
 
 {pstd}
 For quadratic models (q=2), computes the turning point x* = -b1/(2*b2) with delta-method standard
-errors and 95% confidence interval. Identifies whether the relationship is concave (inverted U) or
-convex (U-shaped). For cubic models (q=3), reports both critical points when they exist.
+errors and a confidence interval at the level set by {opt level()}. Identifies whether the
+relationship is concave (inverted U) or convex (U-shaped) and whether the turning point lies inside
+the sample range of the polynomial variable. For cubic models (q=3), reports both critical points
+when they exist, with the same range check.
 {p_end}
 
 
@@ -276,15 +310,27 @@ When {opt graph} is specified, {cmd:xtpcmg} generates a comprehensive diagnostic
 {synopt:{cmd:e(n_controls)}}number of linear control variables (if any){p_end}
 {synopt:{cmd:e(tp)}}turning point estimate (q=2){p_end}
 {synopt:{cmd:e(tp_se)}}turning point standard error (q=2){p_end}
-{synopt:{cmd:e(tp_lo)}}turning point lower 95% CI bound (q=2){p_end}
-{synopt:{cmd:e(tp_hi)}}turning point upper 95% CI bound (q=2){p_end}
+{synopt:{cmd:e(tp_lo)}}turning point lower confidence bound (q=2){p_end}
+{synopt:{cmd:e(tp_hi)}}turning point upper confidence bound (q=2){p_end}
+{synopt:{cmd:e(tp_inrange)}}1 if the turning point lies in the sample range (q=2){p_end}
 {synopt:{cmd:e(tp_z)}}turning point z-statistic (q=2){p_end}
 {synopt:{cmd:e(tp_p)}}turning point p-value (q=2){p_end}
 {synopt:{cmd:e(tp1)}}first critical point (q=3){p_end}
 {synopt:{cmd:e(tp2)}}second critical point (q=3){p_end}
+{synopt:{cmd:e(tp1_inrange)}}1 if the first critical point is in the sample range (q=3){p_end}
+{synopt:{cmd:e(tp2_inrange)}}1 if the second critical point is in the sample range (q=3){p_end}
+{synopt:{cmd:e(x_min)}}minimum of the polynomial variable in the sample{p_end}
+{synopt:{cmd:e(x_max)}}maximum of the polynomial variable in the sample{p_end}
+{synopt:{cmd:e(trend)}}deterministic specification (mg only){p_end}
+{synopt:{cmd:e(corrrob)}}1 if the CSD-robust VCV was used (mg only){p_end}
 {synopt:{cmd:e(swamy_s)}}Swamy S-statistic (mg only){p_end}
 {synopt:{cmd:e(swamy_df)}}Swamy degrees of freedom (mg only){p_end}
 {synopt:{cmd:e(swamy_p)}}Swamy p-value (mg only){p_end}
+{synopt:{cmd:e(swamy_delta)}}standardised dispersion statistic Delta (mg only){p_end}
+{synopt:{cmd:e(swamy_delta_p)}}one-sided p-value of Delta (mg only){p_end}
+{synopt:{cmd:e(ct_nacc05)}}panels where cointegration is not rejected at 5% ({opt cttest}){p_end}
+{synopt:{cmd:e(ct_d)}}deterministics of the CT test: 0 intercept, 1 intercept and trend{p_end}
+{synopt:{cmd:e(ct_m)}}number of integrated regressors in the CT test{p_end}
 
 {p2col 5 24 28 2: Macros}{p_end}
 {synopt:{cmd:e(cmd)}}{cmd:xtpcmg}{p_end}
@@ -294,6 +340,11 @@ When {opt graph} is specified, {cmd:xtpcmg} generates a comprehensive diagnostic
 {synopt:{cmd:e(model)}}{cmd:mg} or {cmd:pmg}{p_end}
 {synopt:{cmd:e(polyvar)}}polynomial variable name{p_end}
 {synopt:{cmd:e(controls)}}list of control variables (if any){p_end}
+{synopt:{cmd:e(kernel)}}kernel{p_end}
+{synopt:{cmd:e(bw)}}bandwidth choice{p_end}
+{synopt:{cmd:e(panelvar)}}panel variable{p_end}
+{synopt:{cmd:e(timevar)}}time variable{p_end}
+{synopt:{cmd:e(effects)}}fixed effects (pmg only){p_end}
 
 {p2col 5 24 28 2: Matrices}{p_end}
 {synopt:{cmd:e(b)}}coefficient vector (FM-OLS){p_end}
@@ -301,6 +352,9 @@ When {opt graph} is specified, {cmd:xtpcmg} generates a comprehensive diagnostic
 {synopt:{cmd:e(b_mod)}}Modified-OLS coefficient vector (pmg only){p_end}
 {synopt:{cmd:e(V_mod)}}Modified-OLS variance-covariance matrix (pmg only){p_end}
 {synopt:{cmd:e(indiv_b)}}N x K matrix of individual FM-OLS coefficients (mg only){p_end}
+{synopt:{cmd:e(indiv_se)}}N x K matrix of individual FM-OLS standard errors (mg only){p_end}
+{synopt:{cmd:e(ct)}}N x 4 matrix: CT statistic and rejection at 10%, 5%, 1% ({opt cttest}){p_end}
+{synopt:{cmd:e(ct_cv)}}CT critical values at 10%, 5%, 1% ({opt cttest}){p_end}
 
 {p2col 5 24 28 2: Functions}{p_end}
 {synopt:{cmd:e(sample)}}estimation sample{p_end}
@@ -332,6 +386,11 @@ When {opt graph} is specified, {cmd:xtpcmg} generates a comprehensive diagnostic
 {phang2}{cmd:. matrix list e(indiv_b)}{p_end}
 {phang2}{cmd:. ereturn list}{p_end}
 
+{pstd}{bf:Example 6:} EKC with individual trends, CSD-robust inference and the CT test{p_end}
+{phang2}{cmd:. xtpcmg lCO2 lGDP lEU, model(mg) trend(2) kernel(ba) bw(And91) corrrob cttest}{p_end}
+{phang2}{cmd:. matrix list e(ct)}{p_end}
+{phang2}{cmd:. xtpcmg lCO2 lGDP lEU, model(mg) trend(2) bw(3) cttest}{p_end}
+
 
 {marker references}{...}
 {title:References}
@@ -344,7 +403,7 @@ estimation. {it:Econometrica, 59(3), 817-858.}
 {phang}
 de Jong, R. M., & Wagner, M. (2022). Panel cointegrating polynomial regression analysis and
 an illustration with the environmental Kuznets curve.
-{it:Econometrics and Statistics.}
+{it:Econometrics and Statistics, 33, 135-165.}
 {p_end}
 
 {phang}
@@ -356,6 +415,12 @@ Swamy, P. A. V. B. (1970). Efficient inference in a random coefficient regressio
 Wagner, M., & Reichold, K. (2023). Panel cointegrating polynomial regressions: group-mean
 fully modified OLS estimation and inference.
 {it:Econometric Reviews, 42(4), 358-392.}
+{p_end}
+
+{phang}
+Wagner, M. (2023). Residual-based cointegration and non-cointegration tests for cointegrating
+polynomial regressions. {it:Empirical Economics, 65, 1-31.}
+{browse "https://doi.org/10.1007/s00181-022-02332-3":doi:10.1007/s00181-022-02332-3}
 {p_end}
 
 

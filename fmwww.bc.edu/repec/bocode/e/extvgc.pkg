@@ -1,0 +1,33 @@
+d 'EXTVGC': module to perform Extreme time-varying Granger-Causality test (EX-TVGC)
+d
+d  extvgc implements the extreme time-varying Granger-causality
+d test of Hong, Guo and Zhao (2025, Research in International
+d Business and Finance 77, 102994). The shocks of both series are
+d split with quantile thresholds into extreme positive, extreme
+d negative and normal shocks (Wang, Ma, Niu and He 2020, Economic
+d Modelling), cumulated, and tested pair by pair in a lag-augmented
+d VAR with the forward, rolling or recursive evolving algorithm of
+d Shi, Phillips and Hurn (2018, 2020). Critical values come from a
+d residual bootstrap over a control window. The command reports the
+d maximum statistics, bootstrap critical values and dated causality
+d episodes, reproduces Tables 1-3 of the paper (descriptive
+d statistics, multivariate normality/ARCH, lag order), and draws
+d the shocks, the overall test and the panel of all pairs. Option
+d threshold(zero) gives the Hatemi-J (2012) positive/negative split
+d in the same framework. 
+d
+d KW: Granger causalitty
+d KW: time series
+d KW: time varying
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261126
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f extvgc.ado
+f extvgc.sthlp
+f extvgc_methods.sthlp
+f extvgc_example.do

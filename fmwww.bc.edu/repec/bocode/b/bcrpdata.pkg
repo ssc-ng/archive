@@ -1,0 +1,27 @@
+d 'BCRPDATA': module to download statistical series from the Central Reserve Bank of Peru
+d
+d     bcrpdata queries the BCRPData API of the Central Reserve Bank
+d of Peru (   
+d https://estadisticas.bcrp.gob.pe/estadisticas/series/) and leaves
+d in memory a	 dataset with a fecha (date) variable and one
+d variable per series, named after the	  series code and labeled
+d with the series description. The dataset is tsset. 
+d
+d KW: data management
+d KW: Peru
+d KW: central bank
+d KW: BCRP
+d KW: time series
+d KW: API
+d KW: macroeconomic data
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261126
+d
+d Author: Andres Talavera Cuya,   Direccion Nacional de Censos y Encuestas -- INEI Peru
+d Support: email talaveracuya@@gmail.com
+d
+f bcrpdata.ado
+f bcrpdata.sthlp
+f bcrpdata_es.sthlp

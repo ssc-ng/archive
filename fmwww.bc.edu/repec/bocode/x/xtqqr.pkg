@@ -1,0 +1,37 @@
+d 'XTQQR': module to perform panel quantile-on-quantile regression and panel QQKRLS
+d
+d  xtqqr implements the quantile-on-quantile (QQ) regression of Sim
+d and Zhou (2015, Journal of Banking and Finance,
+d doi:10.1016/j.jbankfin.2015.01.013) for panel data:
+d kernel-weighted local-linear quantile regressions over a grid of
+d quantiles of the outcome and of the regressor, with Canay (2011)
+d or dummy fixed effects, pooled or unit-specific quantiles, a
+d quantile-group variant, clustered Powell sandwich or panel
+d block-bootstrap standard errors, and a validation against panel
+d quantile regression. xtqqkrls implements the quantile-on-quantile
+d KRLS of Adebayo, Ozkan and Eweade (2024, Journal of Cleaner
+d Production, doi:10.1016/j.jclepro.2024.140832) for panels.
+d xtqqplot draws tile heatmaps (MATLAB Parula colour map) with
+d significance stars, contour maps, slices and validation plots. 
+d
+d KW: panel data
+d KW: quantile regression
+d
+d Requires: Stata version 14
+d
+d Distribution-Date: 20261126
+d
+d Author:   Merwan Roudane, NA
+d Support: email  merwanroudane920@@gmail.com
+d
+f xtqqr.ado
+f xtqqr.sthlp
+f xtqqkrls.ado
+f xtqqkrls.sthlp
+f xtqqplot.ado
+f xtqqplot.sthlp
+f xtqqr_example.do
+f xtqqr_methods.sthlp
+f ../_/_xtqqr_load.ado
+f ../_/_xtqqr_savelong.ado
+f ../l/lxtqqr.ado

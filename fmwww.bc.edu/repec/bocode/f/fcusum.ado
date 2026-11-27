@@ -1,4 +1,4 @@
-*! version 1.1.4  24nov2026  Taha Zaghdoudi, zedtaha@gmail.com
+*! version 1.1.5  24nov2026  Taha Zaghdoudi, zedtaha@gmail.com
 *! Fourier CUSUM test for the null of cointegration
 *! Stata port of the R package FCUSUM 1.1.0 (CRAN)
 
@@ -182,7 +182,7 @@ program define fcusum, rclass sortpreserve
         local c = `cv`glevel''
         local mc = -`c'
         twoway (line `pvar' `tvar' if !missing(`pvar')),              ///
-            yline(`mc' `c', lpattern(dash) lcolor(red))               ///
+            yline(`mc' `c', lpattern(dash))               ///
             yline(0, lcolor(gs10))                                    ///
             ytitle("Scaled CUSUM of residuals") xtitle("")            ///
             title("`test' path") legend(off)                          ///

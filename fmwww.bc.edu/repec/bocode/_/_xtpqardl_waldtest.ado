@@ -1,4 +1,4 @@
-*! _xtpqardl_waldtest v1.0.4 — Wald tests for Panel QARDL
+*! _xtpqardl_waldtest v1.0.5 — Wald tests for Panel QARDL
 *! Author: Dr Merwan Roudane (merwanroudane920@gmail.com)
 *! Date: August 2026
 *!

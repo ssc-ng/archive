@@ -1,4 +1,4 @@
-*! _xtpqardl_vce v1.0.4 — Variance engine for quantile ARDL regressions
+*! _xtpqardl_vce v1.0.5 — Variance engine for quantile ARDL regressions
 *! Robust (Powell sandwich), HAC (Newey-West type) and cluster VCEs
 *! Author: Dr Merwan Roudane (merwanroudane920@gmail.com)
 *! Date: August 2026

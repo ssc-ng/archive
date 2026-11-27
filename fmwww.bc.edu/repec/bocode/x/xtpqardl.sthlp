@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.0.4  28aug2026}{...}
+{* *! version 1.0.5  23nov2026}{...}
 {vieweralsosee "xtpmg" "help xtpmg"}{...}
 {vieweralsosee "qreg" "help qreg"}{...}
 {viewerjumpto "Syntax" "xtpqardl##syntax"}{...}
@@ -59,7 +59,7 @@
 {syntab:Display}
 {synopt:{opt halflife}}display per-panel half-life table{p_end}
 {synopt:{opt hla:pprox}}report the first-order half-life ln(2)/|rho| used before
-   version 1.0.4 instead of the exact ln(0.5)/ln(1+rho){p_end}
+   version 1.0.4 instead of the exact ln(0.5)/ln|1+rho|{p_end}
 {synopt:{opt srtable}}display per-panel ECT table{p_end}
 {synopt:{opt full}}display all per-panel tables{p_end}
 {synopt:{opt irf(#)}}number of impulse response periods to display{p_end}
@@ -197,9 +197,16 @@ per-variable orders. Example: {cmd:q(2 3)} for PQARDL(p, 2, 3) with two
 independent variables having 2 and 3 distributed lags respectively.
 
 {phang}
-{opt lagsel(string)} activates BIC-based automatic lag selection.
-Searches over p = 1,...,pmax and q = 1,...,qmax. Displays a BIC grid
-and selects the optimal PQARDL(p, q1, ..., qk) specification.
+{opt lagsel(string)} activates automatic lag selection with {cmd:aic},
+{cmd:bic} or {cmd:both} (both displays the BIC grid and chooses by BIC).
+Searches over p = 1,...,pmax and q = 1,...,qmax, the same q for every
+regressor.  Each candidate is the least-squares ARDL in ECM form with panel
+fixed effects ({helpb areg}), and {it:every candidate is fitted on one common
+sample}: the observations on which the largest model (pmax, qmax) is
+defined, so that the information criteria are comparable.  The size of the
+common sample is printed above the grid.  Lag selection by least squares
+follows Cho, Kim and Shin (2015); the quantile regressions are then fitted
+with the selected orders.
 
 {dlgtab:SE/Robust}
 
@@ -232,6 +239,13 @@ ECM are serially correlated.
 {p 12 16 2}
 {cmd:cluster} is available for {cmd:dfe} only and clusters by panel.
 
+{p 12 16 2}
+The density in the bread of the sandwich is the Powell (1991) uniform
+kernel estimate f(0) = #{|u_t| < c}/(2Tc) with the Hall-Sheather
+bandwidth c.  Versions up to 1.0.4 divided by c instead of 2c, which halved
+every {cmd:robust}, {cmd:hac} and {cmd:cluster} standard error (including
+the {cmd:dfe} default); this is corrected in 1.0.5.
+
 {phang}
 {opt bw(#)} sets the HAC lag truncation.  The default is the Newey-West
 rule floor(4*(T/100)^(2/9)) computed panel by panel.  Lag distances are
@@ -245,9 +259,12 @@ measured on the time variable, so gaps in the panel are handled correctly.
 
 {phang}
 {opt halflife} displays a per-panel half-life table. Half-life is
-HL(tau) = ln(0.5)/ln(1 + rho(tau)), the number of periods needed to close
+HL(tau) = ln(0.5)/ln|1 + rho(tau)|, the number of periods needed to close
 50% of a disequilibrium at quantile tau.  This is the exact half-life of
-the geometric adjustment path (1 + rho)^h shown by {opt irf()}.
+the geometric adjustment path (1 + rho)^h shown by {opt irf()}.  For
+-2 < rho < -1 the path overshoots and oscillates while converging; the
+absolute value gives the periods after which the size of the gap has
+halved (earlier versions reported no half-life in that range).
 
 {phang}
 {opt hlapprox} reports the first-order approximation ln(2)/|rho(tau)| used
@@ -413,11 +430,17 @@ see the option list above.
 {bf:Wald tests of quantile constancy.}  Four statistics are reported,
 testing H0: parameter(tau_i) = parameter(tau_i+1) for every adjacent pair
 of quantiles — one for rho, one for beta, one for the short-run block and
-one joint test.  They always use the non-parametric mean-group covariance
-because that is the only one estimated jointly across quantiles (each
-quantile is fitted separately, so the sandwich covariances have no
-cross-quantile blocks).  The degrees of freedom are reduced by the rank
-deficiency of R V R' when the restriction matrix is not of full rank.
+one joint test.  For {cmd:pmg} and {cmd:mg} they use the non-parametric
+mean-group covariance, which is estimated jointly across quantiles.  For
+{cmd:dfe} the cross-quantile blocks come from the joint quantile-regression
+sandwich Cov(b_s, b_t) = H_s^-1 J_st H_t^-1 / n with
+J_st = (1/n) sum psi_s psi_t x x' (summed within panel for {cmd:cluster},
+kernel-weighted for {cmd:hac}); versions up to 1.0.4 set these blocks to
+zero.  The degrees of freedom are reduced by the rank deficiency of R V R'
+when the restriction matrix is not of full rank; with the mean-group
+covariance this happens when the number of tested parameters is not small
+relative to the number of panels, and the joint test should then be read
+with caution.
 
 {pstd}
 {bf:Hausman test (pmg only).}  {cmd:pmg} imposes a common long-run vector
@@ -428,7 +451,7 @@ homogeneity restriction is not supported and {cmd:mg} should be preferred.
 The statistic is reported automatically after every {cmd:pmg} estimation.
 
 {pstd}
-{bf:Half-life.}  HL(tau) = ln(0.5)/ln(1 + rho(tau)) inverts the geometric
+{bf:Half-life.}  HL(tau) = ln(0.5)/ln|1 + rho(tau)| inverts the geometric
 adjustment path (1 + rho)^h reported by {opt irf()} exactly.  Versions up
 to 1.0.3 reported the first-order approximation ln(2)/|rho|, which is
 available through {opt hlapprox}.

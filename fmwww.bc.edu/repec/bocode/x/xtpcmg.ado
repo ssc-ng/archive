@@ -1,8 +1,18 @@
-*! xtpcmg v1.0.2 - Panel Cointegrating Polynomial Regressions
+*! xtpcmg v1.0.3 - Panel Cointegrating Polynomial Regressions
 *! Based on Wagner & Reichold (2023, Econometric Reviews) and
 *! de Jong & Wagner (2022, Econometrics and Statistics)
 *! Author: Dr. Merwan Roudane
-*! Date: July 2026
+*! Date: November 2026
+*! v1.0.3: Swamy (1970) test now uses the panel-specific FM-OLS variances
+*!         V_i = Omega_u.v,i (X_i'X_i)^-1 (previous statistic was identically
+*!         (N-1)K); adds the standardised dispersion statistic Delta.
+*!         New cttest option: Wagner's CT test for cointegrating polynomial
+*!         regressions, panel by panel, with tabulated critical values.
+*!         Notes on non-standard inference for the first power under trend(2);
+*!         turning point checked against the sample range; panel names in
+*!         tables; individual turning points; balance check; level() used for
+*!         the turning-point interval; Mata helpers renamed _xtpcmg_* to avoid
+*!         name conflicts with other packages; e(trend) e(kernel) e(bw) stored.
 *! v1.0.2: CRITICAL fix - correct panel reshape (colshape(.,T)' not (.,N));
 *!         prior versions scrambled panels/time. Added Modified-OLS (M-OLS)
 *!         estimator for pmg (de Jong & Wagner 2022): e(b_mod), e(V_mod).
@@ -22,9 +32,10 @@ program define xtpcmg, eclass sortpreserve
 		 BW(string) ///
 		 Effects(string) ///
 		 CORRrob ///
+		 CTtest ///
 		 GRaph ///
 		 Level(cilevel)]
-	
+
 	if !inlist("`model'", "mg", "pmg") {
 		di as error "model() must be mg (group-mean) or pmg (pooled)"
 		exit 198
@@ -39,6 +50,14 @@ program define xtpcmg, eclass sortpreserve
 	if "`effects'" == "" local effects "oneway"
 	if !inlist("`effects'", "oneway", "twoway") {
 		di as error "effects() must be oneway or twoway"
+		exit 198
+	}
+	if !inlist(`trend', 1, 2) {
+		di as error "trend() must be 1 (intercepts) or 2 (intercepts and linear trends)"
+		exit 198
+	}
+	if !inlist("`kernel'", "ba", "tr", "pa", "bo", "da", "qs") {
+		di as error "kernel() must be one of ba, tr, pa, bo, da, qs"
 		exit 198
 	}
 
@@ -83,13 +102,40 @@ program define xtpcmg, eclass sortpreserve
 	local N = r(max)
 	qui sum `timevar' if `touse', meanonly
 	local T = r(max) - r(min) + 1
-	
+	local tmin = r(min)
+	local tmax = r(max)
+
+	* --- Strongly balanced panel required (data are reshaped to T x N) ---
+	qui count if `touse'
+	if r(N) != `N'*`T' {
+		di as error "xtpcmg requires a strongly balanced panel without gaps:"
+		di as error "  found " r(N) " observations for N = `N' panels and T = `T' periods"
+		exit 459
+	}
+
 	sort `panelvar' `timevar'
-	
+
+	* --- Panel names (value labels if present) for the tables ---
+	local plab : value label `panelvar'
+	qui levelsof `panelvar' if `touse', local(plevels)
+	local pnames ""
+	foreach pv of local plevels {
+		if "`plab'" != "" local pn : label `plab' `pv'
+		else local pn "`pv'"
+		local pn = subinstr(substr(`"`pn'"', 1, 12), " ", "_", .)
+		local pnames `"`pnames' `pn'"'
+	}
+
+	if "`cttest'" != "" & `ncontrols' > 3 {
+		di as error "cttest: critical values are tabulated for at most 4 integrated regressors"
+		di as error "  (the polynomial variable and up to 3 controls)"
+		exit 198
+	}
+
 	* Header
 	di as text ""
 	di as text "{hline 78}"
-	di as text "Panel Cointegrating Polynomial Regressions" _col(60) "xtpcmg v1.0.2"
+	di as text "Panel Cointegrating Polynomial Regressions" _col(60) "xtpcmg v1.0.3"
 	if "`model'" == "mg" {
 		local moddesc "Group-Mean FM-OLS (Wagner & Reichold, 2023)"
 	}
@@ -104,7 +150,12 @@ program define xtpcmg, eclass sortpreserve
 		_col(45) as text "T (time)   = " as result "`T'"
 	di as text "Poly. degree  : " as result "`q'" ///
 		_col(45) as text "Kernel     = " as result "`kernel'"
-	di as text "Bandwidth     : " as result "`bw'"
+	di as text "Bandwidth     : " as result "`bw'" _c
+	if "`model'" == "mg" {
+		local detdesc = cond(`trend' == 1, "intercepts", "intercepts + trends")
+		di _col(45) as text "Determ.    = " as result "`detdesc'"
+	}
+	else di _col(45) as text "Effects    = " as result "`effects'"
 	if `has_controls' {
 		di as text "Controls      : " as result "`controls'"
 	}
@@ -131,9 +182,15 @@ program define xtpcmg, eclass sortpreserve
 	
 	* Store individual coefficients for MG model
 	if "`model'" == "mg" {
-		tempname indiv_b
+		tempname indiv_b indiv_se ivinv
 		capture matrix `indiv_b' = __xtpcmg_indiv
-		capture matrix drop __xtpcmg_indiv
+		capture matrix `indiv_se' = __xtpcmg_ise
+		capture matrix `ivinv' = __xtpcmg_ivinv
+		capture matrix drop __xtpcmg_indiv __xtpcmg_ise __xtpcmg_ivinv
+		capture matrix colnames `indiv_b' = `cnames'
+		capture matrix colnames `indiv_se' = `cnames'
+		capture matrix rownames `indiv_b' = `pnames'
+		capture matrix rownames `indiv_se' = `pnames'
 	}
 
 	* Store Modified-OLS results for PMG model (de Jong & Wagner 2022)
@@ -161,12 +218,26 @@ program define xtpcmg, eclass sortpreserve
 	ereturn scalar N_g = `N'
 	ereturn scalar T = `T'
 	ereturn scalar q = `q'
+	ereturn local kernel "`kernel'"
+	ereturn local bw "`bw'"
+	ereturn local panelvar "`panelvar'"
+	ereturn local timevar "`timevar'"
 	if "`model'" == "mg" {
+		ereturn scalar trend = `trend'
+		ereturn scalar corrrob = ("`corrrob'" != "")
 		capture ereturn matrix indiv_b = `indiv_b'
+		capture ereturn matrix indiv_se = `indiv_se', copy
 	}
-	
+	else ereturn local effects "`effects'"
+
 	* Display table
 	ereturn display, level(`level')
+	if "`model'" == "mg" & `trend' == 2 {
+		di as text " Note: with individual intercepts and linear trends, the coefficient on"
+		di as text "       `reg' has a non-standard (unit-root type) limiting distribution"
+		di as text "       (Wagner & Reichold 2023, Case ii); its z-test is not standard normal."
+		di as text "       Judge the shape of the curve by the higher-order term(s)."
+	}
 
 	* --- Modified OLS (M-OLS) results table (PMG model) ---
 	if "`model'" == "pmg" {
@@ -217,21 +288,31 @@ program define xtpcmg, eclass sortpreserve
 			di as text "{hline 78}"
 			di as text " Individual FM-OLS Coefficient Estimates"
 			di as text "{hline 78}"
+			local rega = abbrev("`reg'", 9)
 			if `q' == 2 {
-				di as text %12s "Panel" _col(20) %12s "`reg'" _col(38) %12s "`reg'^2"
-				di as text "{hline 50}"
+				di as text %12s "Panel" _col(16) %11s "`rega'" _col(29) %11s "`rega'^2" ///
+					_col(44) %11s "Turn. pt." _col(60) "Shape"
+				di as text "{hline 78}"
 				forvalues i = 1/`N' {
-					di as text %12s "Panel `i'" _col(20) as result %12.4f `ib'[`i',1] _col(38) as result %12.4f `ib'[`i',2]
+					local pn : word `i' of `pnames'
+					local bi1 = `ib'[`i',1]
+					local bi2 = `ib'[`i',2]
+					local tpi = cond(`bi2' != 0, -`bi1'/(2*`bi2'), .)
+					local shi = cond(`bi2' < 0, "inverted U", "U")
+					di as text %12s "`pn'" _col(16) as result %11.4f `bi1' _col(29) %11.4f `bi2' ///
+						_col(44) %11.4f `tpi' _col(60) as text "`shi'"
 				}
 			}
 			else {
-				di as text %12s "Panel" _col(20) %12s "`reg'" _col(38) %12s "`reg'^2" _col(56) %12s "`reg'^3"
+				di as text %12s "Panel" _col(20) %12s "`rega'" _col(38) %12s "`rega'^2" _col(56) %12s "`rega'^3"
 				di as text "{hline 68}"
 				forvalues i = 1/`N' {
-					di as text %12s "Panel `i'" _col(20) as result %12.4f `ib'[`i',1] _col(38) as result %12.4f `ib'[`i',2] _col(56) as result %12.4f `ib'[`i',3]
+					local pn : word `i' of `pnames'
+					di as text %12s "`pn'" _col(20) as result %12.4f `ib'[`i',1] _col(38) as result %12.4f `ib'[`i',2] _col(56) as result %12.4f `ib'[`i',3]
 				}
 			}
 			di as text "{hline 78}"
+			if `trend' == 2 di as text " Individual estimates use panel-specific intercepts and linear trends."
 			
 			* --- Enhanced Heterogeneity Analysis ---
 			di as text ""
@@ -300,14 +381,21 @@ program define xtpcmg, eclass sortpreserve
 			di as text "{hline 78}"
 			di as text " H0: All individual slope coefficients are equal"
 			di as text " H1: At least one panel has a different slope"
+			di as text " S = sum_i (b_i - b_wls)' V_i^-1 (b_i - b_wls),  V_i = Omega_u.v,i (X_i'X_i)^-1"
 			di as text "{hline 78}"
-			
-			tempname Sstat Sdf Sp
-			mata: _xtpcmg_swamy(st_matrix("`ib'"), `N', `totalcoefs')
-			
+
+			tempname Sstat Sdf Sp Sdel Sdelp
+			mata: _xtpcmg_swamy(st_matrix("`ib'"), st_matrix("`ivinv'"), `N', `totalcoefs')
+
 			di as text %30s "Swamy S-statistic" _col(35) " = " as result %12.4f scalar(`Sstat')
 			di as text %30s "Degrees of freedom" _col(35) " = " as result %12.0f scalar(`Sdf')
 			di as text %30s "P-value (chi-squared)" _col(35) " = " as result %12.4f scalar(`Sp')
+			di as text %30s "Standardised Delta" _col(35) " = " as result %12.4f scalar(`Sdel')
+			di as text %30s "P-value (N(0,1), one-sided)" _col(35) " = " as result %12.4f scalar(`Sdelp')
+			if `trend' == 2 {
+				di as text " Note: under trend(2) the first-power coefficient converges at a"
+				di as text "       non-standard rate; treat the test as indicative."
+			}
 			if scalar(`Sp') < 0.05 {
 				di as text ""
 				di as result "  >>> Significant heterogeneity detected (p < 0.05)."
@@ -323,6 +411,8 @@ program define xtpcmg, eclass sortpreserve
 			ereturn scalar swamy_s = scalar(`Sstat')
 			ereturn scalar swamy_df = scalar(`Sdf')
 			ereturn scalar swamy_p = scalar(`Sp')
+			ereturn scalar swamy_delta = scalar(`Sdel')
+			ereturn scalar swamy_delta_p = scalar(`Sdelp')
 			
 			* --- Between-Within Variance Decomposition ---
 			di as text ""
@@ -343,11 +433,13 @@ program define xtpcmg, eclass sortpreserve
 				* Between-panel variance: var(b_i) 
 				mata: st_numscalar("__bvar", variance(vec(st_matrix("`colvals'"))))
 				
-				* Within-panel variance: average individual VCV diagonal
-				* Use group-mean VCV * N as proxy for within variance
-				tempname vcv_diag
-				matrix `vcv_diag' = e(V)
-				local wvar = `vcv_diag'[`j', `j'] * `N'
+				* Within-panel variance: average of the panel-specific
+				* FM-OLS sampling variances V_i[j,j]
+				tempname sevals
+				matrix `sevals' = `indiv_se'[1..`N', `j']
+				mata: st_numscalar("__wvar", mean(vec(st_matrix("`sevals'")):^2))
+				local wvar = scalar(__wvar)
+				scalar drop __wvar
 				
 				local tvar = scalar(__bvar)
 				local bvar_val = max(0, `tvar' - `wvar')
@@ -381,6 +473,12 @@ program define xtpcmg, eclass sortpreserve
 	}
 	
 	* --- Turning Point with Delta-Method CI ---
+	qui sum `reg' if e(sample), meanonly
+	local xmin = r(min)
+	local xmax = r(max)
+	ereturn scalar x_min = `xmin'
+	ereturn scalar x_max = `xmax'
+	local zlev = invnormal(1 - (100-`level')/200)
 	if `q' == 2 {
 		local b1 = `bcoef'[1,1]
 		local b2 = `bcoef'[1,2]
@@ -394,8 +492,9 @@ program define xtpcmg, eclass sortpreserve
 			local v22 = `Vmat'[2,2]
 			local tp_var = `g1'^2*`v11' + 2*`g1'*`g2'*`v12' + `g2'^2*`v22'
 			local tp_se = sqrt(abs(`tp_var'))
-			local tp_lo = `tp' - invnormal(0.975)*`tp_se'
-			local tp_hi = `tp' + invnormal(0.975)*`tp_se'
+			local tp_lo = `tp' - `zlev'*`tp_se'
+			local tp_hi = `tp' + `zlev'*`tp_se'
+			local tp_in = (`tp' >= `xmin' & `tp' <= `xmax')
 			local tp_z = `tp' / `tp_se'
 			local tp_p = 2 * (1 - normal(abs(`tp_z')))
 			if `b2' < 0 local tp_shape "Inverted U (concave)"
@@ -405,14 +504,22 @@ program define xtpcmg, eclass sortpreserve
 			di as text "{hline 78}"
 			di as text " Turning Point Analysis" _col(55) "Shape: `tp_shape'"
 			di as text "{hline 78}"
-			di as text %20s "" _col(21) %10s "Estimate" _col(33) %10s "Std. Err." _col(45) %8s "z" _col(55) %8s "P>|z|" _col(65) %14s "[95% Conf. Int.]"
+			di as text %20s "" _col(21) %10s "Estimate" _col(33) %10s "Std. Err." _col(45) %8s "z" _col(55) %8s "P>|z|" _col(65) %14s "[`level'% Conf. Int.]"
 			di as text "{hline 78}"
 			di as text %20s "Turning point (x*)" _col(21) as result %10.4f `tp' _col(33) as result %10.4f `tp_se' _col(45) as result %8.2f `tp_z' _col(55) as result %8.3f `tp_p' _col(65) as result %8.4f `tp_lo' as text "  " as result %8.4f `tp_hi'
 			di as text %20s "f(x*)" _col(21) as result %10.4f `tp_y'
 			di as text "{hline 78}"
 			di as text " Coefficients: b1 = " as result %8.4f `b1' as text ", b2 = " as result %8.4f `b2'
 			di as text " Formula: x* = -b1/(2*b2)"
+			di as text " Sample range of `reg': [" as result %8.4f `xmin' as text ", " ///
+				as result %8.4f `xmax' as text "]  ->  turning point " ///
+				as result cond(`tp_in', "inside", "outside") as text " the sample range"
+			if "`model'" == "mg" & `trend' == 2 {
+				di as text " Note: under trend(2) the delta-method interval uses the variance of the"
+				di as text "       first-power coefficient, whose limit is non-standard; it is approximate."
+			}
 			di as text "{hline 78}"
+			ereturn scalar tp_inrange = `tp_in'
 			
 			ereturn scalar tp = `tp'
 			ereturn scalar tp_se = `tp_se'
@@ -443,12 +550,89 @@ program define xtpcmg, eclass sortpreserve
 			di as text %20s "Turning point 1" _col(21) as result %12.4f `tp1' _col(40) as result %12.4f `tp1_y'
 			di as text %20s "Turning point 2" _col(21) as result %12.4f `tp2' _col(40) as result %12.4f `tp2_y'
 			di as text "{hline 54}"
+			local tp1_in = (`tp1' >= `xmin' & `tp1' <= `xmax')
+			local tp2_in = (`tp2' >= `xmin' & `tp2' <= `xmax')
+			di as text " Sample range of `reg': [" as result %8.4f `xmin' as text ", " as result %8.4f `xmax' as text "]"
+			di as text " Turning point 1 " as result cond(`tp1_in', "inside", "outside") ///
+				as text ", turning point 2 " as result cond(`tp2_in', "inside", "outside") as text " the sample range"
+			di as text "{hline 54}"
 			ereturn scalar tp1 = `tp1'
 			ereturn scalar tp2 = `tp2'
+			ereturn scalar tp1_inrange = `tp1_in'
+			ereturn scalar tp2_inrange = `tp2_in'
 			local has_tp = 1
 		}
 	}
 	if "`has_tp'" == "" local has_tp = 0
+
+	* =====================================================================
+	* CT TEST FOR COINTEGRATING POLYNOMIAL REGRESSIONS (panel by panel)
+	* KPSS-type test on time-series FM-OLS residuals; H0: cointegration.
+	* All regressors treated as integrated: controls (power 1) and the
+	* polynomial variable (powers 1..q). Critical values from the tables
+	* distributed with the CT/PU code (d = 0 intercept, d = 1 + trend).
+	* =====================================================================
+	if "`cttest'" != "" {
+		local ctd = 0
+		if "`model'" == "mg" & `trend' == 2 local ctd = 1
+		local ctm = 1 + `ncontrols'
+		tempname ctres ctcv
+		tempvar ctuse
+		qui gen byte `ctuse' = e(sample)
+		sort `panelvar' `timevar'
+		mata: _xtpcmg_ct("`depvar'", "`reg'", "`controls'", "`ctuse'", `N', `T', `q', `ctd', "`kernel'", "`bw'")
+		matrix `ctres' = __xtpcmg_ct
+		matrix drop __xtpcmg_ct
+		mata: st_matrix("`ctcv'", _xtpcmg_ctcv(`ctd', `ctm', `q'))
+		local cv10 = `ctcv'[1,1]
+		local cv05 = `ctcv'[1,2]
+		local cv01 = `ctcv'[1,3]
+
+		di as text ""
+		di as text "{hline 78}"
+		di as text " CT test for cointegrating polynomial regressions, by panel"
+		di as text "{hline 78}"
+		di as text " H0: cointegration    (KPSS-type statistic on FM-OLS residuals)"
+		di as text " Deterministics: " as result cond(`ctd' == 0, "intercept", "intercept and linear trend") ///
+			as text "   Integrated regressors m = " as result `ctm' as text ", power q = " as result `q'
+		if "`model'" == "pmg" & "`effects'" == "twoway" {
+			di as text " Note: time effects are not part of the CT test regression."
+		}
+		di as text "{hline 78}"
+		di as text %12s "Panel" _col(18) %10s "CT stat" _col(32) %8s "10%" _col(42) %8s "5%" _col(52) %8s "1%"
+		di as text "{hline 78}"
+		local nacc = 0
+		forvalues i = 1/`N' {
+			local pn : word `i' of `pnames'
+			local cts = `ctres'[`i',1]
+			local r10 = (`cts' > `cv10')
+			local r05 = (`cts' > `cv05')
+			local r01 = (`cts' > `cv01')
+			if !`r05' local ++nacc
+			di as text %12s "`pn'" _col(18) as result %10.4f `cts' ///
+				_col(32) as text %8s cond(`r10', "reject", ".") ///
+				_col(42) %8s cond(`r05', "reject", ".") ///
+				_col(52) %8s cond(`r01', "reject", ".")
+			matrix `ctres'[`i',2] = `r10'
+			matrix `ctres'[`i',3] = `r05'
+			matrix `ctres'[`i',4] = `r01'
+		}
+		di as text "{hline 78}"
+		di as text %12s "Crit. value" _col(32) as result %8.4f `cv10' _col(42) %8.4f `cv05' _col(52) %8.4f `cv01'
+		di as text "{hline 78}"
+		di as text " Cointegration not rejected at 5% in " as result `nacc' as text " of " as result `N' as text " panels."
+		di as text " Each panel uses its own Andrews/NW bandwidth; T = " as result `T' ///
+			as text " per panel, so power is limited in short samples."
+		di as text "{hline 78}"
+		matrix colnames `ctres' = CT rej10 rej05 rej01
+		capture matrix rownames `ctres' = `pnames'
+		matrix colnames `ctcv' = cv10 cv05 cv01
+		ereturn matrix ct = `ctres'
+		ereturn matrix ct_cv = `ctcv'
+		ereturn scalar ct_nacc05 = `nacc'
+		ereturn scalar ct_d = `ctd'
+		ereturn scalar ct_m = `ctm'
+	}
 	
 	* =====================================================================
 	* VISUALIZATIONS
@@ -778,7 +962,7 @@ mata set matastrict off
 // -----------------------------------------------------------------------
 // lr_weights  (matches lr_weights.m exactly)
 // -----------------------------------------------------------------------
-void _lr_weights(real scalar T, string scalar kern, real scalar band,
+void _xtpcmg_lr_weights(real scalar T, string scalar kern, real scalar band,
                  real colvector w, real scalar upper)
 {
 	real scalar M, j, jj, sc, ulim
@@ -836,7 +1020,7 @@ void _lr_weights(real scalar T, string scalar kern, real scalar band,
 // -----------------------------------------------------------------------
 // lr_varmod  (matches lr_varmod.m exactly)
 // -----------------------------------------------------------------------
-void _lr_varmod(real matrix u, string scalar kern, real scalar band,
+void _xtpcmg_lr_varmod(real matrix u, string scalar kern, real scalar band,
                 real scalar deme,
                 real matrix Omega, real matrix Delta, real matrix Sigma)
 {
@@ -851,7 +1035,7 @@ void _lr_varmod(real matrix u, string scalar kern, real scalar band,
 		u = u :- J(TT,1,1) * mean(u)
 	}
 
-	_lr_weights(TT, kern, band, w, j_max)
+	_xtpcmg_lr_weights(TT, kern, band, w, j_max)
 
 	Omega = J(m, m, 0)
 	Delta = J(m, m, 0)
@@ -894,7 +1078,7 @@ void _lr_varmod(real matrix u, string scalar kern, real scalar band,
 // -----------------------------------------------------------------------
 // And_HAC91  (matches And_HAC91.m exactly)
 // -----------------------------------------------------------------------
-real scalar _And_HAC91(real matrix v, string scalar kern)
+real scalar _xtpcmg_And_HAC91(real matrix v, string scalar kern)
 {
 	real scalar TT, dimv, k, denom, numer2, a2, numer1, a1, bwidth
 	real colvector rhovec, sigma2vec, yy, xx
@@ -940,18 +1124,44 @@ real scalar _And_HAC91(real matrix v, string scalar kern)
 	return(bwidth)
 }
 
+// Andrews (1991) bandwidth without rounding up (as in the CT/PU test code)
+real scalar _xtpcmg_And91raw(real matrix v, string scalar kern)
+{
+	real scalar TT, dimv, k, denom, numer2, numer1, a1, a2
+	real colvector rhovec, sigma2vec, yy, xx
+	TT = rows(v); dimv = cols(v)
+	rhovec = J(dimv,1,0); sigma2vec = J(dimv,1,0)
+	for (k=1; k<=dimv; k++) {
+		yy = v[2..TT, k]; xx = v[1..(TT-1), k]
+		rhovec[k] = (xx'*xx > 0 ? (xx'*yy)/(xx'*xx) : 0)
+		sigma2vec[k] = (1/TT) * (yy - xx*rhovec[k])' * (yy - xx*rhovec[k])
+	}
+	denom = 0; numer2 = 0; numer1 = 0
+	for (k=1; k<=dimv; k++) {
+		denom  = denom  + (sigma2vec[k]^2)/((1-rhovec[k])^4)
+		numer2 = numer2 + (4*rhovec[k]^2*sigma2vec[k]^2)/((1-rhovec[k])^8)
+		numer1 = numer1 + (4*rhovec[k]^2*sigma2vec[k]^2)/((1-rhovec[k])^6*(1+rhovec[k])^2)
+	}
+	if (denom == 0) denom = 1e-10
+	a2 = numer2/denom; a1 = numer1/denom
+	if      (kern == "tr") return(0.661*(a2*TT)^(1/5))
+	else if (kern == "pa") return(2.6614*(a2*TT)^(1/5))
+	else if (kern == "qs") return(1.3221*(a2*TT)^(1/5))
+	else                   return(1.1447*(a1*TT)^(1/3))
+}
+
 // -----------------------------------------------------------------------
 // bwNW  (Newey & West 1994 automatic bandwidth; matches bwNW.m)
 // Only ba/pa/qs are defined in NW(1994); other kernels fall back to And91.
 // -----------------------------------------------------------------------
-real scalar _bwNW(real matrix v, string scalar kern)
+real scalar _xtpcmg_bwNW(real matrix v, string scalar kern)
 {
 	real scalar TT, m, n, npower, j, s0, s1, s2, qq, Tpow, gam, bandw
 	real colvector weights, vmatw, sigma
 	real rowvector jvec
 
 	if (kern != "ba" & kern != "pa" & kern != "qs")
-		return(_And_HAC91(v, kern))
+		return(_xtpcmg_And_HAC91(v, kern))
 
 	TT = rows(v)
 	m  = cols(v)
@@ -990,7 +1200,7 @@ real scalar _bwNW(real matrix v, string scalar kern)
 // -----------------------------------------------------------------------
 // demean_detrend  (matches demean_detrend.m exactly)
 // -----------------------------------------------------------------------
-void _demean_detrend(real matrix y, real matrix x, real scalar typee,
+void _xtpcmg_demean_detrend(real matrix y, real matrix x, real scalar typee,
                      real matrix ytilde, real matrix xtilde,
                      real matrix x2tilde, real matrix x3tilde)
 {
@@ -1012,7 +1222,7 @@ void _demean_detrend(real matrix y, real matrix x, real scalar typee,
 // -----------------------------------------------------------------------
 // simpledemean  (matches simpledemean.m exactly)
 // -----------------------------------------------------------------------
-void _simpledemean(real matrix y, real matrix x, string scalar way,
+void _xtpcmg_simpledemean(real matrix y, real matrix x, string scalar way,
                    real scalar q,
                    real matrix ytilde, real matrix xtilde,
                    real matrix x2tilde, real matrix x3tilde)
@@ -1086,6 +1296,7 @@ void _xtpcmg_mg(string scalar depvar, string scalar reg, string scalar ctrls,
 	real matrix Mii, Mij2, Mjj, Xtilde_j
 	string scalar cnames
 	real matrix Z_view, z_raw, z_k, ztilde_list, D2, P2
+	real matrix Vinv_stack, se_list, XXi_inv
 	string rowvector ctrl_tokens
 
 	st_view(Y_view, ., depvar, touse)
@@ -1111,7 +1322,7 @@ void _xtpcmg_mg(string scalar depvar, string scalar reg, string scalar ctrls,
 	TT = T - 1
 
 	// Demean/detrend polynomial
-	_demean_detrend(y, x, typee, ytilde, xtilde, x2tilde, x3tilde)
+	_xtpcmg_demean_detrend(y, x, typee, ytilde, xtilde, x2tilde, x3tilde)
 
 	// Load and demean controls
 	ztilde_list = J(0, 0, .)
@@ -1136,6 +1347,8 @@ void _xtpcmg_mg(string scalar depvar, string scalar reg, string scalar ctrls,
 	u_hat_all   = J(TT, N, 0)
 	v_hat_all   = J(TT, N, 0)
 	betaFM_list = J(p, N, 0)
+	Vinv_stack  = J(p, p*N, 0)     // panel-specific V_i^{-1}, for the Swamy test
+	se_list     = J(N, p, 0)       // panel-specific FM-OLS standard errors
 
 	for (i=1; i<=N; i++) {
 
@@ -1155,14 +1368,14 @@ void _xtpcmg_mg(string scalar depvar, string scalar reg, string scalar ctrls,
 		u_hat_all[.,i] = u_hat_i
 		v_hat_all[.,i] = v_i :- mu_i
 
-		if (bwopt == "And91")    bandw = _And_HAC91((u_hat_i, v_i:-mu_i), kern)
-		else if (bwopt == "NW")  bandw = _bwNW((u_hat_i, v_i:-mu_i), kern)
+		if (bwopt == "And91")    bandw = _xtpcmg_And_HAC91((u_hat_i, v_i:-mu_i), kern)
+		else if (bwopt == "NW")  bandw = _xtpcmg_bwNW((u_hat_i, v_i:-mu_i), kern)
 		else {
 			bandw = strtoreal(bwopt)
-			if (bandw >= .) bandw = _And_HAC91((u_hat_i, v_i:-mu_i), kern)
+			if (bandw >= .) bandw = _xtpcmg_And_HAC91((u_hat_i, v_i:-mu_i), kern)
 		}
 
-		_lr_varmod((u_hat_i, v_i:-mu_i), kern, bandw, 0, Omega_i, Delta_i, Sigma_i)
+		_xtpcmg_lr_varmod((u_hat_i, v_i:-mu_i), kern, bandw, 0, Omega_i, Delta_i, Sigma_i)
 
 		Omega_uu      = Omega_i[1,1]
 		Omega_vv      = Omega_i[2,2]
@@ -1184,8 +1397,11 @@ void _xtpcmg_mg(string scalar depvar, string scalar reg, string scalar ctrls,
 		betaFM_list[., i] = betaFM_i
 		betaGM   = betaGM + betaFM_i
 
+		XXi_inv = invsym(Xtilde_i'*Xtilde_i)
+		Vinv_stack[., ((i-1)*p+1)..(i*p)] = (Xtilde_i'*Xtilde_i) / Omega_udotv
+		se_list[i, .] = sqrt(diagonal(Omega_udotv * XXi_inv))'
 		if (corrrob == 0) {
-			V = V + Omega_udotv * invsym(Xtilde_i'*Xtilde_i)
+			V = V + Omega_udotv * XXi_inv
 		}
 	}
 
@@ -1193,13 +1409,13 @@ void _xtpcmg_mg(string scalar depvar, string scalar reg, string scalar ctrls,
 
 	// --- Cross-sectional robust VCV ---
 	if (corrrob == 1) {
-		if (bwopt == "And91")    bandw = _And_HAC91((u_hat_all, v_hat_all), kern)
-		else if (bwopt == "NW")  bandw = _bwNW((u_hat_all, v_hat_all), kern)
+		if (bwopt == "And91")    bandw = _xtpcmg_And_HAC91((u_hat_all, v_hat_all), kern)
+		else if (bwopt == "NW")  bandw = _xtpcmg_bwNW((u_hat_all, v_hat_all), kern)
 		else {
 			bandw = strtoreal(bwopt)
-			if (bandw >= .) bandw = _And_HAC91((u_hat_all, v_hat_all), kern)
+			if (bandw >= .) bandw = _xtpcmg_And_HAC91((u_hat_all, v_hat_all), kern)
 		}
-		_lr_varmod((u_hat_all, v_hat_all), kern, bandw, 0, Omega_2N, Delta_2N, Sigma_2N)
+		_xtpcmg_lr_varmod((u_hat_all, v_hat_all), kern, bandw, 0, Omega_2N, Delta_2N, Sigma_2N)
 
 		Omega_uu_N = Omega_2N[1..N, 1..N]
 		Omega_uv_N = Omega_2N[1..N, (N+1)..(2*N)]
@@ -1241,6 +1457,8 @@ void _xtpcmg_mg(string scalar depvar, string scalar reg, string scalar ctrls,
 	st_matrix("__xtpcmg_b", betaGM')
 	st_matrix("__xtpcmg_V", V)
 	st_matrix("__xtpcmg_indiv", betaFM_list')
+	st_matrix("__xtpcmg_ivinv", Vinv_stack)
+	st_matrix("__xtpcmg_ise", se_list)
 	st_local("bnames", cnames)
 }
 
@@ -1296,7 +1514,7 @@ void _xtpcmg_pmg(string scalar depvar, string scalar reg, string scalar ctrls,
 	if (TT > 1) vt[2..TT,.] = x[2..TT,.] - x[1..(TT-1),.]
 
 	// Demean polynomial
-	_simpledemean(y, x, effects, q, ytilde, xtilde, x2tilde, x3tilde)
+	_xtpcmg_simpledemean(y, x, effects, q, ytilde, xtilde, x2tilde, x3tilde)
 
 	// Stack polynomial into NT x 1
 	ytilde_vec  = vec(ytilde)
@@ -1315,7 +1533,7 @@ void _xtpcmg_pmg(string scalar depvar, string scalar reg, string scalar ctrls,
 			z_raw = Z_view[.,.]
 			z_raw = colshape(z_raw, T)'
 			// Demean control using same scheme as y (pass z as y argument)
-			_simpledemean(z_raw, x, effects, q, zt_y, zt_x, zt_x2, zt_x3)
+			_xtpcmg_simpledemean(z_raw, x, effects, q, zt_y, zt_x, zt_x2, zt_x3)
 			Xtilde_vec = (Xtilde_vec, vec(zt_y))
 		}
 	}
@@ -1356,14 +1574,14 @@ void _xtpcmg_pmg(string scalar depvar, string scalar reg, string scalar ctrls,
 		vt_i      = vt[.,i]
 		Xtilde_i2 = Xtilde_vec[((i-1)*TT+1)..(i*TT),.]
 
-		if (bwopt == "And91")    bandw = _And_HAC91((u_hat_i2, vt_i), kern)
-		else if (bwopt == "NW")  bandw = _bwNW((u_hat_i2, vt_i), kern)
+		if (bwopt == "And91")    bandw = _xtpcmg_And_HAC91((u_hat_i2, vt_i), kern)
+		else if (bwopt == "NW")  bandw = _xtpcmg_bwNW((u_hat_i2, vt_i), kern)
 		else {
 			bandw = strtoreal(bwopt)
-			if (bandw >= .) bandw = _And_HAC91((u_hat_i2, vt_i), kern)
+			if (bandw >= .) bandw = _xtpcmg_And_HAC91((u_hat_i2, vt_i), kern)
 		}
 
-		_lr_varmod((u_hat_i2, vt_i), kern, bandw, 0, Lr_i, Dr_i, Sr_i)
+		_xtpcmg_lr_varmod((u_hat_i2, vt_i), kern, bandw, 0, Lr_i, Dr_i, Sr_i)
 
 		Sum_Lr = Sum_Lr + Lr_i
 		Sum_Dr = Sum_Dr + Dr_i
@@ -1591,39 +1809,164 @@ void _xtpcmg_hetpctl(real matrix vals)
 	st_numscalar("__pmax", sv[n])
 }
 
-// Swamy (1970) S-test for slope homogeneity
-// S = sum_i (b_i - b_bar)' * inv(V_bar) * (b_i - b_bar)
-// Under H0: S ~ chi2((N-1)*K)
-void _xtpcmg_swamy(real matrix indiv_b, real scalar N, real scalar K)
+// Swamy (1970) test for slope homogeneity, using the panel-specific
+// FM-OLS variances V_i = Omega_u.v,i (X_i'X_i)^-1:
+//   b_wls = (sum_i V_i^-1)^-1 sum_i V_i^-1 b_i
+//   S     = sum_i (b_i - b_wls)' V_i^-1 (b_i - b_wls)  ~  chi2((N-1)K) under H0
+//   Delta = sqrt(N) (S/N - K) / sqrt(2K)               ~  N(0,1), one-sided
+// Vinv_stack is K x (K*N) holding V_i^-1 side by side.
+void _xtpcmg_swamy(real matrix indiv_b, real matrix Vinv_stack,
+                   real scalar N, real scalar K)
 {
-	real scalar i, S_stat, df
-	real colvector b_bar, b_i, diff
-	real matrix V_emp, invV
-	
-	// Group mean
-	b_bar = mean(indiv_b)'
-	
-	// Empirical covariance of individual estimates
-	V_emp = J(K, K, 0)
+	real scalar i, S_stat, df, D
+	real colvector b_wls, d, Vb
+	real matrix Vi, Vsum
+
+	Vsum = J(K, K, 0)
+	Vb   = J(K, 1, 0)
 	for (i=1; i<=N; i++) {
-		diff = indiv_b[i, .]' - b_bar
-		V_emp = V_emp + diff * diff'
+		Vi   = Vinv_stack[., ((i-1)*K+1)..(i*K)]
+		Vsum = Vsum + Vi
+		Vb   = Vb + Vi * indiv_b[i, .]'
 	}
-	V_emp = V_emp / (N - 1)
-	invV = invsym(V_emp)
-	
-	// S statistic
+	b_wls = invsym(Vsum) * Vb
+
 	S_stat = 0
 	for (i=1; i<=N; i++) {
-		diff = indiv_b[i, .]' - b_bar
-		S_stat = S_stat + diff' * invV * diff
+		Vi = Vinv_stack[., ((i-1)*K+1)..(i*K)]
+		d  = indiv_b[i, .]' - b_wls
+		S_stat = S_stat + d' * Vi * d
 	}
-	
 	df = (N - 1) * K
-	
+	D  = sqrt(N) * (S_stat/N - K) / sqrt(2*K)
+
 	st_numscalar(st_local("Sstat"), S_stat)
 	st_numscalar(st_local("Sdf"), df)
-	st_numscalar(st_local("Sp"), 1 - chi2(df, S_stat))
+	st_numscalar(st_local("Sp"), chi2tail(df, S_stat))
+	st_numscalar(st_local("Sdel"), D)
+	st_numscalar(st_local("Sdelp"), normal(-D))
+}
+
+// -----------------------------------------------------------------------
+// CT test (Wagner) for cointegrating polynomial regressions, by panel.
+// Time-series FM-OLS for a CPR (port of FM_CPR.m, no stationary regressors,
+// deme = 0), then CT = (1/(T*omega)) sum_t (T^-1/2 S_t)^2 on u_plus.
+// Integrated regressors: controls (power 1) then reg (powers 1..q).
+// d = 0: intercept; d = 1: intercept and linear trend.
+// Returns N x 4 matrix __xtpcmg_ct (col 1 = statistic).
+// -----------------------------------------------------------------------
+void _xtpcmg_ct(string scalar depvar, string scalar reg, string scalar ctrls,
+                string scalar touse, real scalar N, real scalar T, real scalar q,
+                real scalar d, string scalar kern, string scalar bwopt)
+{
+	real scalar i, k, j, nc, m, ncol, bandw, Oudotv, Tn, pos
+	real matrix Yv, Xv, Zv, Y, X, Zc, xi, deter, Xp, Z, Z_, v, Lr, Dr, Sr
+	real colvector y, b_ols, u_ols, Lr_vvvu, Lambda0, Mstar, Astar, yplus, bplus, uplus, S
+	real colvector ords, out
+	string rowvector tok
+
+	st_view(Yv, ., depvar, touse)
+	st_view(Xv, ., reg, touse)
+	Y = colshape(Yv[.,.], T)'
+	X = colshape(Xv[.,.], T)'
+	nc = 0
+	tok = J(1, 0, "")
+	if (strlen(ctrls) > 0) {
+		tok = tokens(ctrls)
+		nc = cols(tok)
+	}
+	m = nc + 1
+	ords = J(nc, 1, 1) \ q
+	ncol = sum(ords)
+	out = J(N, 4, 0)
+
+	for (i=1; i<=N; i++) {
+		y = Y[., i]
+		// integrated regressors for panel i: controls first, polynomial variable last
+		xi = J(T, m, .)
+		for (k=1; k<=nc; k++) {
+			st_view(Zv, ., tok[k], touse)
+			Zc = colshape(Zv[.,.], T)'
+			xi[., k] = Zc[., i]
+		}
+		xi[., m] = X[., i]
+
+		// powers and correction vector (GenVarPolyTerms / GenCPRCorrVec)
+		Xp = J(T, ncol, .)
+		Mstar = J(ncol, 1, .)
+		pos = 0
+		for (k=1; k<=m; k++) {
+			for (j=1; j<=ords[k]; j++) {
+				pos = pos + 1
+				Xp[., pos] = xi[., k]:^j
+				Mstar[pos] = j * sum(xi[., k]:^(j-1))
+			}
+		}
+
+		if (d == 0) deter = J(T, 1, 1)
+		else        deter = (J(T, 1, 1), (1::T))
+		Z  = (deter, Xp)
+		Z_ = Z[2..T, .]
+		v  = xi[2..T, .] - xi[1..(T-1), .]
+
+		b_ols = qrsolve(Z, y)
+		u_ols = y - Z*b_ols
+
+		if (bwopt == "And91")   bandw = _xtpcmg_And91raw((u_ols[2..T], v), kern)
+		else if (bwopt == "NW") bandw = _xtpcmg_bwNW((u_ols[2..T], v), kern)
+		else {
+			bandw = strtoreal(bwopt)
+			if (bandw >= .) bandw = _xtpcmg_And91raw((u_ols[2..T], v), kern)
+		}
+		_xtpcmg_lr_varmod((u_ols[2..T], v), kern, bandw, 0, Lr, Dr, Sr)
+
+		Lr_vvvu = lusolve(Lr[2..(m+1), 2..(m+1)], Lr[2..(m+1), 1])
+		Oudotv  = Lr[1,1] - Lr[1, 2..(m+1)] * Lr_vvvu
+		Lambda0 = Dr[2..(m+1), 1] - Dr[2..(m+1), 2..(m+1)] * Lr_vvvu
+
+		pos = 0
+		for (k=1; k<=m; k++) {
+			for (j=1; j<=ords[k]; j++) {
+				pos = pos + 1
+				Mstar[pos] = Lambda0[k] * Mstar[pos]
+			}
+		}
+		Astar = J(cols(deter), 1, 0) \ Mstar
+
+		yplus = y[2..T] - v * Lr_vvvu
+		bplus = lusolve(Z_'*Z_, Z_'*yplus - Astar)
+		uplus = yplus - Z_*bplus
+
+		Tn = rows(uplus)
+		S  = runningsum(uplus) / sqrt(Tn)
+		out[i, 1] = (S'*S) / (Tn * Oudotv)
+	}
+	st_matrix("__xtpcmg_ct", out)
+}
+
+// Critical values of the CT test (90%, 95%, 99% quantiles), from the tables
+// distributed with the CT/PU code; d = 0/1, m = 1..4 integrated regressors,
+// highest power p = 2..4.
+real rowvector _xtpcmg_ctcv(real scalar d, real scalar m, real scalar p)
+{
+	real matrix C
+	real scalar r
+	C = (0,1,2, .213282,.292656,.504448 \ 0,1,3, .204377,.280706,.490359 \
+	     0,1,4, .198674,.274273,.476707 \ 0,2,2, .147948,.200633,.358592 \
+	     0,2,3, .140759,.191387,.348375 \ 0,2,4, .136553,.186444,.339084 \
+	     0,3,2, .109502,.145740,.259313 \ 0,3,3, .104124,.139132,.247650 \
+	     0,3,4, .101172,.135731,.242474 \ 0,4,2, .085833,.110772,.187578 \
+	     0,4,3, .081509,.105773,.180187 \ 0,4,4, .078696,.102796,.176172 \
+	     1,1,2, .085831,.106288,.156813 \ 1,1,3, .081165,.101037,.150135 \
+	     1,1,4, .078404,.097662,.145529 \ 1,2,2, .072601,.090016,.133414 \
+	     1,2,3, .068722,.085239,.127793 \ 1,2,4, .066292,.082241,.124383 \
+	     1,3,2, .061516,.075436,.112279 \ 1,3,3, .058339,.071755,.106818 \
+	     1,3,4, .056429,.069580,.103889 \ 1,4,2, .053393,.065308,.096916 \
+	     1,4,3, .050790,.062282,.092499 \ 1,4,4, .049042,.059963,.088674)
+	for (r=1; r<=rows(C); r++) {
+		if (C[r,1]==d & C[r,2]==m & C[r,3]==p) return(C[r, 4..6])
+	}
+	return((., ., .))
 }
 
 // Sort individual coefficients for caterpillar plot

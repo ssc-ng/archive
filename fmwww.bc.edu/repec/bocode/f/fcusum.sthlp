@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 1.1.0  24nov2026}{...}
+{* *! version 1.1.5  24nov2026}{...}
 {vieweralsosee "[TS] tsset" "help tsset"}{...}
 {vieweralsosee "[TS] vecrank" "help vecrank"}{...}
 {viewerjumpto "Syntax" "fcusum##syntax"}{...}

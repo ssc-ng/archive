@@ -189,6 +189,7 @@ p xtpsse module to estimate a conditional fixed-effects Poisson panel regression
 p xtpunitcoint module to compute panel cointegration and stationarity tests with structural breaks and common factors
 p xtpvarcoint module to perform Panel VAR Modeling with Cointegration, Structural Breaks, and Cross-Sectional Dependence
 p xtqptest module to perform Born & Breitung Bias-corrected LM-based test for serial correlation
+p xtqqr module to perform panel quantile-on-quantile regression and panel QQKRLS
 p xtqreg module to compute quantile regression with fixed effects
 p xtqrplot module to compute entity-specific marginal effects from panel quantile regression
 p xtqsh module to implement Quantile Regression Slope Homogeneity Test for Panel Data 

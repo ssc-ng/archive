@@ -1,6 +1,9 @@
-*! _xtpqardl_mlib v1.0.4 — Mata computational core for xtpqardl
+*! _xtpqardl_mlib v1.0.5 — Mata computational core for xtpqardl
 *! Author: Dr Merwan Roudane (merwanroudane920@gmail.com)
-*! Date: August 2026
+*! Date: November 2026
+*!
+*! v1.0.5: Powell density divisor 2c (SEs were halved); _xtpq_dfejoint
+*!         (cross-quantile covariance for dfe); half-life for -2<rho<-1
 *!
 *! Calling this (no-op) program forces Stata to load this file, which
 *! compiles every Mata routine the package needs.  All other xtpqardl
@@ -15,6 +18,7 @@
 *!   _xtpq_run2      full per-panel loop, stage 2 (PMG, pooled long run)
 *!   _xtpq_pool_lr   minimum-distance / equal-weight long-run pooling
 *!   _xtpq_mg        mean-group averages and covariance matrices
+*!   _xtpq_dfejoint  joint cross-quantile sandwich for the pooled (DFE) fit
 
 capture program drop _xtpqardl_mlib
 program define _xtpqardl_mlib
@@ -42,6 +46,7 @@ capture mata: mata drop _xtpq_graft_pool()
 capture mata: mata drop _xtpq_legacy()
 capture mata: mata drop _xtpq_legacy_panels()
 capture mata: mata drop _xtpq_halflife()
+capture mata: mata drop _xtpq_dfejoint()
 
 version 15.1
 mata:
@@ -256,7 +261,9 @@ real matrix _xtpq_vcemat(real colvector y, real matrix X, real rowvector b,
 		if (h <= 0 | h >= .) return(J(k, k, .))
 		hd = normalden(u :/ h) :/ h
 	}
-	else hd = (abs(u) :< h) :/ h
+	/* Powell (1991): f(0) ~ #{|u|<c}/(2nc) -- the uniform kernel has
+	   width 2c, so the divisor is 2c (v1.0.4 used c: SEs were halved) */
+	else hd = (abs(u) :< h) :/ (2 * h)
 
 	H  = quadcross(X, hd, X) / n
 	Hi = invsym(H)
@@ -991,7 +998,9 @@ void _xtpq_legacy_panels(real scalar kx, real scalar nar, real scalar nsr,
 	st_matrix(idout,   XTPQ_PID)
 }
 
-/* Exact half-life: HL = ln(0.5)/ln(1+rho), defined for -2 < rho < 0 */
+/* Exact half-life: HL = ln(0.5)/ln|1+rho|, defined for -2 < rho < 0.
+   For -2 < rho < -1 the path (1+rho)^h oscillates; |1+rho|^h still halves
+   the gap after HL periods (v1.0.4 returned missing there). */
 void _xtpq_halflife(string scalar rhoname, string scalar hlout,
                     real scalar dopanels,
                     string scalar rhoallname, string scalar hlallout)
@@ -1005,7 +1014,7 @@ void _xtpq_halflife(string scalar rhoname, string scalar hlout,
 	hl  = J(1, n, .)
 	for (j = 1; j <= n; j++) {
 		r = rho[j]
-		if (r < . & r < 0 & r > -2) hl[j] = ln(0.5) / ln(1 + r)
+		if (r < . & r < 0 & r > -2) hl[j] = (abs(1 + r) < 1e-12 ? 0 : ln(0.5) / ln(abs(1 + r)))
 	}
 	st_matrix(hlout, hl)
 
@@ -1015,10 +1024,161 @@ void _xtpq_halflife(string scalar rhoname, string scalar hlout,
 		for (i = 1; i <= rows(R); i++) {
 			for (j = 1; j <= cols(R); j++) {
 				r = R[i, j]
-				if (r < . & r < 0 & r > -2) H[i, j] = ln(0.5) / ln(1 + r)
+				if (r < . & r < 0 & r > -2) H[i, j] = (abs(1 + r) < 1e-12 ? 0 : ln(0.5) / ln(abs(1 + r)))
 			}
 		}
 		st_matrix(hlallout, H)
 	}
 }
+
+/* =================================================================
+   v1.0.5 -- joint covariance ACROSS quantiles for the pooled (DFE)
+   quantile regressions, so that the constancy Wald tests use
+     Var(b_s - b_t) = V_ss + V_tt - V_st - V_ts.
+   Up to v1.0.4 the cross blocks were set to zero.
+
+     V_st = cf * H_s^-1 J_st H_t^-1 / n
+     J_st = (1/n) sum_i sum_j w_ij psi_s,i psi_t,j x_i x_j'
+     psi_t,i = tau_t - 1{u_t,i < 0}
+
+   w_ij follows vcetype exactly as in _xtpq_vcemat (robust: i = j;
+   cluster: same group; hac: kernel weight on the time distance within
+   a group).  The result is mapped to (rho, beta, rest) by the delta
+   method and only the off-diagonal (s != t) blocks are returned; the
+   diagonal blocks stay those of the per-quantile estimator.
+   B   : ntau x K raw coefficients (regressor order of xv, then _cons)
+   OK  : 1 x ntau, 1 = quantile fitted
+   ================================================================= */
+void _xtpq_dfejoint(string scalar yv, string scalar xv, string scalar tousev,
+                    string scalar bname, string scalar okname,
+                    string scalar tauname, string scalar vcetype,
+                    real scalar bwin, string scalar kern,
+                    string scalar tvarv, string scalar clustv,
+                    real scalar cons, real scalar kx, real scalar nrest,
+                    string scalar vout)
+{
+	real colvector y, tt, cl, u, hd, ord
+	real matrix    X, B, PSI, Xs, Vst, G, Gs, Gt, Vout, Jm, gg
+	real rowvector taus, ok, b
+	real scalar    n, K, nt, M, s, t, i, j, h, sd, iq, L, d, wl, cf, rho
+	real scalar    a, nk, gstart, ng
+	pointer(real matrix) rowvector HI
+
+	y = st_data(., yv, tousev)
+	X = st_data(., tokens(xv), tousev)
+	n = rows(X)
+	if (cons) X = X, J(n, 1, 1)
+	K = cols(X)
+	B    = st_matrix(bname)
+	ok   = st_matrix(okname)
+	taus = st_matrix(tauname)
+	nt   = cols(taus)
+	M    = 1 + kx + nrest
+	nk   = M
+	Vout = J(nt * M, nt * M, 0)
+	if (rows(B) != nt | cols(B) != K) {
+		st_matrix(vout, Vout)
+		return
+	}
+
+	tt = (tvarv  != "") ? st_data(., tvarv,  tousev) : (1::n)
+	cl = (clustv != "") ? st_data(., clustv, tousev) : J(n, 1, 1)
+	ord = order((cl, tt), (1, 2))
+	X = X[ord, .] ; y = y[ord] ; tt = tt[ord] ; cl = cl[ord]
+
+	PSI = J(n, nt, 0)
+	HI  = J(1, nt, NULL)
+	for (t = 1; t <= nt; t++) {
+		if (ok[t] != 1) continue
+		b = B[t, .]
+		u = y - X * b'
+		PSI[., t] = taus[t] :- (u :< 0)
+		h = _xtpq_hsbw(u, taus[t])
+		if (h <= 0 | h >= .) {
+			sd = sqrt(variance(u))
+			iq = _xtpq_iqr(u)
+			h  = (iq < . & iq > 0) ? min((sd, iq / 1.349)) : sd
+			h  = 1.06 * h * n^(-0.2)
+			hd = normalden(u :/ h) :/ h
+		}
+		else hd = (abs(u) :< h) :/ (2 * h)
+		/* a pointer to an expression owns a fresh copy; &(Hinv) would make
+		   every quantile point at the same (last) matrix */
+		HI[t] = &(invsym(quadcross(X, hd, X) / n))
+	}
+
+	if (vcetype == "cluster") {
+		ng = 0
+		for (i = 1; i <= n; i++) if (i == n | cl[min((i + 1, n))] != cl[i]) ng++
+		cf = (ng > 1) ? (ng / (ng - 1)) * ((n - 1) / (n - K)) : 1
+	}
+	else cf = n / (n - K)
+
+	L = bwin
+	if (L < 0) L = floor(4 * (n / 100)^(2 / 9))
+	if (L < 0) L = 0
+
+	for (s = 1; s <= nt; s++) {
+		if (ok[s] != 1) continue
+		for (t = s + 1; t <= nt; t++) {
+			if (ok[t] != 1) continue
+
+			if (vcetype == "cluster") {
+				Jm = J(K, K, 0)
+				gstart = 1
+				for (i = 1; i <= n; i++) {
+					if (i == n | cl[min((i + 1, n))] != cl[i]) {
+						Jm = Jm + quadcolsum(X[|gstart, 1 \ i, K|] :* PSI[|gstart, s \ i, s|])' *
+						          quadcolsum(X[|gstart, 1 \ i, K|] :* PSI[|gstart, t \ i, t|])
+						gstart = i + 1
+					}
+				}
+			}
+			else {
+				Jm = quadcross(X, PSI[., s] :* PSI[., t], X)
+				if (vcetype == "hac") {
+					for (i = 2; i <= n; i++) {
+						for (j = i - 1; j >= 1; j--) {
+							if (cl[j] != cl[i]) break
+							d = tt[i] - tt[j]
+							if (d > L & kern != "qs") break
+							if (d > 4 * L) break
+							if (d < 1) continue
+							wl = _xtpq_kw(d, L, kern)
+							if (wl == 0) continue
+							gg = wl * (PSI[i, s] * PSI[j, t] * X[i, .]' * X[j, .] +
+							           PSI[j, s] * PSI[i, t] * X[j, .]' * X[i, .])
+							Jm = Jm + gg
+						}
+					}
+				}
+			}
+			Jm  = Jm / n
+			Vst = cf * (*HI[s]) * Jm * (*HI[t]) / n
+
+			/* delta method on the structural block */
+			Gs = J(M, K, 0) ; Gt = J(M, K, 0)
+			for (a = 1; a <= 2; a++) {
+				b   = (a == 1) ? B[s, .] : B[t, .]
+				G   = J(M, K, 0)
+				rho = b[1]
+				G[1, 1] = 1
+				for (j = 1; j <= kx; j++) {
+					if (abs(rho) > 1e-10) {
+						G[1 + j, 1]     =  b[1 + j] / rho^2
+						G[1 + j, 1 + j] = -1 / rho
+					}
+				}
+				for (j = 1; j <= nrest; j++) G[1 + kx + j, 1 + kx + j] = 1
+				if (a == 1) Gs = G
+				else        Gt = G
+			}
+			Vst = Gs * Vst * Gt'
+			Vout[|(s - 1) * M + 1, (t - 1) * M + 1 \ s * M, t * M|] = Vst
+			Vout[|(t - 1) * M + 1, (s - 1) * M + 1 \ t * M, s * M|] = Vst'
+		}
+	}
+	st_matrix(vout, Vout)
+}
+
 end

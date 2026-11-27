@@ -24,6 +24,7 @@ p bbandits module to Estimate Batched OLS for Multi-Armed Bandits
 p bcii module to to estimate the number needed to treat (NNT) and confidence intervals for patients improving, or ‘benefiting’ (either improvements gained or deteriorations prevented), in a randomised controlled trial
 p bcoeff module to save regression coefficients to new variable
 p bcoeffs module to save regression coefficients to new variable
+p bcrpdata module to download statistical series from the Central Reserve Bank of Peru
 p bcss module to create graphs to show how baseline data (prospective or retrospective) affect sample size for a cluster randomised trial
 p bcstats module to analyze back check (field audit) data and compare it to the original survey data
 p bctobit module to produce a test of the tobit specification

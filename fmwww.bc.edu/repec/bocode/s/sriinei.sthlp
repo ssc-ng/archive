@@ -1,117 +1,146 @@
 {smcl}
-{* *! sriinei.sthlp v1.0.0  Andres Talavera  INEI/DNCE  26jul2026}{...}
+{* *! version 1.0.1  27nov2026}{...}
+{vieweralsosee "sriinei (en espanol)" "help sriinei_es"}{...}
+{viewerjumpto "Syntax" "sriinei##syntax"}{...}
+{viewerjumpto "Description" "sriinei##description"}{...}
+{viewerjumpto "Options" "sriinei##options"}{...}
+{viewerjumpto "Remarks" "sriinei##remarks"}{...}
+{viewerjumpto "Examples" "sriinei##examples"}{...}
+{viewerjumpto "Author" "sriinei##author"}{...}
 {hline}
-{title:Titulo}
+{title:Title}
 
 {phang}
-{bf:sriinei} {hline 2} Descarga un modulo de microdatos desde el portal
-SRIENAHO/SIRTOD del INEI (Peru), dado el codigo de encuesta y el numero
-de modulo -- modo manual, funciona para cualquier encuesta del portal.
+{bf:sriinei} {hline 2} Download a microdata module from Peru's INEI
+SRIENAHO portal
 
-{hline}
-{title:Sintaxis}
+{phang}
+{it:Version {bf:1.0.1} (27nov2026)}{p_end}
+
+
+{marker syntax}{...}
+{title:Syntax}
 
 {p 8 17 2}
-{cmd:sriinei} {cmd:,}
-    {opth codigo(#)}
-    {opth modulo(#)}
-    {opth tipo(string)}
-    {opth destino(string)}
-    [{opt replace}]
-    [{opt nounzip}]
+{cmd:sriinei}{cmd:,}
+{opt cod:igo(#)}
+{opt mod:ulo(#)}
+{opt tipo(format)}
+{opt des:tino(folder)}
+[{opt replace} {opt nounz:ip}]
 
-{hline}
-{title:Descripcion}
+{synoptset 20 tabbed}{...}
+{synopthdr}
+{synoptline}
+{synopt:{opt codigo(#)}}survey/round code on the portal; required{p_end}
+{synopt:{opt modulo(#)}}module number; required{p_end}
+{synopt:{opt tipo(format)}}{cmd:stata}, {cmd:spss}, {cmd:csv} or {cmd:dbf}; required{p_end}
+{synopt:{opt destino(folder)}}folder where the module is saved; created if it does not exist; required{p_end}
+{synopt:{opt replace}}download again even if the module was already downloaded{p_end}
+{synopt:{opt nounzip}}keep the .zip file without extracting it{p_end}
+{synoptline}
+{p2colreset}{...}
+
+
+{marker description}{...}
+{title:Description}
 
 {pstd}
-{cmd:sriinei} descarga un modulo especifico de microdatos del portal de
-INEI, construyendo la URL segun el patron oficial:
+{cmd:sriinei} downloads one microdata module from the INEI (Peru)
+SRIENAHO portal, building the download address from the portal's
+pattern:
 
 {p 8 8 2}
-{it:https://proyectos.inei.gob.pe/iinei/srienaho/descarga/{FMT}/{COD}-Modulo{N}.zip}
+{it:https://proyectos.inei.gob.pe/iinei/srienaho/descarga/FORMAT/COD-ModuloN.zip}
 
 {pstd}
-{cmd:sriinei} no asume nada sobre que encuesta corresponde a cada
-codigo -- se pasa el {opt codigo()} y el {opt modulo()} tal cual
-aparecen en la URL de descarga del portal, para {bf:cualquier} encuesta
-publicada en SRIENAHO (ENAHO, ENA, ENAPRES, o cualquier otra). Este
-diseño deliberadamente simple (sin catalogo de años/modulos embebido)
-evita que el comando quede desactualizado si INEI reorganiza o agrega
-encuestas -- funciona igual de bien para una encuesta publicada ayer
-que para una de hace diez años, sin mantenimiento.
+It works with any survey published on the portal (ENAHO, ENA, ENAPRES
+and others): it has no built-in catalog of surveys, years or modules,
+so it does not go out of date when new surveys are published.
 
 {pstd}
-{bf:Como encontrar codigo() y modulo()}: entra al portal de microdatos
-({browse "https://proyectos.inei.gob.pe/microdatos/":https://proyectos.inei.gob.pe/microdatos/}),
-elegi la encuesta y el año, y anda al link de descarga de cualquier
-modulo -- el nombre del archivo tiene la forma {it:{COD}-Modulo{N}.zip}.
-Esos dos numeros son los que se pasan a {opt codigo()} y {opt modulo()}.
+{bf:How to find codigo() and modulo():} go to the microdata portal
+({browse "https://proyectos.inei.gob.pe/microdatos/"}), choose the survey
+and year, and look at the download link of a module. The file name has
+the form {it:COD}{cmd:-Modulo}{it:N}{cmd:.zip}: pass {it:COD} to
+{opt codigo()} and {it:N} to {opt modulo()}.
 
-{hline}
-{title:Opciones}
+
+{marker options}{...}
+{title:Options}
 
 {phang}
-{opth codigo(#)} codigo de la encuesta/ronda en el portal SRIENAHO.
+{opt codigo(#)} is the survey/round code shown in the download link.
 
 {phang}
-{opth modulo(#)} numero de modulo dentro de esa encuesta/ronda.
+{opt modulo(#)} is the module number shown in the download link.
 
 {phang}
-{opth tipo(string)} formato de descarga: {cmd:spss} | {cmd:stata} |
-{cmd:csv} | {cmd:dbf}. La disponibilidad de formato depende de la
-encuesta y el año -- no toda combinacion existe.
+{opt tipo(format)} is the file format: {cmd:stata}, {cmd:spss},
+{cmd:csv} or {cmd:dbf}. Not every format is available for every survey
+and year.
 
 {phang}
-{opth destino(string)} carpeta donde se guarda el archivo descargado.
+{opt destino(folder)} is the folder where the module is saved. It is
+created if it does not exist.
 
 {phang}
-{opt replace} vuelve a descargar aunque el archivo ya exista en
-{opt destino()}.
+{opt replace} downloads the module again even if it was already
+downloaded to {opt destino()}.
 
 {phang}
-{opt nounzip} deja el archivo comprimido (.zip) sin descomprimir.
+{opt nounzip} keeps the downloaded {cmd:.zip} file without extracting
+it.
 
-{hline}
-{title:Ejemplos}
 
-{pstd}Un modulo, formato Stata (codigo/modulo genericos -- reemplazar por los que veas en el portal){p_end}
-{phang2}{cmd:. sriinei, codigo(906) modulo(1234) tipo(stata) destino("C:\ENA\raw")}{p_end}
-
-{pstd}Sin descomprimir, para revisar despues{p_end}
-{phang2}{cmd:. sriinei, codigo(1036) modulo(1895) tipo(csv) destino("C:\ENA\raw") nounzip}{p_end}
-
-{pstd}Forzando nueva descarga aunque ya exista{p_end}
-{phang2}{cmd:. sriinei, codigo(1036) modulo(1895) tipo(stata) destino("C:\ENA\raw") replace}{p_end}
-
-{hline}
-{title:Referencia}
+{marker remarks}{...}
+{title:Remarks}
 
 {pstd}
-Portal de Microdatos INEI:{break}
-{browse "https://proyectos.inei.gob.pe/microdatos/":https://proyectos.inei.gob.pe/microdatos/}
+After extracting, {cmd:sriinei} lists the files and folders the module
+created in {opt destino()}. The names come from INEI's .zip file and
+usually differ from {it:COD}{cmd:-Modulo}{it:N}.
 
 {pstd}
-Patron URL de descarga directa:{break}
-{it:https://proyectos.inei.gob.pe/iinei/srienaho/descarga/{FMT}/{COD}-Modulo{N}.zip}
+To know whether a module was already downloaded, {cmd:sriinei} keeps a
+small record file in {opt destino()},
+{cmd:.sriinei_}{it:COD}{cmd:-Modulo}{it:N}{cmd:_}{it:FORMAT}{cmd:.txt},
+with the address used and the files extracted. If that file exists, the
+module is skipped unless {opt replace} is given. With {opt nounzip}, the
+check is on the {cmd:.zip} file itself. Deleting the record file forces a
+new download.
 
-{hline}
-{title:Autor}
+
+{marker examples}{...}
+{title:Examples}
+
+{pstd}One module in Stata format (replace the codes with the ones shown on the portal){p_end}
+{phang2}{cmd:. sriinei, codigo(906) modulo(1234) tipo(stata) destino("C:/ENA/raw")}{p_end}
+
+{pstd}Keep the .zip file without extracting it{p_end}
+{phang2}{cmd:. sriinei, codigo(1036) modulo(1895) tipo(csv) destino("C:/ENA/raw") nounzip}{p_end}
+
+{pstd}Download again even if it was already downloaded{p_end}
+{phang2}{cmd:. sriinei, codigo(1036) modulo(1895) tipo(stata) destino("C:/ENA/raw") replace}{p_end}
+
+{pstd}Several modules of the same survey{p_end}
+{phang2}{cmd:foreach m in 1895 1896 1897 {c 123}}{p_end}
+{phang2}{cmd:    sriinei, codigo(1036) modulo(`m') tipo(stata) destino("C:/ENA/raw")}{p_end}
+{phang2}{cmd:{c 125}}{p_end}
+
+
+{marker author}{...}
+{title:Author}
 
 {pstd}
-Andres Talavera{break}
-Direccion Nacional de Censos y Encuestas -- INEI Peru{break}
-Email: atalaveracuya@gmail.com{break}
-Junio 2026
-
-{hline}
-{title:Licencia}
+Andres Talavera Cuya. Affiliation stated for identification purposes
+only -- this software is not an official product of INEI and INEI bears
+no responsibility for it. Distributed under the GNU General Public
+License v3 (https://www.gnu.org/licenses/gpl-3.0.txt).
 
 {pstd}
-Este modulo se distribuye bajo los terminos de la GPL v3
-({browse "https://www.gnu.org/licenses/gpl-3.0.txt":https://www.gnu.org/licenses/gpl-3.0.txt}).
+Microdata portal: {browse "https://proyectos.inei.gob.pe/microdatos/"}
 
-{hline}
-{title:Version}
-
-{pstd}
-{bf:sriinei} v1.0.0 -- Junio 2026
+{psee}
+En espanol: {helpb sriinei_es}
+{p_end}

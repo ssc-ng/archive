@@ -1,5 +1,5 @@
 {smcl}
-{* 18Feb2025}{...}
+{* 06Nov2026}{...}
 {hi:help catspline}{...}
 {right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions (GitHub)}}
 
@@ -16,7 +16,7 @@ The program inputs two numeric variables and outputs four variables ({it:_id, _o
 {marker syntax}{title:Syntax}
 
 {p 8 15 2}
-{cmd:catspline} {it:y x}, {opt [} {opt rho(num [0,1])} {opt n(int)} {opt close} {opt sort(var)} {opt genx(str)} {opt geny(str)} {opt genid(str)} {opt genorder(str)} {opt replace} {opt ]}
+{cmd:catspline} {it:y x} {ifin}, {opt [} {opt rho(num [0,1])} {opt n(int)} {opt close} {opt sort(var)} {opt genx(name)} {opt geny(name)} {opt genid(name)} {opt genorder(name)} {opt replace} {opt ]}
 
 
 {synoptset 36 tabbed}{...}
@@ -27,7 +27,7 @@ The program inputs two numeric variables and outputs four variables ({it:_id, _o
 
 {p2coldent : {opt rho(num)}}Smoothing parameter bounded between 0 and 1. Default is {opt rho(0.5)}.{p_end}
 
-{p2coldent : {opt n(int)}}Number of points to generate for each spline. Default is {opt n(40)}.{p_end}
+{p2coldent : {opt n(int)}}Number of points to generate for each spline; at least 5. Default is {opt n(40)}.{p_end}
 
 {p2coldent : {opt sort(var)}}Sort the drawing order defined by the {opt sort()} variable.{p_end}
 
@@ -65,8 +65,8 @@ More examples on {browse "https://github.com/asjadnaqvi/stata-graphfunctions":Gi
 
 {title:Package details}
 
-Version      : {bf:catspline} v1.2 in {stata help graphfunctions:graphfunctions}
-This release : 18 Feb 2025
+Version      : {bf:catspline} v1.31 in {stata help graphfunctions:graphfunctions}
+This release : 06 Nov 2026
 First release: 04 Oct 2024
 Repository   : {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}
 Keywords     : Stata, graph, splines, catmull rom function
@@ -95,6 +95,5 @@ Please note that the GitHub version might be newer than the SSC version.
 	{helpb marimekko}, {helpb polarspike}, {helpb sankey}, {helpb schemepack}, {helpb spider}, {helpb splinefit}, {helpb streamplot}, {helpb sunburst}, {helpb ternary}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}
 
 or visit {browse "https://github.com/asjadnaqvi":GitHub}.
-
 
 

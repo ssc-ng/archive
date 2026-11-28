@@ -1,0 +1,41 @@
+d 'IVONESAMPLEMR': module module for one-sample Mendelian randomization and instrumental variable analyses
+d
+d   ivonesamplemr provides commands for one-sample Mendelian
+d randomization (MR) and other instrumental variable (IV) analyses,
+d particularly with binary outcomes. ivlsmm and ivmsmm fit logistic
+d and multiplicative structural mean models, estimating causal odds
+d ratios and risk ratios; ivtsps and ivtsri fit two-stage predictor
+d substitution and two-stage residual inclusion estimators; ivfsw
+d computes Sanderson-Windmeijer conditional F-statistics after
+d ivregress or ivreg2; and the prefix commands ivmw and ivxtile
+d repeat an IV analysis within moving windows or quantiles of the
+d first-stage residuals to explore nonlinear exposure-outcome
+d relationships. 
+d
+d KW:  
+d
+d Requires: Stata version 13
+d
+d Distribution-Date: 20261127
+d
+d Author: Tom Palmer,  University of Bristol
+d Support: email tom.palmer@@bristol.ac.uk
+d
+f iv.ado
+f iv.sthlp
+f ivasmm.sthlp
+f ivfsw.ado
+f ivfsw.sthlp
+f ivlsmm.ado
+f ivlsmm.sthlp
+f ivmsmm.ado
+f ivmsmm.sthlp
+f ivmw.ado
+f ivmw.sthlp
+f ivonesamplemr.sthlp
+f ivtsps.ado
+f ivtsps.sthlp
+f ivtsri.ado
+f ivtsri.sthlp
+f ivxtile.ado
+f ivxtile.sthlp

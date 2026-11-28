@@ -142,6 +142,7 @@ p ivhettest module to perform Pagan-Hall and related heteroskedasticity tests af
 p ivlpirf2 module to compute IV local-projection impulse-response functions with panel data and Driscoll-Kraay inference
 p ivmediate module to perform Causal mediation analysis in instrumental-variables regressions
 p ivolsdec module to produce decomposition of the IV-OLS coefficient gap
+p ivonesamplemr module module for one-sample Mendelian randomization and instrumental variable analyses
 p ivpermute module to estimate nearly collinear robust instrumental variables regression
 p ivpois module to estimate an instrumental variables Poisson regression via GMM
 p ivprob-ivtobit modules to estimate instrumental variables probit and tobit

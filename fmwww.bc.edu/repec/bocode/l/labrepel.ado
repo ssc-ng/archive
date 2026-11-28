@@ -1,23 +1,48 @@
-*! labrepel v1.0 (08 Mar 2026)
+*! labrepel v1.1 (06 Nov 2026)
 *! Asjad Naqvi (asjadnaqvi@gmail.com)
 
+* v1.1 (06 Nov 2026): Stata 15 minimum. Fixed seed(), nodetail, signed-distance forces, and convergence checks; validate parameters and limits, and report nonfinite forces.
 * v1.0 (08 Mar 2026): initial release with core functionality and basic options
 
 cap program drop labrepel
 
 program labrepel, rclass
-    version 11
+    version 15
 
     syntax varlist(numeric min=2 max=2) [if] [in], LABel(varname string) ///
         [ BOXPADding(real 0.05) push(real 3) pull(real 1.5) DAMPing(real 0.3) COOLing(real 0.2) ///
 			MAXTime(real 10) MAXIter(integer 50) MAXOverlaps(integer 10) nudgex(real 0) nudgey(real 0) ///
 			XLIMit(numlist min=2 max=2) YLIMit(numlist min=2 max=2) ///
-			DIRection(string) SEED(numlist max=1 >0) HJust(real 0.5) VJust(real 0.5) MLABSize(real 2.5) ///
+			DIRection(string) SEED(numlist max=1 integer >=0 <=2147483647) HJust(real 0.5) VJust(real 0.5) MLABSize(real 2.5) ///
 			MAXDISPlacement(real 0) JITter(real 0) nodetail xsize(real 5) ysize(real 3) center ///
         ]
 
-    return local date 		20260308
-	return local version 	1.7
+    foreach option in boxpadding push pull maxtime maxdisplacement jitter {
+        if missing(``option'') | ``option'' < 0 {
+            display as error "`option'() must be a nonnegative number."
+            exit 198
+        }
+    }
+    foreach option in damping cooling hjust vjust {
+        if missing(``option'') | !inrange(``option'', 0, 1) {
+            display as error "`option'() must be between 0 and 1."
+            exit 198
+        }
+    }
+    foreach option in xsize ysize mlabsize {
+        if missing(``option'') | ``option'' <= 0 {
+            display as error "`option'() must be positive."
+            exit 198
+        }
+        if missing(`nudgex', `nudgey') {
+            display as error "nudgex() and nudgey() must be nonmissing."
+            exit 198
+        }
+    }
+    if missing(`maxiter') | `maxiter' < 1 | missing(`maxoverlaps') | `maxoverlaps' < 0 {
+        display as error "maxiter() must be positive; maxoverlaps() must be nonnegative."
+        exit 198
+    }
 
     marksample touse
     quietly count if `touse'
@@ -63,6 +88,11 @@ program labrepel, rclass
         local ymin = r(min)
         local ymax = r(max)
     }
+    if missing(`xmin', `xmax', `ymin', `ymax') | `xmin' >= `xmax' | `ymin' >= `ymax' {
+        display as error "Coordinate limits must be finite and increasing. Supply xlimit()/ylimit() for constant coordinates."
+        exit 198
+    }
+    if "`seed'" != "" set seed `seed'
 
     tempvar x_orig y_orig x_new y_new lab_width lab_height box_x1 box_x2 box_y1 box_y2 ///
             valid_label overlap_count net_fx net_fy obs_num dx_sign dy_sign
@@ -139,7 +169,7 @@ program labrepel, rclass
     
     local n_labels : word count `valid_obs'
 
-    if "`nodetail'" == "" {
+    if "`detail'" == "" {
         di as text "Starting label repulsion algorithm..."
         di as text "  Number of valid labels: `n_labels'"
         di as text "  Plot dimensions: xsize=`xsize', ysize=`ysize'"
@@ -193,7 +223,7 @@ program labrepel, rclass
         local current_time = clock(c(current_date)+" "+c(current_time), "DMY hms")
         local elapsed = (`current_time' - `start_time')
         if `elapsed' > `max_time_ms' & `max_time_ms' > 0 {
-            if "`nodetail'" == "" di as text "Time limit reached at iteration `iter'"
+            if "`detail'" == "" di as text "Time limit reached at iteration `iter'"
             continue, break
         }
 
@@ -306,7 +336,7 @@ program labrepel, rclass
                     local dy0 = `y_orig'[`i_obs'] - `y_new'[`i_obs']
                 }
 
-                local dist0 = sqrt(`dx0'^2 + `dy0'^2)
+                local dist0 = sqrt((`dx0')^2 + (`dy0')^2)
                 local n_overlaps = `overlap_count'[`i_obs']
                 
 
@@ -334,9 +364,11 @@ program labrepel, rclass
                 }
             }
 
-            * CHECK IF NEEDED!
-            replace `net_fx' = 0 if missing(`net_fx')
-            replace `net_fy' = 0 if missing(`net_fy')
+            count if `valid_label' & missing(`net_fx', `net_fy')
+            if r(N) > 0 {
+                noisily display as error "Nonfinite repulsion forces; check coordinates and force parameters."
+                exit 498
+            }
             
             if "`direction'" == "both" | "`direction'" == "x" {
                 replace `x_new' = `x_new' + `net_fx' if `valid_label'
@@ -351,7 +383,7 @@ program labrepel, rclass
             
             * Check for force convergence: exit early if all forces are negligible
             if `moved' == 0 & `iter' > 10 {
-                if "`nodetail'" == "" di as text "All net forces negligible - converged at iteration `iter'"
+                if "`detail'" == "" noisily di as text "All net forces negligible - converged at iteration `iter'"
                 continue, break
             }
 
@@ -394,11 +426,11 @@ program labrepel, rclass
         }
 
         if `moved' == 0 {
-            if "`nodetail'" == "" di as text "Converged at iteration `iter'"
+            if "`detail'" == "" di as text "Converged at iteration `iter'"
             continue, break
         }
 
-        if "`nodetail'" == "" & mod(`iter', 100) == 0 {
+        if "`detail'" == "" & mod(`iter', 100) == 0 {
             qui sum `overlap_count' if `valid_label', meanonly
             local avg_over = r(mean)
             qui sum `net_fx' if `valid_label', meanonly
@@ -408,17 +440,15 @@ program labrepel, rclass
             di as text "  Iteration `iter': `overlaps_found' overlapping pairs, avg overlaps/label: " %6.2f `avg_over'
             di as text "    Mean net force: X=" %9.4f `avg_fx' ", Y=" %9.4f `avg_fy'
             
-            * Check for convergence: if net forces are essentially zero for most labels
-            qui count if (abs(`net_fx') < 1e-10 | abs(`net_fy') < 1e-10) & `valid_label'
-            local converged_count = r(N)
-            if `converged_count' == `n_labels' {
-                di as text "    All labels have zero net force - converged"
-                continue, break
-            }
+        }
+        quietly count if abs(`net_fx') < 1e-10 & abs(`net_fy') < 1e-10 & `valid_label'
+        if r(N) == `n_labels' {
+            if "`detail'" == "" di as text "All labels have negligible net force - converged"
+            continue, break
         }
     }
 
-    if "`nodetail'" == "" {
+    if "`detail'" == "" {
         di as text "Repulsion complete after `iter' iterations"
         count if `overlap_count' > `maxoverlaps' & `valid_label'
         if r(N) > 0 {
@@ -454,6 +484,8 @@ program labrepel, rclass
     return local n_labels `n_labels'
     return local iterations `iter'
     return local direction "`direction'"
+    return local date 20261106
+    return local version 1.1
 
 
 end

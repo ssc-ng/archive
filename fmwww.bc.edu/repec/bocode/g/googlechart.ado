@@ -1,4 +1,8 @@
-*! googlechart v0.1.7  2026-11-12
+*! googlechart v0.1.8  2026-11-26
+*! v0.1.8: divbar splits the center level (e.g. Neutral) half on each side
+*!   of zero, shades the strongest disagree level darkest, and lists the
+*!   legend in level order; the title is drawn once (page heading only)
+*!   instead of also inside the chart.
 *! v0.1.7: the value axis of bar, column, and area charts always includes
 *!   zero, so bar lengths are proportional to the values (the axis used to
 *!   start near the smallest value).

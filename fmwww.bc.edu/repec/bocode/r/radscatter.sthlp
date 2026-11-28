@@ -1,6 +1,6 @@
 {smcl}
-{* 19Nov2025}{...}
-{hi:help radscatter (v1.0): 19 Nov 2025}{...}
+{* 06Nov2026}{...}
+{hi:help radscatter (v1.1): 06 Nov 2026}{...}
 {right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions (GitHub)}}
 
 {hline}
@@ -8,6 +8,7 @@
 {it:(back to {stata help graphfunctions})}
 
 {title:radscatter}: {it:A program for scatter points in polar coordinates.} 
+
 
 
 {marker syntax}{title:Syntax}
@@ -19,7 +20,7 @@
 {p 8 15 2}
 If a numerical variable is specified after {cmd:radscatter}, then scatter heights will based on the values of the variable normalized by {opt radius()}.
 For fixed heights, simply use {cmd:radscatter} with {opt if} or {opt in} options.
-Note that for {it:n} items, the program will generate {it:n-1} points.
+For {it:n} selected items, the program generates {it:n} points.
 
 {synoptset 28 tabbed}{...}
 {synopthdr}
@@ -30,14 +31,15 @@ Note that for {it:n} items, the program will generate {it:n-1} points.
 
 {p2coldent : {opt e:nd(angle)}}Ending angle. Default is {opt end(360)}.{p_end}
 
-{p2coldent : {opt center}}Center the points on the arc segment. The {it:n-1} points generated for {it:n} items 
-are placed at the beginning of the arc which might not be optimal for some figures, e.g. custom pie charts.{p_end}
+{p2coldent : {opt center}}Place points halfway through their equal angular
+intervals rather than at the beginning of each interval.{p_end}
 
 {p2coldent : {opt ro:tate(angle)}}Rotate the points on the origin.{p_end}
 
 {p2coldent : {opt flip}}Flip the draw order to clockwise.{p_end}
 
-{p2coldent : {opt dis:place(num)}}Displace the scatter points by {it:num} pixels. This option is useful for finetuning scatter points for label positions.{p_end}
+{p2coldent : {opt dis:place(num)}}Add {it:num} coordinate units to radial
+heights after normalization.{p_end}
 
 {p2coldent : {opt gena:ngle(str)}}Custom name for the {it:_rada} variable. The angle variable gives angle values
 that can be used to plot labels rotated along the ray from the origin.{p_end}
@@ -61,8 +63,8 @@ More examples on {browse "https://github.com/asjadnaqvi/stata-graphfunctions":Gi
 
 {title:Package details}
 
-Version      : {bf:radscatter} v1.0 in {stata help graphfunctions:graphfunctions}
-This release : 19 Nov 2025
+Version      : {bf:radscatter} v1.1 in {stata help graphfunctions:graphfunctions}
+This release : 06 Nov 2026
 First release: 19 Nov 2025
 Repository   : {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}
 Keywords     : Stata, graph, radial, scatter, polar
@@ -91,6 +93,5 @@ Please note that the GitHub version might be newer than the SSC version.
 	{helpb marimekko}, {helpb polarspike}, {helpb sankey}, {helpb schemepack}, {helpb spider}, {helpb splinefit}, {helpb streamplot}, {helpb sunburst}, {helpb ternary}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}
 
 or visit {browse "https://github.com/asjadnaqvi":GitHub}.
-
 
 

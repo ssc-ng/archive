@@ -1,25 +1,27 @@
 {smcl}
-{* 08Mar2026}{...}
+{* 06Nov2026}{...}
 {hi:help graphfunctions}{...}
-{right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions v1.7 (GitHub)}}
+{right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions v1.8 (GitHub)}}
 
 
 {title:GRAPHFUNCTIONS}: {it:A modular grammar-of-graphics toolkit for Stata data visualizations.}
 
 This package contains the following programs by function category:
+{pstd}All commands require Stata 15 or newer.{p_end}
 
 {hline}
 {title:Shape construction and transformation}
-{stata help shapes:shapes}        v1.4 (19 Nov 2025)  Generate and transform geometric shapes.
+{stata help shapes:shapes}        v1.5 (06 Nov 2026)  Generate and transform geometric shapes.
 
 {title:Geometry and coordinate generators}
-{stata help arc:arc}              v1.3 (19 Nov 2025)  Draw an arc between two points.
-{stata help catspline:catspline}  v1.2 (18 Feb 2025)  Generate Catmull-Rom splines.
-{stata help radscatter:radscatter} v1.0 (19 Nov 2025)  Generate scatter points on a circle.
+{stata help arc:arc}              v1.5 (06 Nov 2026)  Draw an arc between two points.
+{stata help catspline:catspline}  v1.31 (06 Nov 2026) Generate Catmull-Rom splines.
+{stata help isoline:isoline}      v1.1 (06 Nov 2026)  Generate contour lines and depth-band polygons.
+{stata help radscatter:radscatter} v1.1 (06 Nov 2026) Generate scatter points on a circle.
 
 {title:Label utilities}
-{stata help labsplit:labsplit}    v1.1 (08 Oct 2024)  Wrap or split labels.
-{stata help labrepel:labrepel}    v1.0 (06 Mar 2026)  Reposition labels to reduce overlap.
+{stata help labsplit:labsplit}    v1.3 (06 Nov 2026)  Wrap or split labels.
+{stata help labrepel:labrepel}    v1.1 (06 Nov 2026)  Reposition labels to reduce overlap.
 {hline}
 
 
@@ -41,8 +43,8 @@ Please note that the GitHub version might be newer than the SSC version.
 
 {title:Package details}
 
-Version      : {bf:graphfunctions} v1.7
-This release : 08 Mar 2026
+Version      : {bf:graphfunctions} v1.8
+This release : 06 Nov 2026
 First release: 28 Sep 2024
 Repository   : {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}
 License      : {browse "https://opensource.org/licenses/MIT":MIT}
@@ -53,10 +55,10 @@ Twitter/X    : {browse "https://x.com/AsjadNaqvi":@AsjadNaqvi}
 
 
 {title:Other visualization packages}
-{psee}
-    {helpb arcplot}, {helpb alluvial}, {helpb bimap}, {helpb bumparea}, {helpb bumpline}, {helpb circlebar}, {helpb circlepack},
-	{helpb clipgeo}, {helpb delaunay}, {helpb graphfunctions}, {helpb geoboundary}, {helpb geoflow}, {helpb joyplot}, 
-	{helpb marimekko}, {helpb polarspike}, {helpb sankey}, {helpb schemepack}, {helpb spider}, {helpb splinefit},
-	{helpb streamplot}, {helpb sunburst}, {helpb ternary}, {helpb tidytuesday}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}
 
-Visit {browse "https://github.com/asjadnaqvi":GitHub} for further information.	
+{psee}
+    {helpb arcplot}, {helpb alluvial}, {helpb bimap}, {helpb bumparea}, {helpb bumpline}, {helpb circlebar}, {helpb circlepack}, {helpb clipgeo}, {helpb delaunay}, {helpb graphfunctions},
+  {helpb geoboundary}, {helpb geoflow}, {helpb joyplot}, {helpb marimekko}, {helpb polarspike}, {helpb sankey}, {helpb schemepack}, {helpb spider}, {helpb splinefit}, {helpb streamplot},
+  {helpb sunburst}, {helpb ternary}, {helpb tidytuesday}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}, {helpb vcontrol}
+
+Visit {browse "https://github.com/asjadnaqvi":GitHub} for further details.

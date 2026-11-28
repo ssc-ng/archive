@@ -1,6 +1,6 @@
 {smcl}
-{* 19Nov2025}{...}
-{hi:help arc (v1.3): 19 Nov 2025}{...}
+{* 06Nov2026}{...}
+{hi:help arc (v1.5): 06 Nov 2026}{...}
 {right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions (GitHub)}}
 
 {hline}
@@ -10,12 +10,12 @@
 {title:arc}: {it:A program for generating custom arcs.}
 
 The program inputs two pairs of coordinates ({it:x1, y1}) and ({it:x2, y2}) and outputs points for the arc segment in variables {it:_x, _y}.
-The program is {stata help return:r-class} so type {stata return list} after running the command to see the stored locals.
+
 
 {marker syntax}{title:Syntax}
 
 {p 8 15 2}
-{cmd:arc}, {cmd:x1}({it:num}) {cmd:y1}({it:num}) {cmd:x2}({it:num}) {cmd:y2}({it:num}) {cmd:[} {cmdab:rad:ius}({it:num}) {cmd:n}({it:int}) {cmd:swap} {cmd:major} {opt dropbase} {cmdab:genx}({it:newvar}) {cmdab:geny}({it:newvar}) genid(string) genorder(string) {cmd:replace} {cmd:]}
+{cmd:arc}, {cmd:x1}({it:num}) {cmd:y1}({it:num}) {cmd:x2}({it:num}) {cmd:y2}({it:num}) {cmd:[} {cmdab:rad:ius}({it:num}) {cmd:n}({it:int}) {cmd:swap} {cmd:major} {opt reverse} {opt dropbase} {opt append} {opt stack} {cmdab:genx}({it:newvar}) {cmdab:geny}({it:newvar}) {opt genid(name)} {opt genorder(name)} {cmd:replace} {cmd:]}
 
 
 {synoptset 36 tabbed}{...}
@@ -24,14 +24,18 @@ The program is {stata help return:r-class} so type {stata return list} after run
 
 {p2coldent : {opt arc}, x1() y1() x2() y2()}Input two coordinate pairs.{p_end}
 
-{p2coldent : {opt rad:ius(num)}}Specify the radius length. Must be at least equal to half the chord length. Stored in local {it:r(chord)}. Default is the chord length.{p_end}
+{p2coldent : {opt rad:ius(num)}}Specify the radius length. Must be at least equal to half the chord length. Stored in local {it:r(radius)}; chord length is {it:r(chord)}. Default is the chord length.{p_end}
 
-{p2coldent : {opt n(int)}}Number of points to generate for each arc. Default is {opt n(80)}, Must be great or equal to 5.{p_end}
+{p2coldent : {opt n(int)}}Number of points to generate for each arc. Default is {opt n(40)}; must be at least 5.{p_end}
 
 {p2coldent : {opt swap}}Swap the arc side. Arcs are, by default, oriented to the right of the line starting at ({it:x1, y1}) and ending at ({it:x2, y2}).
 Or the arc circumcenter is to the left of the line.{p_end}
 
 {p2coldent : {opt major}}Draw a major arc around the circumcenter rather than the default minor arc.{p_end}
+
+{p2coldent : {opt reverse}}Reverse the point order along the selected arc.{p_end}
+
+{p2coldent : {opt append}, {opt stack}}Append coordinates after existing arc output; these options are equivalent.{p_end}
 
 {p2coldent : {opt dropbase}}Drops the base. This is to ensure that arc segments are inserted into figure rather than being standalone shapes.{p_end}
 
@@ -60,8 +64,8 @@ More examples on {browse "https://github.com/asjadnaqvi/stata-graphfunctions":Gi
 
 {title:Package details}
 
-Version      : {bf:arc} v1.3 in {stata help graphfunctions:graphfunctions}
-This release : 19 Nov 2025
+Version      : {bf:arc} v1.5 in {stata help graphfunctions:graphfunctions}
+This release : 06 Nov 2026
 First release: 08 Oct 2024
 Repository   : {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}
 Keywords     : Stata, graph, arcs
@@ -89,6 +93,5 @@ See {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub} for a c
 	{helpb marimekko}, {helpb polarspike}, {helpb sankey}, {helpb schemepack}, {helpb spider}, {helpb splinefit}, {helpb streamplot}, {helpb sunburst}, {helpb ternary}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}
 
 or visit {browse "https://github.com/asjadnaqvi":GitHub}.
-
 
 

@@ -1,131 +1,88 @@
-*! labsplit v1.2 (03 Mar 2025)
+*! labsplit v1.3 (06 Nov 2026)
 *! Asjad Naqvi (asjadnaqvi@gmail.com)
 
-* v1.2 (03 Mar 2025): lapsplit now allows replace. also allows n() as a substitute for wrap()
-* v1.1 (08 Oct 2024): bug fixes
-* v1.0 (28 Sep 2024): first release.
+* v1.3 (06 Nov 2026): Stata 15 minimum. Fixed sample restrictions and strict wrapping; Unicode-aware character counts, safe word splitting, n() alias, and validated replacement.
 
+capture program drop labsplit
+program define labsplit
+    version 15
+    syntax varlist(string max=1) [if] [in], ///
+        [wrap(numlist max=1 >0 integer) n(numlist max=1 >0 integer) ///
+        word(numlist max=1 >0 integer) strict GENerate(name) replace]
 
-cap program drop labsplit
+    if "`wrap'" != "" & "`n'" != "" {
+        display as error "Specify either wrap() or n(), not both."
+        exit 198
+    }
+    if "`n'" != "" local wrap `n'
+    if ("`wrap'" == "" & "`word'" == "") | ("`wrap'" != "" & "`word'" != "") {
+        display as error "Specify exactly one of wrap() or word()."
+        exit 198
+    }
+    if "`strict'" != "" & "`wrap'" == "" {
+        display as error "strict requires wrap() or n()."
+        exit 198
+    }
+    if "`generate'" == "" local generate _labsplit
+    marksample touse, strok
+    if "`replace'" == "" confirm new variable `generate'
 
-program labsplit
-version 11
-
-	syntax varlist(max=1) [if] [in], [ wrap(numlist max=1 >0 integer) n(numlist max=1 >0 integer) word(numlist max=1 >0 integer) strict GENerate(string) replace ]
-	
-	// error checks
-	
-
-	if "`wrap'" != "" & "`n'" != "" {
-		display as error "Please specify either one of {ul:wrap()} or {ul:n()}. See {stata help labsplit}."
-		exit
-	}		
-	
-	if "`n'" != "" local wrap `n'
-	
-	if "`wrap'" == "" & "`word'" == "" {
-		display as error "Please specify either one of {ul:wrap()} or {ul:word()}. See {stata help labsplit}."
-		exit
-	}	
-	
-	if "`wrap'" != "" & "`word'" != "" {
-		display as error "Both {ul:wrap()} and {ul:word()} cannot be specified together."
-		exit
-	}
-	
-
-
-quietly {	
-
-	local _myvar _labsplit
-
-	if "`generate'" != "" local _myvar `generate'
-
-	if "`replace'" != "" capture drop `_myvar'	
-	
-
-	generate `_myvar' = ""
-	
-	
-	if "`wrap'" != "" {
-	
-		if "`strict'" != "" {
-			tempvar _length
-			gen `_length' = length(`varlist') if !missing(`varlist')
-			summ `_length', meanonly
-			local _wraprounds = floor(`r(max)' / `wrap')
-			
-			replace `_myvar' = `varlist' // copy
-
-			forval i = 1 / `_wraprounds' {
-				local wraptag = `wrap' * `i'
-				replace `_myvar' = substr(`_myvar', 1, `wraptag') + "`=char(10)'" + substr(`_myvar', `=`wraptag' + 1', .) if `_length' > `wraptag' & !missing(`_length')
-			}
-		}
-		else {
-			tempvar current_line _words _tempword length length0 length1
-			
-			gen `current_line' = word(`varlist', 1) if !missing(`varlist')
-		
-			
-			gen `length0' = .
-			gen `length1' = .
-			gen `_words' = wordcount(`varlist')	
-			
-			summ `_words', meanonly
-			local items = `r(max)'	
-
-			forval i = 2/`items' {
-
-				cap drop `_tempword'
-				gen `_tempword' = word(`varlist', `i')  		if !missing(`varlist')
-
-				
-				replace `length0' = length(`current_line')  	if !missing(`varlist')
-				replace `length1' = length(`_tempword')      	if !missing(`varlist')
-				
-				replace `current_line'	= `current_line' + " " + `_tempword' 		if (`length0' + `length1' + 1) <= `wrap' 
-        		replace `_myvar' 		= `_myvar' + `current_line' + "`=char(10)'" if (`length0' + `length1' + 1) >  `wrap' & `_tempword'!=""
-				replace `current_line' 	= `_tempword'    							if (`length0' + `length1' + 1) >  `wrap' & `_tempword'!=""				
-
-			}
-			
-
-			replace `_myvar' = `_myvar' + `current_line' if !missing(`current_line') & `_myvar' != ""
-			replace `_myvar' = word(`varlist', 1) if `_words'==1
-			replace `_myvar' = `varlist' if missing(`_myvar')
-		}
-	}
-	
-	if "`word'" != "" {
-		tempvar _part1 _part2 _words
-
-		gen `_words' = wordcount(`varlist')	
-		
-		gen `_part1' = "" 			if `_words' > `word' 
-		gen `_part2' = `varlist'	if `_words' > `word'
-		
-
-		forval i = 1 /`word' {
-			replace `_part1' = `_part1' + word(`varlist', `i') + " " 				 if `_words' > `word'
-			replace `_part2' = trim(ustrregexrf(`_part2', word(`varlist', `i'), "", .)) if `_words' > `word'
-		}	
-		
-		replace `_myvar' = `_part1' + "`=char(10)'" + `_part2' if `_words' >  `word'
-		replace `_myvar' = trim(`varlist')                     if `_words' <=  `word'
-		
-	}
-	
-	*if "`generate'"=="" & "`replace'"!="" {
-	*	replace `varlist' = `_myvar'
-	*	drop _labsplit
-	*}
-	
-	
-	
-}	
-	
+    tempvar output words current token length
+    quietly {
+        generate strL `output' = ""
+        generate long `words' = wordcount(`varlist') if `touse'
+        if "`word'" != "" {
+            generate strL `current' = trim(`varlist') if `touse'
+            forvalues i = 1/`word' {
+                replace `output' = `output' + word(`varlist', `i') + " " ///
+                    if `touse' & `words' > `word'
+                replace `current' = ustrregexrf(`current', "^\s*\S+\s*", "") ///
+                    if `touse' & `words' > `word'
+            }
+            replace `output' = `output' + char(10) + `current' ///
+                if `touse' & `words' > `word'
+            replace `output' = trim(`varlist') if `touse' & `words' <= `word'
+        }
+        else if "`strict'" != "" {
+            generate long `length' = ustrlen(`varlist') if `touse'
+            summarize `length', meanonly
+            if r(N) > 0 {
+                local chunks = ceil(r(max) / `wrap')
+                if `chunks' > 0 {
+                    forvalues i = 1/`chunks' {
+                        local start = (`i' - 1) * `wrap' + 1
+                        replace `output' = `output' + ///
+                            cond(`i' > 1, char(10), "") + ///
+                            usubstr(`varlist', `start', `wrap') ///
+                            if `touse' & `length' >= `start'
+                    }
+                }
+            }
+        }
+        else {
+            generate strL `current' = word(`varlist', 1) if `touse'
+            generate strL `token' = ""
+            summarize `words', meanonly
+            if r(N) > 0 {
+                local items = r(max)
+                if `items' >= 2 {
+                    forvalues i = 2/`items' {
+                        replace `token' = word(`varlist', `i') if `touse'
+                        replace `output' = `output' + `current' + char(10) ///
+                            if `touse' & `token' != "" & ///
+                            ustrlen(`current') + ustrlen(`token') + 1 > `wrap'
+                        replace `current' = cond(ustrlen(`current') + ///
+                            ustrlen(`token') + 1 > `wrap', `token', ///
+                            `current' + " " + `token') if `touse' & `token' != ""
+                    }
+                }
+            }
+            replace `output' = `output' + `current' if `touse'
+        }
+        if "`replace'" != "" {
+            capture confirm variable `generate'
+            if !_rc drop `generate'
+        }
+        rename `output' `generate'
+    }
 end
-
-
-**** END OF DOFILE ****

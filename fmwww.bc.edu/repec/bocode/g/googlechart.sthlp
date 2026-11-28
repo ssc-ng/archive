@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 0.1.7  2026-11-12}{...}
+{* *! version 0.1.8  2026-11-26}{...}
 {vieweralsosee "[G] graph" "help graph"}{...}
 {vieweralsosee "sparkta2" "help sparkta2"}{...}
 {viewerjumpto "Syntax" "googlechart##syntax"}{...}
@@ -225,6 +225,7 @@ Texas county / school-district choropleth, use sparkta2.{p_end}
 
 {phang}{bf:No native diverging-bar mode.}  The {cmd:divbar} type fakes it
 by sign-flipping the negative-side levels and stacking via {cmd:isStacked}.
+The {cmd:centerlevel()} share is split, half on each side of zero.
 Axis ticks display absolute values via custom {it:format} so readers see
 "40%, 20%, 0%, 20%, 40%" rather than negative numbers on the left half.{p_end}
 

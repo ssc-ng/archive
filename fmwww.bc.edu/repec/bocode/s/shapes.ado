@@ -1,6 +1,7 @@
-*! shapes v1.4 (19 Nov 2025)
+*! shapes v1.5 (06 Nov 2026)
 *! Asjad Naqvi (asjadnaqvi@gmail.com)
 
+* v1.5 (06 Nov 2026): Stata 15 minimum. Fixed separator allocation, custom square names, grouped rotation, polygon area, and rounding outputs; preserve user variables and validate subcommands and parameters.
 * v1.4 (19 Nov 2025): major upgrades to various functions. translate, dilate, stretch, round added.
 * v1.3 (05 Nov 2024): add append as sub for stack. Added square.
 * v1.2 (15 Oct 2024): added support for generating pies. added x0,y0 to control center points.
@@ -14,8 +15,12 @@ cap program drop shapes
 
 program define shapes
  
-version 11
+version 15
 	gettoken subcmd 0: 0, parse(", ")
+    if !inlist("`subcmd'", "circle", "pie", "square", "rotate", "stretch", "round", "translate", "dilate", "area") {
+        display as error "Unknown shapes subcommand: `subcmd'. See help shapes."
+        exit 198
+    }
 
 	// draw //
 	if "`subcmd'" == "circle" 		_circle  `0'
@@ -40,9 +45,13 @@ end
 **************
 
 program define _circle 
-version 11
+version 15
 
- 	syntax, RADius(numlist max=1 >0) [ x0(real 0) y0(real 0) n(real 100) ROtate(real 0) genx(string) geny(string) genid(string) genorder(string) replace stack append  ] 
+	syntax, RADius(numlist max=1 >0) [ x0(real 0) y0(real 0) n(integer 100) ROtate(real 0) genx(name) geny(name) genid(name) genorder(name) replace stack append ]
+    if missing(`n', `x0', `y0', `rotate') | `n' < 3 {
+        display as error "n() must be at least 3; center and rotation must be nonmissing."
+        exit 198
+    }
 
 	
 quietly {	
@@ -89,14 +98,14 @@ quietly {
 		else {
 			local start = 1
 			local end = `=`n' + 2'
-			if _N < `n' set obs `end'			
+			if _N < `end' set obs `end'
 		}
 		
 	} 
 	else {
 		local start = 1
 		local end = `=`n' + 2'
-		if _N < `n' set obs `end'
+		if _N < `end' set obs `end'
 	}
 	
 	
@@ -152,9 +161,9 @@ end
 **************
 
 program define _pie
- version 11
+ version 15
  
-    syntax, RADius(numlist max=1 >0) end(numlist max=1) [ x0(real 0) y0(real 0) n(real 30) ROtate(real 0) ] ///
+    syntax, RADius(numlist max=1 >0) end(numlist max=1) [ x0(real 0) y0(real 0) n(integer 30) ROtate(real 0) ] ///
 			[ start(numlist max=1)  genx(string) geny(string) genid(string) genorder(string) replace stack dropbase append flip  ]
 
     
@@ -164,17 +173,11 @@ program define _pie
 	local idvar _id
 	local ordervar _order
 	
-	if `n' < 2 {
+	if missing(`n', `x0', `y0', `rotate') | `n' < 2 {
 		display as error "n() should be greater or equal to 2."
-		exit
+		exit 198
 	}
-	
-	if "`replace'" != "" {
-		cap drop `xvar'
-		cap drop `yvar'
-		cap drop `idvar'
-		cap drop `ordervar'
-	}		
+    if "`start'" == "" local start 0
 	
 	if "`genx'" 	!= "" local xvar 	 `genx'
 	if "`geny'" 	!= "" local yvar 	 `geny'				
@@ -219,14 +222,14 @@ quietly {
 		else {
 			local start = 1
 			local end = `=`n' + 4'
-			if _N < `n' set obs `end'			
+			if _N < `end' set obs `end'
 		}
 		
 	} 
 	else {
 		local start = 1
 		local end = `=`n' + 4'
-		if _N < `n' set obs `end'
+		if _N < `end' set obs `end'
 	}
 	
 	summ `idvar', meanonly
@@ -284,10 +287,14 @@ end
 ** rotation taken out. do it this in the second step.
 
 program define _square
- version 11
+ version 15
 
      syntax, [ x0(numlist max=1) y0(numlist max=1) LENgth(real 10) ROtate(real 0)  ] ///
 			[ genx(string) geny(string) genid(string) genorder(string) replace stack append  ]
+    if missing(`length', `rotate') | `length' <= 0 {
+        display as error "length() must be positive and rotate() must be nonmissing."
+        exit 198
+    }
  
  
  	// prepare the variables
@@ -334,14 +341,14 @@ quietly {
 		else {
 			local start = 1
 			local end = `=`n' + 2'
-			if _N < `n' set obs `end'			
+			if _N < `end' set obs `end'
 		}
 		
 	} 
 	else {
 		local start = 1
 		local end = `=`n' + 2'
-		if _N < `n' set obs `end'
+		if _N < `end' set obs `end'
 	}
 	
 	summ `idvar', meanonly
@@ -377,8 +384,8 @@ quietly {
 	replace `yvar' = ( `length' / 2) in `=`start' + 4' 		
 	
 	
-	replace _y = _y  + `y0' in `start' / `=`start' + 4'
-	replace _x = _x  + `x0' in `start' / `=`start' + 4' 
+	replace `yvar' = `yvar' + `y0' in `start' / `=`start' + 4'
+	replace `xvar' = `xvar' + `x0' in `start' / `=`start' + 4'
  
  	// rotation
 	
@@ -413,7 +420,7 @@ cap program drop _rotate
 
 program _rotate, sortpreserve
 
-version 11
+version 15
 	
 	syntax varlist(numeric min=2 max=2) [if] [in],  [ ROtate(real 0) by(varname) x0(real 0) y0(real 0) replace genx(string) geny(string) center ] 
  
@@ -427,15 +434,15 @@ quietly {
 
 	if "`center'" != "" {
 		if "`by'" == "" {
-			summ `varx', meanonly
+			summ `varx' if `touse', meanonly
 			local x0 = (`r(min)' + `r(max)') / 2
 
-			summ `vary', meanonly
+			summ `vary' if `touse', meanonly
 			local y0 = (`r(min)' + `r(max)') / 2
 		}
 		else {
 			tempvar _meanx _meany _minx _miny _maxx _maxy
-			sort `by' _id _order
+			sort `by', stable
 			
 			by `by': egen double `_minx' = min(`varx') if `touse'
 			by `by': egen double `_miny' = min(`vary') if `touse'
@@ -463,7 +470,7 @@ quietly {
 	
 	tempvar _x0 _y0 x_rot_t y_rot_t
 	
-	if "`by'" != "" {  // by() defined
+	if "`by'" != "" & "`center'" != "" {
 		local x0 `_meanx'
 		local y0 `_meany'
 	}
@@ -503,7 +510,7 @@ cap program drop _stretch
 
 program _stretch, sortpreserve
 
-version 11
+version 15
 
 	
 	syntax varlist(numeric min=2 max=2) [if] [in],  [ x(numlist max=1 >0) y(numlist max=1 >0) replace ] 
@@ -536,8 +543,8 @@ cap program drop _area
 program _area, sortpreserve
 
 
-version 11
-	syntax varlist(numeric min=2 max=2),  [ by(varname) replace GENerate(string) ] 
+version 15
+	syntax varlist(numeric min=2 max=2), [by(varname) replace GENerate(name)]
 	
 	tokenize `varlist'
 	local y `1'
@@ -547,14 +554,39 @@ quietly {
 	local myvar _area
 	
 	if "`generate'" != "" local myvar `generate'
-	if "`replace'"  != "" capture drop `myvar'
-			
-	tempvar _values
-	
-	bysort `by': gen double `_values' = ((`y' * `x'[_n+1]) - (`y'[_n+1] * `x')) /2
-	bysort `by': replace    `_values' = ((`y' * `x'[2])    - (`y'[2]    * `x')) /2 if `_values'!=.
-	
-	bysort `by': egen double `myvar' = sum(`_values')
+    local inputs `varlist' `by'
+    local overlap : list myvar & inputs
+    if "`overlap'" != "" {
+        noisily display as error "Area output must not overwrite input variables."
+        exit 198
+    }
+    if "`replace'" == "" confirm new variable `myvar'
+    tempvar sequence group valid rank firstx firsty last values result
+    generate long `sequence' = _n
+    if "`by'" == "" {
+        generate byte `group' = 1
+        local by `group'
+    }
+    sort `by' `sequence'
+    generate byte `valid' = !missing(`x', `y')
+    by `by': generate long `rank' = sum(`valid')
+    by `by': egen double `firstx' = max(cond(`valid' & `rank' == 1, `x', .))
+    by `by': egen double `firsty' = max(cond(`valid' & `rank' == 1, `y', .))
+    by `by': egen long `last' = max(cond(`valid', `rank', .))
+    // Place separators after vertices without changing their drawing order.
+    sort `by' `valid' `sequence'
+    by `by': generate double `values' = ///
+        (`x' * `y'[_n+1] - `x'[_n+1] * `y') / 2 if `valid'
+    replace `values' = (`x' * `firsty' - `firstx' * `y') / 2 ///
+        if `valid' & `rank' == `last'
+    by `by': egen double `result' = total(`values')
+    replace `result' = abs(`result') if `last' >= 3
+    replace `result' = . if missing(`last') | `last' < 3
+    if "`replace'" != "" {
+        capture confirm variable `myvar'
+        if !_rc drop `myvar'
+    }
+    rename `result' `myvar'
 }
 	
 end
@@ -569,8 +601,12 @@ cap program drop _round
 
 program _round, sortpreserve
 
-	version 11
-	syntax varlist(numeric min=2 max=2) [if] [in], Roundness(numlist max=1 >0) [ n(real 20) Factor(real 1.3) genx(string) geny(string) genid(string) genorder(string) gensegvar(string) replace stack append  ] 
+	version 15
+	syntax varlist(numeric min=2 max=2) [if] [in], Roundness(numlist max=1 >0) [ n(integer 20) Factor(real 1.3) genx(name) geny(name) genid(name) genorder(name) gensegvar(name) replace stack append ]
+    if missing(`n', `factor') | `n' < 5 | `factor' <= 0 | `factor' > 2 {
+        display as error "n() must be at least 5; factor() must be in (0,2]."
+        exit 198
+    }
 
 	tokenize `varlist'
 	local vary `1'
@@ -586,7 +622,20 @@ program _round, sortpreserve
 	if "`geny'" 		!= "" local yvar 	 `geny'				
 	if "`genid'" 		!= "" local idvar 	 `genid'				
 	if "`genorder'" 	!= "" local ordervar `genorder'				
-	if "`gensegvar'" 	!= "" local segvar 	 `segorder'	
+	if "`gensegvar'" 	!= "" local segvar 	 `gensegvar'
+    local outputs `xvar' `yvar' `idvar' `ordervar' `segvar'
+    local unique : list uniq outputs
+    local overlap : list outputs & varlist
+    if wordcount("`unique'") != 5 | "`overlap'" != "" {
+        display as error "Output names must be distinct and different from input variables."
+        exit 198
+    }
+    marksample touse
+    quietly count if `touse'
+    if r(N) < 4 {
+        display as error "At least four complete points of a closed polygon are required."
+        exit 2001
+    }
 	
 quietly {	
 	
@@ -605,25 +654,19 @@ quietly {
 	cap generate 		 `ordervar' = .
 	
 	
-	marksample touse, strok novarlist
-	
-
 	// segmentize and shorten
 	count if !missing(`varx') & `touse'==1
 	local last = `r(N)' - 1
 	
 	count if !missing(`idvar')
 	
-	capture set obs `=`r(N)' + `last' * 3'
+    local needed = r(N) + `last' * 3
+    if _N < `needed' set obs `needed'
 	
 	local counter = 1 
 	
-	cap drop _ones
-	cap drop _counter
-	
-	gen _ones = 1 if `touse'==1
-	gen _counter = sum(_ones) if `touse'==1
-	drop _ones
+    tempvar counter
+    generate long `counter' = sum(`touse') if `touse' == 1
 	
 	
 	forval i = 1/`last' {
@@ -634,16 +677,16 @@ quietly {
 		local end 	= `=`i'+1'	
 		
 		// seg start //
-		summ `vary' if _counter == `start', meanonly
+		summ `vary' if `counter' == `start', meanonly
 		local y0 = r(min)
-		summ `varx' if _counter == `start', meanonly
+		summ `varx' if `counter' == `start', meanonly
 		local x0 = r(min)
 		
 
 		// seg end //
-		summ `vary' if _counter == `end', meanonly
+		summ `vary' if `counter' == `end', meanonly
 		local y1 = r(min)
-		summ `varx' if _counter == `end', meanonly
+		summ `varx' if `counter' == `end', meanonly
 		local x1 = r(min)
 		
 		
@@ -673,16 +716,16 @@ quietly {
 		
 	
 		// seg start //
-		summ `vary' if _counter == `start', meanonly
+		summ `vary' if `counter' == `start', meanonly
 		local y0 = r(min)
-		summ `varx' if _counter == `start', meanonly
+		summ `varx' if `counter' == `start', meanonly
 		local x0 = r(min)
 		
 
 		// seg end //
-		summ `vary' if _counter == `end', meanonly
+		summ `vary' if `counter' == `end', meanonly
 		local y1 = r(min)
-		summ `varx' if _counter == `end', meanonly
+		summ `varx' if `counter' == `end', meanonly
 		local x1 = r(min)
 		
 		
@@ -717,7 +760,6 @@ quietly {
 		arc, x1(`arcx0') y1(`arcy0') x2(`arcx1') y2(`arcy1') n(`n') rad(`rad') genx(`xvar') geny(`yvar') genid(`segvar') genorder(`ordervar') append dropbase
 
 		
-		*/
 		
 	}
 	
@@ -726,7 +768,7 @@ quietly {
 		
 	qui count if !missing(`ordervar')
 	local maxobs = r(N)
-	cap set obs `=`maxobs' + 2'
+    if _N < `maxobs' + 2 set obs `=`maxobs' + 2'
 	
 	replace `xvar'     = `startx'   in `=`maxobs' + 1' 
 	replace `yvar'     = `starty'   in `=`maxobs' + 1'
@@ -740,8 +782,6 @@ quietly {
 	replace `ordervar' = 2 				in `=`maxobs' + 2'
 	
 	
-	cap drop _ones 
-	cap drop _counter
 
 	
 	summ `idvar', meanonly
@@ -765,7 +805,7 @@ cap program drop _translate
 
 program _translate, sortpreserve
 
-	version 11
+	version 15
 	syntax varlist(numeric min=2 max=2) [if] [in], [ x(numlist max=1) y(numlist max=1) genx(string) geny(string) replace   ] 
 
 	tokenize `varlist'
@@ -828,6 +868,7 @@ end
 capture program drop _dilate
 
 program define _dilate
+    version 15
 
     syntax varlist(min=2 max=2 numeric) [if] [in], [ Factor(numlist max=1) genx(string) geny(string)  replace]
 
@@ -868,10 +909,4 @@ end
 *********************************
 ******** END OF PROGRAM *********
 *********************************
-
-
-
-
-
-
 

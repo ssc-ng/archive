@@ -1,4 +1,4 @@
-*! version 0.8.4  09nov2026  Eric Booth
+*! version 0.8.5  26nov2026  Eric Booth
 *! _sm_renderband -- the status band chart (chronogram) of a surveymap journal.
 *!
 *! One thin column per item, in questionnaire order, each split into answered
@@ -264,7 +264,11 @@ program define _sm_renderband, rclass
     if `"`note'"' == "" {
         if "`area'" == "" local unit "Each column is one item."
         else              local unit "One column of the band per item, in questionnaire order."
-        local note "`unit' Bands are shares of `denword'; every column sums to 100%. Source: `using'."
+        * name the journal by its file name: the remembered journal is an
+        * absolute path (0.8.4), which would run off the figure
+        local jsep = max(strrpos(`"`using'"', "/"), strrpos(`"`using'"', char(92)))
+        local jname = substr(`"`using'"', `jsep' + 1, .)
+        local note "`unit' Bands are shares of `denword'; every column sums to 100%. Source: `jname'."
     }
 
     local leg `"legend(order(1 "Answered" 2 "Declined" 3 "Not shown") rows(1) pos(6) region(lwidth(none)) size(*.85) symxsize(*.5) symysize(*.5))"'

@@ -1,4 +1,4 @@
-*! version 0.8.4  09nov2026  Eric Booth
+*! version 0.8.5  26nov2026  Eric Booth
 *! _sm_draw -- dispatcher behind -surveymap draw-.  Resolves which journal to
 *! draw, picks the renderer from export(), applies the read-time prune rules,
 *! and handles the open-in-browser courtesy for HTML output.

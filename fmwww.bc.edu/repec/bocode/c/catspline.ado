@@ -1,6 +1,7 @@
-*! catspline v1.21 (25 Aug 2025): Fixed marksample bug.
+*! catspline v1.31 (06 Nov 2026)
 *! Asjad Naqvi (asjadnaqvi@gmail.com)
 
+* v1.31 (06 Nov 2026): Stata 15 minimum. Validate samples, n(), and output names; reject adjacent duplicate points before replacing outputs. Stable sort().
 * v1.21 (25 Aug 2025): Fixed _id bug which was not correct set to the local.
 * v1.2  (18 Feb 2025): Fixed marksample bug.
 * v1.1  (28 Nov 2024): Fix an issue with observations stacking. Fixed a minor bug in sort. Added a sort(), replace variable.
@@ -17,9 +18,9 @@ cap program drop catspline
 
 program catspline, sortpreserve
 
-version 11
+version 15
  
-	syntax varlist(numeric min=2 max=2) [if] [in], [ rho(numlist max=1 >=0 <=1) n(real 40) close noid genx(string) geny(string) genid(string) genorder(string) sort(varlist max=1) replace ] 
+	syntax varlist(numeric min=2 max=2) [if] [in], [ rho(numlist max=1 >=0 <=1) n(integer 40) close noid genx(name) geny(name) genid(name) genorder(name) sort(varlist max=1) replace ]
  
 	
 	// prepare the variables
@@ -34,22 +35,24 @@ version 11
 	if "`genorder'" != "" local ordervar `genorder'			
 	
 	
-	if "`replace'" != "" {
-		cap drop `xvar'
-		cap drop `yvar'
-		cap drop `idvar'
-		cap drop `ordervar'
-	}		
-	
-
-	cap confirm var `idvar'
-	if !_rc {
-			display as error "Variable {it:`idvar'} already exists. Use {it:replace} to overwrite."
-			exit
-	} 	
-	
-	
-	marksample touse, strok
+    if missing(`n') | `n' < 5 {
+        display as error "n() must be at least 5."
+        exit 198
+    }
+    local outputs `xvar' `yvar' `idvar' `ordervar'
+    local unique : list uniq outputs
+    local inputs `varlist' `sort'
+    local overlap : list outputs & inputs
+    if wordcount("`unique'") != 4 | "`overlap'" != "" {
+        display as error "Output names must be distinct and different from input variables."
+        exit 198
+    }
+    if "`replace'" == "" {
+        foreach output of local outputs {
+            confirm new variable `output'
+        }
+    }
+	marksample touse
 	
 quietly {
 preserve	
@@ -68,7 +71,17 @@ preserve
 	drop if missing(`vary')
 
 
-	if "`sort'" != "" sort `sort'
+	if "`sort'" != "" sort `sort', stable
+    if _N < 3 {
+        noisily display as error "At least three complete control points are required."
+        exit 2001
+    }
+    count if (`varx' == `varx'[_n-1] & `vary' == `vary'[_n-1]) | ///
+        (_n == _N & `varx' == `varx'[1] & `vary' == `vary'[1])
+    if r(N) > 0 {
+        noisily display as error "Adjacent control points (including last to first) must be distinct."
+        exit 459
+    }
 	
 	gen pts = _n
 	order pts
@@ -78,7 +91,7 @@ preserve
  
     if `n' < 5 {
         display as error "The number of points n() must be greater than 5."
-        exit
+        exit 198
     }
  
  
@@ -200,6 +213,12 @@ preserve
 	local block2 = r(max)
 
 restore	
+    if "`replace'" != "" {
+        foreach output of local outputs {
+            capture confirm variable `output'
+            if !_rc drop `output'
+        }
+    }
 
 	local obs2 = `block1' * `block2'
 	if _N < `obs2' set obs `obs2'
@@ -209,8 +228,6 @@ restore
 	
 	merge m:1 `idvar' `ordervar' using `mysplines'	
 	drop _merge
-	
-*/
 	
 }	
 	

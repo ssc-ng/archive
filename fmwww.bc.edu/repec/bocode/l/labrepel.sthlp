@@ -1,6 +1,6 @@
 {smcl}
-{* 08Mar2026}{...}
-{hi:help labrepel v1.0}{...}
+{* 06Nov2026}{...}
+{hi:help labrepel v1.1}{...}
 {right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions (GitHub)}}
 
 {hline}
@@ -62,7 +62,7 @@ This program is currently in {it:beta}. It is inspired by R ggrepel function, an
 
 {p2coldent : {opt jit:ter(num)}}Random perturbation for breaking symmetric force cancellation in dense clusters. Default is {opt jitter(0)}.{p_end}
 
-{p2coldent : {opt seed(int)}}Random seed used with {opt jitter()} for reproducible placement.{p_end}
+{p2coldent : {opt seed(int)}}Sets Stata's random-number seed.{p_end}
 
 
 {marker position}{dlgtab:Position control}
@@ -93,7 +93,6 @@ This program is currently in {it:beta}. It is inspired by R ggrepel function, an
 {p2coldent : {opt nodetail}}Suppress detailed diagnostics. By default, detailed output is shown.{p_end}
 
 {synoptline}
-{p2colreset}{...}
 
 
 {title:Stored results}
@@ -105,6 +104,8 @@ This program is currently in {it:beta}. It is inspired by R ggrepel function, an
 {p2coldent:{cmd:r(n_labels)}}number of non-empty labels processed{p_end}
 {p2coldent:{cmd:r(iterations)}}number of iterations completed{p_end}
 {p2coldent:{cmd:r(direction)}}movement direction used ({it:both}, {it:x}, or {it:y}){p_end}
+{p2coldent:{cmd:r(version)}}command version ({cmd:1.1}){p_end}
+{p2coldent:{cmd:r(date)}}command release date ({cmd:20261106}){p_end}
 
 {p2col 5 20 24 2: Variables created}{p_end}
 {p2coldent:{cmd:_xcoord}}adjusted x coordinates for label positions{p_end}
@@ -124,8 +125,8 @@ Please submit bugs, errors, feature requests on {browse "https://github.com/asja
 
 {title:Package details}
 
-Version      : {bf:labrepel} v1.0 in {stata help graphfunctions:graphfunctions}
-This release : 08 Mar 2026
+Version      : {bf:labrepel} v1.1 in {stata help graphfunctions:graphfunctions}
+This release : 06 Nov 2026
 First release: 08 Mar 2026
 Repository   : {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}
 Keywords     : Stata, graph, labels, repulsion, force-directed layout
@@ -150,4 +151,3 @@ Please note that the GitHub version might be newer than the SSC version.
 	{helpb sunburst}, {helpb ternary}, {helpb tidytuesday}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}, {helpb vcontrol}
 
 Visit {browse "https://github.com/asjadnaqvi":GitHub} for further details.
-

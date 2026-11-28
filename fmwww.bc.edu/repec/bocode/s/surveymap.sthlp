@@ -1,5 +1,5 @@
 {smcl}
-{* *! version 0.8.4  09nov2026  Eric Booth}{...}
+{* *! version 0.8.5  26nov2026  Eric Booth}{...}
 {vieweralsosee "datadictionary" "help datadictionary"}{...}
 {vieweralsosee "mergemap" "help mergemap"}{...}
 {vieweralsosee "tabulate" "help tabulate"}{...}
@@ -64,6 +64,11 @@ And keep the numbers as a workbook:{p_end}
 
 {marker install}{...}
 {title:Installation}
+
+{phang2}{cmd:. ssc install surveymap}{p_end}
+
+{pstd}
+The development version installs from the GitHub repository:{p_end}
 
 {phang2}{cmd:. net install surveymap, from("https://raw.githubusercontent.com/ericabooth/surveymap-stata-public/main/") replace force}{p_end}
 

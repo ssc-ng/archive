@@ -1,5 +1,5 @@
 {smcl}
-{* 28Sep2024}{...}
+{* 06Nov2026}{...}
 {hi:help labsplit}{...}
 {right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions (GitHub)}}
 
@@ -13,7 +13,7 @@
 {marker syntax}{title:Syntax}
 
 {p 8 15 2}
-{cmd:labsplit} {it:variable}, {cmd:[} {cmd:wrap}({it:int}) {cmd:word}({it:int}) {cmd:strict} {cmdab:gen:erate}({it:newvar}) {cmd:]}
+{cmd:labsplit} {it:variable} {ifin}, {cmd:[} {cmd:wrap}({it:int}) {cmd:n}({it:int}) {cmd:word}({it:int}) {cmd:strict} {cmdab:gen:erate}({it:newvar}) {cmd:replace} {cmd:]}
 
 
 {synoptset 36 tabbed}{...}
@@ -27,10 +27,17 @@ unless {opt strict} is specified.{p_end}
 
 {p2coldent : {opt strict}}This option will chop off words defined by {opt wrap()} to maintain a strict text length per line.{p_end}
 
+{p2coldent : {opt n(int)}}Alias for {opt wrap()}; specify only one.{p_end}
+
 {p2coldent : {opt word(int)}}Wrap at the {it:int-th} word.{p_end}
 
 {p2coldent : {opt gen:erate(newvar)}}Generate a new variable name with wrapped labels. If not specified, the program will 
 save a new variable called {it:_labsplit}.{p_end}
+
+{p2coldent : {opt replace}}Overwrite the output variable. Exactly one of
+{opt wrap()} (or {opt n()}) and {opt word()} must be specified.
+
+{opt strict} requires {opt wrap()} or {opt n()}.{p_end}
 
 {synoptline}
 {p2colreset}{...}
@@ -43,8 +50,8 @@ See {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}.
 
 {title:Package details}
 
-Version      : {bf:labsplit} v1.1 in {stata help graphfunctions:graphfunctions}
-This release : 08 Oct 2024
+Version      : {bf:labsplit} v1.3 in {stata help graphfunctions:graphfunctions}
+This release : 06 Nov 2026
 First release: 28 Sep 2024
 Repository   : {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}
 Keywords     : Stata, graph, label wrap, text wrap, word wrap
@@ -73,6 +80,5 @@ See {stata help graphfunctions:graphfunctions}.
 	{helpb marimekko}, {helpb polarspike}, {helpb sankey}, {helpb schemepack}, {helpb spider}, {helpb splinefit}, {helpb streamplot}, {helpb sunburst}, {helpb ternary}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}
 
 or visit {browse "https://github.com/asjadnaqvi":GitHub}.
-
 
 

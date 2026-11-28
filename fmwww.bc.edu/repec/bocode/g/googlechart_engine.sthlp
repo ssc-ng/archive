@@ -342,7 +342,7 @@
     }
 
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: W, height: H,
       hAxis: {
         title: meta.xlabel || "",
@@ -445,7 +445,7 @@
     });
 
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: W, height: H,
       seriesType: defaultType,
       series: seriesOpts,
@@ -485,7 +485,7 @@
     var legendPos = meta.labelwrap === "outside" ? "labeled"
                    : (meta.legendpos || "bottom");
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: +meta.width || 640, height: +meta.height || 520,
       pieHole: isDonut ? (+meta.innerradius || 0.45) : 0,
       legend: { position: legendPos, alignment: "center",
@@ -553,7 +553,7 @@
       });
     }
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width:  +meta.width  || 980,
       height: +meta.height || 644,
       hAxis: { title: meta.xlabel || "" },
@@ -622,7 +622,7 @@
     var yw = ys.length ? padded(ys) : null;
 
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: +meta.width || 980, height: +meta.height || 560,
       hAxis: { title: meta.xlabel || "", viewWindow: xw },
       vAxis: { title: meta.ylabel || "", viewWindow: yw },
@@ -768,7 +768,7 @@
     });
 
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: +meta.width || 980, height: +meta.height || 560,
       region: region === "WORLD" ? "world" : region,
       resolution: resolution,
@@ -802,7 +802,7 @@
       dt.addRow([String(r.name || ""), String(r.g || r.name || ""), s, e]);
     });
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: +meta.width || 980, height: +meta.height || 560,
       backgroundColor: "transparent",
       timeline: { showRowLabels: true, colorByRowLabel: false,
@@ -882,7 +882,7 @@
     cols.forEach(function (c, i) { if (c.type === "number") numericCols.push(i); });
 
     var opts = {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       // Intentionally NOT setting `width' for tables -- Google's default
       // is to fill the container, which then plays nicely with the
       // per-cell min-widths + .gc-table-wrap overflow-x:auto.  When a
@@ -1013,7 +1013,7 @@
       data.forEach(function (r, i) { dt.addRow([String(r.name || i+1), +r.value]); });
     }
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: +meta.width || 980, height: +meta.height || 560,
       legend: { position: hasGroup ? "bottom" : "none" },
       histogram: { bucketSize: meta.bucketsize > 0 ? +meta.bucketsize : "auto" },
@@ -1035,8 +1035,8 @@
   //   Pew-style diverging stacked bar.  Google Charts has no
   //   native diverging mode; we fake it with isStacked:true and
   //   sign-flipped negative-side series.  Center level (e.g.
-  //   "Neutral") is split 50/50 across the midline via an
-  //   invisible "spacer" series.
+  //   "Neutral") is split 50/50 across the midline as two
+  //   half-share series.
   // ============================================================
   function renderDivbar(meta, data) {
     var levels = (meta.levelorder || "").split("|").filter(Boolean);
@@ -1082,30 +1082,49 @@
     }
     var displayItems = items.map(function (it) { return wrapLabel(it, wrapW); });
 
-    // Build the wide row layout.  Order: negs (in reverse so dark-neg
-    // sits at the far left), center-half, then pos.  Negatives are
-    // sign-flipped so they stack to the left of baseline.
+    // Build the wide row layout.  Google Charts stacks each sign outward
+    // from zero in series order, so the negative series run from the
+    // center out (center-half, then negs in reverse so the strongest
+    // level sits at the far left) and the positive series likewise
+    // (center-half, then pos).  Negatives are sign-flipped so they stack
+    // to the left of baseline.  The center level is split into two
+    // half-share series, one each side of zero; their tooltips show the
+    // full share.
     var negOrder = negs.slice().reverse();
+    // The legend lists series in column order, which here is not the
+    // level order, so the drawn series stay out of the legend and one
+    // zero-valued series per level, in level order, carries the legend.
+    var legendLevels = negs.concat(centerLevel ? [centerLevel] : []).concat(pos);
     var dt = new google.visualization.DataTable();
     dt.addColumn("string", meta.namelabel || "Item");
+    legendLevels.forEach(function (lv) { dt.addColumn("number", String(lv)); });
+    if (centerLevel) dt.addColumn("number", String(centerLevel));
     negOrder.forEach(function (lv) { dt.addColumn("number", String(lv)); });
-    if (centerLevel) {
-      dt.addColumn("number", String(centerLevel));
-    }
+    if (centerLevel) dt.addColumn("number", String(centerLevel));
     pos.forEach(function (lv) { dt.addColumn("number", String(lv)); });
 
+    function share(it, lv) { var v = byItem[it][lv]; return v == null ? 0 : +v; }
     items.forEach(function (it, idx) {
       var row = [String(displayItems[idx])];
-      negOrder.forEach(function (lv) {
-        var v = byItem[it][lv]; row.push(v == null ? 0 : -Math.abs(+v));
-      });
-      if (centerLevel) {
-        var v = byItem[it][centerLevel]; row.push(v == null ? 0 : +v);
-      }
-      pos.forEach(function (lv) {
-        var v = byItem[it][lv]; row.push(v == null ? 0 : +v);
-      });
+      legendLevels.forEach(function () { row.push(0); });
+      var half = centerLevel ? share(it, centerLevel) / 2 : 0;
+      var ctrF = centerLevel ? String(share(it, centerLevel)) : "";
+      if (centerLevel) row.push({ v: -half, f: ctrF });
+      negOrder.forEach(function (lv) { row.push(-Math.abs(share(it, lv))); });
+      if (centerLevel) row.push({ v: half, f: ctrF });
+      pos.forEach(function (lv) { row.push(share(it, lv)); });
       dt.addRow(row);
+    });
+
+    // Data table / CSV: the shares as given, one column per level in
+    // level order (not the drawing columns above).
+    var exportDt = new google.visualization.DataTable();
+    exportDt.addColumn("string", meta.namelabel || "Item");
+    legendLevels.forEach(function (lv) { exportDt.addColumn("number", String(lv)); });
+    items.forEach(function (it) {
+      var row = [String(it)];
+      legendLevels.forEach(function (lv) { row.push(share(it, lv)); });
+      exportDt.addRow(row);
     });
 
     // Compute chartArea.left from the widest wrapped-label line so labels
@@ -1118,8 +1137,9 @@
     });
     var leftPad = Math.min(Math.max(80, Math.ceil(maxLineLen * 6.5) + 20), 380);
 
-    // Build the diverging palette: reds for negatives (darker at extreme),
-    // a neutral grey for center, blues for positives.
+    // Build the diverging palette: reds for negatives, a neutral grey for
+    // center, blues for positives; on each side the color darkens from the
+    // center out, so the strongest level gets the darkest color.
     var palette = paletteFor(meta);
     function divColors(n, isLeft) {
       // pick n colors from the palette ends
@@ -1128,18 +1148,34 @@
         : ["#bbd8eb","#7eb0d2","#3b86ba","#10487f"];
       var out = [];
       for (var i = 0; i < n; i++) out.push(bank[Math.min(i, bank.length-1)]);
-      return out;
+      // Left bank runs dark -> light, so reverse it into center-out order.
+      return isLeft ? out.reverse() : out;
     }
-    var colors = []
-      .concat(divColors(negOrder.length, true))
-      .concat(centerLevel ? ["#e2e8f0"] : [])
-      .concat(divColors(pos.length, false));
+    var negColors = divColors(negOrder.length, true);   // center-out
+    var posColors = divColors(pos.length, false);       // center-out
+    var ctrColor = "#e2e8f0";
+    var drawColors = []
+      .concat(centerLevel ? [ctrColor] : [])
+      .concat(negColors)
+      .concat(centerLevel ? [ctrColor] : [])
+      .concat(posColors);
+    var colors = negColors.slice().reverse()
+      .concat(centerLevel ? [ctrColor] : [])
+      .concat(posColors)
+      .concat(drawColors);
+    var series = {};
+    for (var si = 0; si < colors.length; si++) {
+      series[si] = si < legendLevels.length
+        ? { enableInteractivity: false }
+        : { visibleInLegend: false };
+    }
 
     var opts = deepMerge(brandOptions(meta), {
-      title: meta.title || "",
+      title: "",   // the page <h1> carries the title
       width: +meta.width || 980, height: +meta.height || 560,
       isStacked: true,
       colors: colors,
+      series: series,
       legend: { position: "top" },
       hAxis: {
         title: "",
@@ -1158,6 +1194,7 @@
     var container = document.getElementById("chart");
     var chart = new google.visualization.BarChart(container);
     return { type: "chart", className: "BarChart", chart: chart, dataTable: dt, opts: opts,
+             exportTable: function () { return exportDt; },
              draw: function () { chart.draw(dt, opts); } };
   }
   function buildDivbarTicks(items, byItem, negOrder, centerLevel, pos) {

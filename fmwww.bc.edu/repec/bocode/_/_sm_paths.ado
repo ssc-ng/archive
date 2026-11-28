@@ -1,4 +1,4 @@
-*! version 0.8.4  09nov2026  Eric Booth
+*! version 0.8.5  26nov2026  Eric Booth
 *! _sm_paths -- the response-flow view behind -surveymap paths-.
 *!
 *! The flow map (surveymap scan + draw) follows the ROUTING: who was shown

@@ -1,4 +1,4 @@
-*! version 0.8.4  09nov2026  Eric Booth
+*! version 0.8.5  26nov2026  Eric Booth
 *! _sm_renderflow -- draw a paths journal (pnode/pflow/ppath rows) as a
 *! self-contained HTML page: one column per item, one block per common
 *! answer, ribbons between consecutive columns sized by the people who gave

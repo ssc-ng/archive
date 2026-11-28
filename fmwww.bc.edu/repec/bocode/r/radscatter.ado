@@ -1,6 +1,7 @@
-*! radscatter (v1.0) (18 Nov 2025)
+*! radscatter (v1.1) (06 Nov 2026)
 *! Asjad Naqvi (asjadnaqvi@gmail.com)
 
+* v1.1 (06 Nov 2026): Stata 15 minimum. Fixed sample-based IDs, angles, and normalization, genheight(), and centering; validate radial values and output names.
 * v1.0 (17 Nov 2025): first release. Mark points and generate angles for a circle.
 
 
@@ -13,12 +14,32 @@ capture program drop radscatter
 
 program define radscatter
 
-	version 11
+	version 15
 
     syntax [ varlist(max=1 default=none numeric) ] [if] [in], [ ROtate(real 0) center Start(real 0) End(real 360) RADius(numlist max=1 >=0) flip DISplace(real 0) labangle genid(string) genx(string) geny(string) GENAngle(string) GENHeight(string) replace]
 
 
-	marksample touse, strok novarlist
+	marksample touse
+    quietly count if `touse'
+    local items = r(N)
+    if `items' == 0 {
+        display as error "No complete observations in the selected sample."
+        exit 2000
+    }
+    foreach option in rotate start end displace {
+        if missing(``option'') {
+            display as error "`option'() must be a nonmissing number."
+            exit 198
+        }
+    }
+    if "`varlist'" != "" {
+        quietly summarize `varlist' if `touse', meanonly
+        if r(min) < 0 | r(max) <= 0 {
+            display as error "Radial values must be nonnegative, with at least one positive value."
+            exit 198
+        }
+        local maxheight = r(max)
+    }
 	
 	
     // Parse inputs
@@ -33,7 +54,22 @@ program define radscatter
 	if "`genx'" 		!= "" local xvar  `genx'
 	if "`geny'" 		!= "" local yvar  `geny'				
 	if "`genangle'" 	!= "" local avar  `genangle'			
-	if "`genheight'" 	!= "" local avar  `genheight'		
+	if "`genheight'" 	!= "" local hvar  `genheight'
+
+    local outputs `idvar' `xvar' `yvar' `avar' `hvar'
+    local unique : list uniq outputs
+    local overlap : list outputs & varlist
+    if wordcount("`unique'") != 5 | "`overlap'" != "" {
+        display as error "Output names must be distinct and different from the input variable."
+        exit 198
+    }
+    foreach output of local outputs {
+        confirm name `output'
+        if "`replace'" == "" {
+            capture confirm variable `output'
+            if !_rc confirm numeric variable `output'
+        }
+    }
 
 	
 quietly {	
@@ -53,19 +89,9 @@ quietly {
 	cap generate double `hvar' = .
 	
 
-	replace `idvar' = .
-	
-
-	if "`varlist'" != "" {    
-		replace `idvar' = _n if !missing(`varlist')
-		count if !missing(`varlist') & `touse'
-		local items = `r(N)'
-	}
-	else {
-		replace `idvar' = _n if `touse'
-		count if !missing(`idvar')
-		local items = `r(N)'
-	}
+    tempvar sequence
+    generate long `sequence' = sum(`touse')
+    replace `idvar' = `sequence' if `touse'
 
 
 	if "`flip'" == "" {
@@ -84,7 +110,7 @@ quietly {
 	local rocenter = 0
 
 	if "`center'" != "" {
-		local rocenter = (((`start' + `end') / `items') / 2) * `mypi' / 180
+		local rocenter = `span' / (2 * `items')
 	}
 	
 	replace `avar' = ((`idvar' - 1) * `span' / (`items')) + `st' + `rocenter' + `ro'  if `touse'
@@ -94,8 +120,7 @@ quietly {
 	// note: displace is absolute and done after transformation to get consistent results. In percentage terms we get different displacements
 
 	if "`varlist'" != "" {
-		summ `varlist', meanonly
-		replace `hvar' = (`radius' * (`varlist' / `r(max)')) + `displace'  if `touse'
+		replace `hvar' = (`radius' * (`varlist' / `maxheight')) + `displace' if `touse'
 	}
 	else {
 		replace `hvar' = (`radius' + `displace')  if `touse'
@@ -129,7 +154,5 @@ quietly {
 	
 	
 }
-	
-	*/
 	
 end

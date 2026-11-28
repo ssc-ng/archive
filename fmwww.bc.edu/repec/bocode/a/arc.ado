@@ -1,6 +1,7 @@
-*! arc v1.4 (26 Feb 2026)
+*! arc v1.5 (06 Nov 2026)
 *! Asjad Naqvi (asjadnaqvi@gmail.com)
 
+* v1.5 (06 Nov 2026): Stata 15 minimum. Fixed separator allocation and chord calculations; validate geometry and output names before modifying data.
 * v1.4 (26 Feb 2026): added `reverse` option. added better tolerance checks. minor bug fixes. 
 * v1.3 (18 Nov 2025): dropbase added. clean ups
 * v1.2 (20 Nov 2024): append/stack added
@@ -12,19 +13,33 @@ cap program drop arc
 
 program define arc, rclass sortpreserve
  
-version 11
+version 15
  
 	syntax, ///
 		x1(numlist max=1) y1(numlist max=1) ///  //  from
 		x2(numlist max=1) y2(numlist max=1) ///  //  to
-		[ n(real 40) RADius(numlist max=1 >0) major swap reverse ]	///
-		[ genx(string) geny(string) genid(string) genorder(string) ] ///
+		[ n(integer 40) RADius(numlist max=1 >0) major swap reverse ]	///
+		[ genx(name) geny(name) genid(name) genorder(name) ] ///
 		[ replace append stack dropbase ]
 	
 
-    if `n' < 5 {
+    if missing(`n') | `n' < 5 {
         display in red "The number of points n() must be greater or equal to 5."
-        exit
+        exit 198
+    }
+    local dx = `x2' - `x1'
+    local dy = `y2' - `y1'
+    local L = sqrt((`dx')^2 + (`dy')^2)
+    if missing(`L') | `L' == 0 {
+        display as error "Arc endpoints must be finite and distinct."
+        exit 198
+    }
+    if "`radius'" == "" local radius = `L'
+    local half = `L' / 2
+    local eps = max(1e-12, abs(`half') * 1e-10)
+    if missing(`radius') | `radius' < `half' - `eps' {
+        display as error "Radius must be at least half the chord length (`half')."
+        exit 198
     }
 
 quietly {	
@@ -40,6 +55,18 @@ quietly {
 	if "`geny'" 	!= "" local yvar 	 `geny'				
 	if "`genid'" 	!= "" local idvar 	 `genid'				
 	if "`genorder'" != "" local ordervar `genorder'				
+    local outputs `xvar' `yvar' `idvar' `ordervar'
+    local unique : list uniq outputs
+    if wordcount("`unique'") != 4 {
+        noisily display as error "Output variable names must be distinct."
+        exit 198
+    }
+    if "`replace'" == "" {
+        foreach output of local outputs {
+            capture confirm variable `output'
+            if !_rc confirm numeric variable `output'
+        }
+    }
 	
 	if "`replace'" != "" {
 		cap drop `xvar'
@@ -79,14 +106,14 @@ quietly {
 		else {
 			local start = 1
 			local end 	= `base'
-			if _N < `n' set obs `end'			
+			if _N < `end' set obs `end'
 		}
 		
 	} 
 	else {
 		local start = 1
 		local end 	= `base'
-		if _N < `n' set obs `end'
+		if _N < `end' set obs `end'
 	}	
 	
 	// last point for estimation = base if dropbase specified
@@ -135,7 +162,7 @@ quietly {
 	if `radius' < `half' - `eps' {
 		local mychord = `half'
 		noisily display as error "Radius must be greater than half the chord length. Half chord length for given coordinates = `mychord'"
-		exit
+		exit 198
 	}	
 
 	// distance from midpoint to center (guard against tiny negative due to rounding)
@@ -216,4 +243,3 @@ quietly {
 	return local ycirc  = `k'
 	
 end
-

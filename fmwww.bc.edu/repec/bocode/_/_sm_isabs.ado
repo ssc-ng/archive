@@ -1,4 +1,4 @@
-*! version 0.8.4  09nov2026  Eric Booth
+*! version 0.8.5  26nov2026  Eric Booth
 *! _sm_isabs -- is this path absolute?  Returns the answer in r(abs), 1 or 0.
 *!
 *! Absolute on any platform surveymap supports:

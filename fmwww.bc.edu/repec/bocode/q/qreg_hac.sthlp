@@ -318,7 +318,7 @@ to the research community, like a paper. Please cite it as such: {p_end}
 
 {p 4 8 2}
 Linden, Ariel. 2026. QREG_HAC: Stata module for computing quantile regression with heteroskedasticity- and autocorrelation-consistent (HAC) standard errors.
-Statistical Software Components sXXXXXX, Boston College Department of Economics.{p_end}
+Statistical Software Components s460042, Boston College Department of Economics.{p_end}
 
 
 

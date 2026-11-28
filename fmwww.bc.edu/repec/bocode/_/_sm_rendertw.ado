@@ -1,4 +1,4 @@
-*! version 0.8.4  09nov2026  Eric Booth
+*! version 0.8.5  26nov2026  Eric Booth
 *! _sm_rendertw : draw a surveymap journal (schema v2) as a native twoway
 *!            boxes-and-arrows figure, for a paper or a slide
 *!
@@ -253,7 +253,7 @@ program define _sm_rendertw
     }
 
     * ---- geometry -----------------------------------------------------
-    local BW  9        // box width
+    local BW  10       // box width: a 28-character name line fits
     local BH  3.2      // box height
     local GAP 3.6      // gap between columns
     local LGAP 1.4     // gap between lanes
@@ -268,7 +268,7 @@ program define _sm_rendertw
         }
     }
     local blkh = `maxL' * (`BH' + `LGAP') - `LGAP'
-    local half = max(`BH' / 2 + 2.2, `blkh' / 2 + 3.4)
+    local half = max(`BH' / 2 + 3.0, `blkh' / 2 + 3.4)
     local Y0 = 0
 
     local boxsegs ""
@@ -314,7 +314,7 @@ program define _sm_rendertw
                         local dashsegs `"`dashsegs' `lt' `cx' `lt' `xr' `lb' `cx' `lb' `xr' `lt' `cx' `lb' `cx' `lt' `xr' `lb' `xr'"'
                         _srw_ell 15 `"`v_`q''"'
                         local bnm `"`s(o)'"'
-                        _srw_ell 26 `"`lb_`q''"'
+                        _srw_ell `= max(6, 28 - strlen(`"`bnm'"') - 3)' `"`lb_`q''"'
                         local bwl `"`s(o)'"'
                         if `"`bwl'"' == "." local bwl ""
                         if `"`bwl'"' != "" local bnm `"`bnm' `=uchar(183)' `bwl'"'
@@ -327,7 +327,7 @@ program define _sm_rendertw
                         * static figure has no hover for a reader to fall back on
                         _srw_ell 15 `"`v_`q''"'
                         local bnm `"`s(o)'"'
-                        _srw_ell 26 `"`lb_`q''"'
+                        _srw_ell `= max(6, 28 - strlen(`"`bnm'"') - 3)' `"`lb_`q''"'
                         local bwl `"`s(o)'"'
                         if `"`bwl'"' == "." local bwl ""
                         if `"`bwl'"' != "" local bnm `"`bnm' `=uchar(183)' `bwl'"'
@@ -357,7 +357,7 @@ program define _sm_rendertw
         local boxsegs `"`boxsegs' `bt' `x' `bt' `xr' `bb' `x' `bb' `xr' `bt' `x' `bb' `x' `bt' `xr' `bb' `xr'"'
         _srw_ell 15 `"`v_`p''"'
         local bnm `"`s(o)'"'
-        _srw_ell 26 `"`lb_`p''"'
+        _srw_ell `= max(6, 28 - strlen(`"`bnm'"') - 3)' `"`lb_`p''"'
         local bwl `"`s(o)'"'
         if `"`bwl'"' == "." local bwl ""
         if `"`bwl'"' != "" local bnm `"`bnm' `=uchar(183)' `bwl'"'
@@ -370,7 +370,7 @@ program define _sm_rendertw
         if `rr' < . & `aa' < . & `aa' > 0 {
             if `rr' > 0.05 * `aa' {
                 _srw_n `"`nr_`p''"'
-                local txts `"`txts' text(`= `bb' + 0.6' `= `x' + 0.5' "{bf:!! nonresp `s(o)'}", size(@SZS@) color("`ACC'") placement(e))"'
+                local txts `"`txts' text(`= `bb' - 0.9' `= `x' + 0.5' "{bf:!! nonresp `s(o)'}", size(@SZS@) color("`ACC'") placement(e))"'
             }
         }
         local prevx = `xr'

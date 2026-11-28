@@ -1,6 +1,6 @@
 {smcl}
-{* 19Nov2025}{...}
-{hi:help shapes (v1.4): 19 Nov 2025}{...}
+{* 06Nov2026}{...}
+{hi:help shapes (v1.5): 06 Nov 2026}{...}
 {right:{browse "https://github.com/asjadnaqvi/stata-graphfunctions":graphfunctions (GitHub)}}
 
 {hline}
@@ -262,11 +262,12 @@ For more advanced rotations, use the {cmd:shapes rotate} command.{p_end}
 connecting point is being rounded. For example, if we draw a square of length 10 and specifiy {opt r(5)}, then we effectively end up
 with a circle.{p_end}
 
-{p2coldent : {opt n(num)}}Number of points to generate for each rounded edge. Default is {opt n(20)}.{p_end}
+{p2coldent : {opt n(num)}}Number of points to generate for each rounded edge; integer at least 5. Default is {opt n(20)}.{p_end}
 
 {p2coldent : {opt f:actor(num)}}Factor is the displacement of the point which is used as a reference to draw the arc of size {opt roundness()}.
 The default here is {opt f(1.3)}. If the edges are not meeting at 90 degree or higher angle, 
-then this might make the rounded part bulge out. In this case, this parameter can be used for fine-tuning the amount of roundness.{p_end}
+then this might make the rounded part bulge out. In this case, this parameter can be used for fine-tuning the amount of roundness.
+Must be in (0,2] to yield a valid arc radius.{p_end}
 
 
 {p2coldent : {opt genx(var)}}Custom name for the {opt _rx} variable.{p_end}
@@ -275,7 +276,7 @@ then this might make the rounded part bulge out. In this case, this parameter ca
 
 {p2coldent : {opt genid(var)}}Custom name for the {opt _rid} variable.{p_end}
 
-{p2coldent : {opt gensegvar(var)}}Custom name for the {opt _rsegvar} variable. This is the order of each shape segment.{p_end}
+{p2coldent : {opt gensegvar(var)}}Custom name for the {opt _segvar} variable. This is the identifier of each arc segment.{p_end}
 
 {p2coldent : {opt genorder(var)}}Custom name for the {opt _rorder} variable.{p_end}
 
@@ -294,6 +295,11 @@ then this might make the rounded part bulge out. In this case, this parameter ca
 {marker area}{synopthdr:area_options}
 {synoptline}
 {p2coldent : {opt by(var)}}Generate areas using a {opt by()} variable. This is usually the {opt by(_id)} variable.{p_end}
+{pstd}Requires Stata 15 or newer. Area is the absolute shoelace area using
+the current vertex order within each group. Polygons may be open or
+explicitly closed; missing coordinates are skipped. Without {cmd:by()},
+all vertices form one polygon. Groups with fewer than three complete
+vertices return missing area.{p_end}
 
 {p2coldent : {opt gen:erate(newvar)}}Generate a new variable for the area values. Default is {it:_area}.{p_end}
 
@@ -312,8 +318,8 @@ See {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub} for a c
 
 {title:Package details}
 
-Version      : {bf:shapes} v1.4 in {stata help graphfunctions:graphfunctions}
-This release : 19 Nov 2025
+Version      : {bf:shapes} v1.5 in {stata help graphfunctions:graphfunctions}
+This release : 06 Nov 2026
 First release: 11 Oct 2024
 Repository   : {browse "https://github.com/asjadnaqvi/stata-graphfunctions":GitHub}
 Keywords     : Stata, graph, shapes
@@ -342,6 +348,4 @@ Please note that the GitHub version might be newer than the SSC version.
 	{helpb marimekko}, {helpb polarspike}, {helpb sankey}, {helpb schemepack}, {helpb spider}, {helpb splinefit}, {helpb streamplot}, {helpb sunburst}, {helpb ternary}, {helpb treecluster}, {helpb treemap}, {helpb trimap}, {helpb waffle}
 
 or visit {browse "https://github.com/asjadnaqvi":GitHub}.
-
-
 
